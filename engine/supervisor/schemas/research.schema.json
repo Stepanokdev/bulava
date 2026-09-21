@@ -1,0 +1,27 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["topic", "findings", "open_questions"],
+  "properties": {
+    "topic": { "type": "string" },
+    "findings": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["claim", "source_type", "source", "date", "confidence", "implication", "acceptance_criterion"],
+        "properties": {
+          "claim": { "type": "string" },
+          "source_type": { "type": "string", "enum": ["primary", "secondary"] },
+          "source": { "type": "string" },
+          "date": { "type": "string" },
+          "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
+          "implication": { "type": "string" },
+          "acceptance_criterion": { "type": "string" }
+        }
+      }
+    },
+    "open_questions": { "type": "array", "maxItems": 6, "items": { "type": "string" } }
+  }
+}

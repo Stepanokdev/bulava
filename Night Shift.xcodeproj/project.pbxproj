@@ -1,0 +1,718 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		ABCDEF0000000000000000C2 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = ABCDEF0000000000000000C1 /* MarkdownUI */; };
+		ABCDEF00000000000000SPF1 /* Sparkle.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = ABCDEF00000000000000SPF0 /* Sparkle.framework */; };
+		ABCDEF00000000000000SPF2 /* Sparkle.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = ABCDEF00000000000000SPF0 /* Sparkle.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		CE3BA82830109F9B00334BEF /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = CE3BA82730109F9B00334BEF /* WhisperKit */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		ABCDEF0000000000000000AA /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = CEBE1DF630102DFF003C4304 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CEBE1DFD30102DFF003C4304;
+			remoteInfo = "Night Shift";
+		};
+		ABCDEF0000000000000000BA /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = CEBE1DF630102DFF003C4304 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CEBE1DFD30102DFF003C4304;
+			remoteInfo = "Night Shift";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		ABCDEF00000000000000SPF3 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				ABCDEF00000000000000SPF2 /* Sparkle.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		ABCDEF0000000000000000A1 /* Night ShiftTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Night ShiftTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		ABCDEF0000000000000000B1 /* Night ShiftUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Night ShiftUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		ABCDEF00000000000000SPF0 /* Sparkle.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Sparkle.framework; path = Frameworks/Sparkle.framework; sourceTree = "<group>"; };
+		CEBE1DFE30102DFF003C4304 /* Bulava.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Bulava.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		ABCDEF0000000000000000A2 /* Night ShiftTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "Night ShiftTests";
+			sourceTree = "<group>";
+		};
+		ABCDEF0000000000000000B2 /* Night ShiftUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "Night ShiftUITests";
+			sourceTree = "<group>";
+		};
+		CEBE1E0030102DFF003C4304 /* Night Shift */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "Night Shift";
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		ABCDEF0000000000000000A8 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		ABCDEF0000000000000000B8 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CEBE1DFB30102DFF003C4304 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CE3BA82830109F9B00334BEF /* WhisperKit in Frameworks */,
+				ABCDEF00000000000000SPF1 /* Sparkle.framework in Frameworks */,
+				ABCDEF0000000000000000C2 /* MarkdownUI in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		CEBE1DF530102DFF003C4304 = {
+			isa = PBXGroup;
+			children = (
+				CEBE1E0030102DFF003C4304 /* Night Shift */,
+				ABCDEF0000000000000000A2 /* Night ShiftTests */,
+				ABCDEF0000000000000000B2 /* Night ShiftUITests */,
+				CEBE1DFF30102DFF003C4304 /* Products */,
+				CEFC2B983046F0F50024FE49 /* Recovered References */,
+			);
+			sourceTree = "<group>";
+		};
+		CEBE1DFF30102DFF003C4304 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				CEBE1DFE30102DFF003C4304 /* Bulava.app */,
+				ABCDEF0000000000000000A1 /* Night ShiftTests.xctest */,
+				ABCDEF0000000000000000B1 /* Night ShiftUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		CEFC2B983046F0F50024FE49 /* Recovered References */ = {
+			isa = PBXGroup;
+			children = (
+				ABCDEF00000000000000SPF0 /* Sparkle.framework */,
+			);
+			name = "Recovered References";
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		ABCDEF0000000000000000A3 /* Night ShiftTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = ABCDEF0000000000000000A4 /* Build configuration list for PBXNativeTarget "Night ShiftTests" */;
+			buildPhases = (
+				ABCDEF0000000000000000A7 /* Sources */,
+				ABCDEF0000000000000000A8 /* Frameworks */,
+				ABCDEF0000000000000000A9 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				ABCDEF0000000000000000AB /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				ABCDEF0000000000000000A2 /* Night ShiftTests */,
+			);
+			name = "Night ShiftTests";
+			packageProductDependencies = (
+			);
+			productName = "Night ShiftTests";
+			productReference = ABCDEF0000000000000000A1 /* Night ShiftTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		ABCDEF0000000000000000B3 /* Night ShiftUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = ABCDEF0000000000000000B4 /* Build configuration list for PBXNativeTarget "Night ShiftUITests" */;
+			buildPhases = (
+				ABCDEF0000000000000000B7 /* Sources */,
+				ABCDEF0000000000000000B8 /* Frameworks */,
+				ABCDEF0000000000000000B9 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				ABCDEF0000000000000000BB /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				ABCDEF0000000000000000B2 /* Night ShiftUITests */,
+			);
+			name = "Night ShiftUITests";
+			packageProductDependencies = (
+			);
+			productName = "Night ShiftUITests";
+			productReference = ABCDEF0000000000000000B1 /* Night ShiftUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		CEBE1DFD30102DFF003C4304 /* Night Shift */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CEBE1E0930102E00003C4304 /* Build configuration list for PBXNativeTarget "Night Shift" */;
+			buildPhases = (
+				CEBE1DFA30102DFF003C4304 /* Sources */,
+				CEBE1DFB30102DFF003C4304 /* Frameworks */,
+				CEBE1DFC30102DFF003C4304 /* Resources */,
+				ABCDEF00000000000000SPF3 /* Embed Frameworks */,
+				ABCDEF00000000000000ENG0 /* Bundle the work engine */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				CEBE1E0030102DFF003C4304 /* Night Shift */,
+			);
+			name = "Night Shift";
+			packageProductDependencies = (
+				CE3BA82730109F9B00334BEF /* WhisperKit */,
+				ABCDEF0000000000000000C1 /* MarkdownUI */,
+			);
+			productName = "Night Shift";
+			productReference = CEBE1DFE30102DFF003C4304 /* Bulava.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		CEBE1DF630102DFF003C4304 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2660;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					ABCDEF0000000000000000A3 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = CEBE1DFD30102DFF003C4304;
+					};
+					ABCDEF0000000000000000B3 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = CEBE1DFD30102DFF003C4304;
+					};
+					CEBE1DFD30102DFF003C4304 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+				};
+			};
+			buildConfigurationList = CEBE1DF930102DFF003C4304 /* Build configuration list for PBXProject "Night Shift" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+				uk,
+				ru,
+			);
+			mainGroup = CEBE1DF530102DFF003C4304;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				CE3BA82630109F9B00334BEF /* XCRemoteSwiftPackageReference "WhisperKit" */,
+				ABCDEF0000000000000000C0 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = CEBE1DFF30102DFF003C4304 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				CEBE1DFD30102DFF003C4304 /* Night Shift */,
+				ABCDEF0000000000000000A3 /* Night ShiftTests */,
+				ABCDEF0000000000000000B3 /* Night ShiftUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		ABCDEF0000000000000000A9 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		ABCDEF0000000000000000B9 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CEBE1DFC30102DFF003C4304 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		ABCDEF00000000000000ENG0 /* Bundle the work engine */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Bundle the work engine";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "sh \"$SRCROOT/scripts/bundle-engine.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		ABCDEF0000000000000000A7 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		ABCDEF0000000000000000B7 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CEBE1DFA30102DFF003C4304 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		ABCDEF0000000000000000AB /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CEBE1DFD30102DFF003C4304 /* Night Shift */;
+			targetProxy = ABCDEF0000000000000000AA /* PBXContainerItemProxy */;
+		};
+		ABCDEF0000000000000000BB /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CEBE1DFD30102DFF003C4304 /* Night Shift */;
+			targetProxy = ABCDEF0000000000000000BA /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		ABCDEF0000000000000000A5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = KHU94Q2JSS;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Frameworks",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				PRODUCT_BUNDLE_IDENTIFIER = "stepanok.com.Night-ShiftTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Bulava.app/Contents/MacOS/Bulava";
+			};
+			name = Debug;
+		};
+		ABCDEF0000000000000000A6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = KHU94Q2JSS;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Frameworks",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				PRODUCT_BUNDLE_IDENTIFIER = "stepanok.com.Night-ShiftTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Bulava.app/Contents/MacOS/Bulava";
+			};
+			name = Release;
+		};
+		ABCDEF0000000000000000B5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "Night ShiftUITests/NightShiftUITests.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = KHU94Q2JSS;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Frameworks",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				PRODUCT_BUNDLE_IDENTIFIER = "stepanok.com.Night-ShiftUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 6.0;
+				TEST_TARGET_NAME = "Night Shift";
+			};
+			name = Debug;
+		};
+		ABCDEF0000000000000000B6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "Night ShiftUITests/NightShiftUITests.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = KHU94Q2JSS;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Frameworks",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				PRODUCT_BUNDLE_IDENTIFIER = "stepanok.com.Night-ShiftUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 6.0;
+				TEST_TARGET_NAME = "Night Shift";
+			};
+			name = Release;
+		};
+		CEBE1E0730102E00003C4304 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = KHU94Q2JSS;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Frameworks",
+				);
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		CEBE1E0830102E00003C4304 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = KHU94Q2JSS;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Frameworks",
+				);
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		CEBE1E0A30102E00003C4304 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "Night Shift/Bulava.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = KHU94Q2JSS;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Frameworks",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Night Shift/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Bulava;
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Bulava opens Terminal for you when you ask to watch a run from the console side.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Bulava listens so you can describe work out loud instead of typing it.";
+				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "Bulava takes the before/after screenshots your run reports are made of. A worker cannot take them itself, so Bulava does it on its behalf.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Bulava transcribes what you say into the request it works from, on this Mac.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.6;
+				MARKETING_VERSION = 1.7.13;
+				PRODUCT_BUNDLE_IDENTIFIER = "stepanok.com.Night-Shift";
+				PRODUCT_NAME = Bulava;
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		CEBE1E0B30102E00003C4304 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "Night Shift/Bulava.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = KHU94Q2JSS;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Frameworks",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Night Shift/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Bulava;
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Bulava opens Terminal for you when you ask to watch a run from the console side.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Bulava listens so you can describe work out loud instead of typing it.";
+				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "Bulava takes the before/after screenshots your run reports are made of. A worker cannot take them itself, so Bulava does it on its behalf.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Bulava transcribes what you say into the request it works from, on this Mac.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.6;
+				MARKETING_VERSION = 1.7.13;
+				PRODUCT_BUNDLE_IDENTIFIER = "stepanok.com.Night-Shift";
+				PRODUCT_NAME = Bulava;
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		ABCDEF0000000000000000A4 /* Build configuration list for PBXNativeTarget "Night ShiftTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				ABCDEF0000000000000000A5 /* Debug */,
+				ABCDEF0000000000000000A6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		ABCDEF0000000000000000B4 /* Build configuration list for PBXNativeTarget "Night ShiftUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				ABCDEF0000000000000000B5 /* Debug */,
+				ABCDEF0000000000000000B6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CEBE1DF930102DFF003C4304 /* Build configuration list for PBXProject "Night Shift" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CEBE1E0730102E00003C4304 /* Debug */,
+				CEBE1E0830102E00003C4304 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CEBE1E0930102E00003C4304 /* Build configuration list for PBXNativeTarget "Night Shift" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CEBE1E0A30102E00003C4304 /* Debug */,
+				CEBE1E0B30102E00003C4304 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		ABCDEF0000000000000000C0 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/gonzalezreal/swift-markdown-ui";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.4.0;
+			};
+		};
+		CE3BA82630109F9B00334BEF /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/argmaxinc/WhisperKit";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		ABCDEF0000000000000000C1 /* MarkdownUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = ABCDEF0000000000000000C0 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */;
+			productName = MarkdownUI;
+		};
+		CE3BA82730109F9B00334BEF /* WhisperKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CE3BA82630109F9B00334BEF /* XCRemoteSwiftPackageReference "WhisperKit" */;
+			productName = WhisperKit;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = CEBE1DF630102DFF003C4304 /* Project object */;
+}

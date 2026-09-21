@@ -1,0 +1,98 @@
+# macOS
+.DS_Store
+
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Scratch
+*.orig
+
+# Python bytecode from the engine scripts
+__pycache__/
+
+# The App Store Connect key and anything pointing at it. The key lives in ~/Documents and the
+# test's config in ~/.config/bulava — neither belongs in a repository, and a stray copy of a
+# credential is a credential.
+*.p8
+asc-test.json
+
+# the director's memory never travels into the product's repository
+engine/supervisor/lessons/_global.md
+engine/supervisor/lessons/projects/
+engine/supervisor/lessons/**/*.backup-*
+engine/supervisor/qa-history.jsonl
+artifacts/
+
+# Litter left in the working directory by tool runs that happened to start here — budget
+# spreadsheets, their preview renders, and a node_modules symlink into the Codex runtime cache.
+# One `git add -A` swept 25 of these into a commit about chat hand-off; they are somebody's real
+# files, so they stay on disk and out of the repository.
+node_modules
+.budget_reduction_previews/
+outputs/
+*.mjs
+
+# presentation material: chat transcripts and drafts of the talk. They drag along
+# fragments of other people's repositories and working conversations — their place is the disk,
+keynote/
+
+# ── Material that does not belong in public code ──────────────────────────────
+# This is not junk: these are working documents that carry other projects' names,
+# screenshots of a real desktop and drafts of product decisions in another language.
+# They stay on the disk and go on being read — they simply do not travel to the public.
+#
+# Worth saying here: .gitignore does not remove what is already in the history.
+# The only path to the public is scripts/publish-public.sh, which builds a tree WITHOUT
+# history and refuses to create anything if the audit finds somebody else's name.
+Product Vision/
+research-gui/
+bulava/review/
+bulava/prototype.html
+
+# a stray webp from the repository root — moved into brand/ as logo-trace-source.webp
+8459cfa713dd1e7247798b447de8f67e.webp
+err.txt
+
+# full-size originals of the generated artwork: 2.4 MB for the 100 KB the page loads
+site/assets/src/
+site/index.html.assets
+
+site/demo/disclaim
+site/demo/windowshot
+
+# ── Anything that is a credential, or points at one ───────────────────────────
+# Nothing here is currently in the tree; the list exists so that a stray copy cannot become a
+# commit. A leaked key is not a file to clean up later — it is a key to rotate.
+.env
+.env.*
+*.pem
+*.key
+*.keystore
+*.mobileprovision
+id_rsa*
+id_ed25519*
+*.token
+**/credentials.json
+**/service-account*.json
+
+# Local editor and agent state: machine-specific, worthless to anybody else, and it records which
+# folders were open on this Mac.
+.claude/settings.local.json
+.claude/plans/
+.vscode/
+.idea/
+*.log

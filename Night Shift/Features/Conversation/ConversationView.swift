@@ -1,0 +1,259 @@
+import SwiftUI
+import UniformTypeIdentifiers
+
+struct ConversationView: View {
+    @Environment(AppModel.self) private var model
+    let productID: UUID
+
+    @State private var scroll = ScrollPosition(edge: .bottom)
+    @State private var dropTargeted = false
+
+    /// Whether the thread is still following its own tail.
+    ///
+    /// Following must not fight someone who scrolled up to read. While they are back in the
+    /// history nothing moves under them; the moment they return to the bottom, the thread starts
+    /// following again — and their own message always brings them back. See `TailFollow` for why
+    /// this tracks "did they scroll away" rather than "are they at the bottom".
+    @State private var follow = TailFollow()
+
+    private var product: Product? { model.products.product(id: productID) }
+
+    private var chatID: UUID? { model.conversations.currentChatID(for: productID) }
+    private var entries: [ConversationEntry] {
+        guard let chatID else { return [] }
+        return model.visibleEntries(inChat: chatID)
+    }
+    private var phase: DirectChatPhase { model.directPhase(for: chatID) }
+    private var activity: NowLine? { model.directActivity(for: chatID) }
+    private var queueCount: Int { model.directQueueCount(for: chatID) }
+    private var isFresh: Bool { entries.isEmpty }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ZStack {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        if isFresh {
+                            invitation
+                        } else {
+                            feed
+                        }
+
+                        if !entries.contains(where: { $0.kind == .question }) {
+                            SessionStatusRow(phase: phase, activity: activity, queueCount: queueCount,
+                                             degradation: model.directDegradation(for: chatID))
+                                .padding(.top, 12)
+                        }
+
+                        Color.clear.frame(height: 1).id(Self.bottomAnchor)
+                    }
+                    .frame(maxWidth: Metrics.readingWidth, alignment: .leading)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 30)
+                    .padding(.top, 26)
+                    .padding(.bottom, 24)
+                }
+                .scrollIndicators(.automatic)
+                .scrollPosition($scroll, anchor: .bottom)
+                .onScrollGeometryChange(for: TailFollow.Frame.self) { geometry in
+                    TailFollow.Frame(offsetY: geometry.contentOffset.y,
+                                     contentHeight: geometry.contentSize.height,
+                                     viewportHeight: geometry.containerSize.height)
+                } action: { old, new in
+                    // A growing answer is not the reader leaving. Both readings go in, and
+                    // TailFollow tells the two apart; if it decides to keep following it also
+                    // catches the thread up, because the height changed under this very callback
+                    // and `tailSignature` will not fire for a chunk that carried no new text.
+                    // Not animated: this fires on every chunk of a streaming answer, and an
+                    // animation started ten times a second fights itself. Pinned text should look
+                    // like it is simply standing still while more of it arrives.
+                    if follow.advance(from: old, to: new), new.distanceFromBottom > 0.5 {
+                        scrollToBottom(proxy, animated: false)
+                    }
+                }
+
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    Composer(productID: productID)
+                }
+
+                if dropTargeted { fileDropOverlay }
+            }
+            // Not `dropDestination(for: URL.self)`: a dragged screenshot thumbnail carries no file
+            // URL at all — the shot is still a promise on its way to the desktop — so that reading
+            // saw an empty drop and refused it. Taking the item providers instead lets the PNG the
+            // thumbnail really is carrying through.
+            .onDrop(of: [.fileURL, .image], isTargeted: $dropTargeted) { providers in
+                model.importDrop(providers, into: productID)
+            }
+            .animation(Motion.hover, value: dropTargeted)
+            .task(id: chatID) {
+                follow.rejoin()
+                model.syncDirectChats()
+                scrollToBottom(proxy, animated: false)
+                try? await _Concurrency.Task.sleep(for: .milliseconds(350))
+                scrollToBottom(proxy, animated: false)
+            }
+
+            // A working agent does not add entries — it grows the last one, and the status line
+            // under it changes as it goes. Watching only the COUNT meant the thread sat still
+            // while text streamed in below the fold, and every answer had to be scrolled to by
+            // hand.
+            .onChange(of: tailSignature) { _, _ in
+                if entries.last?.kind == .user { follow.rejoin() }
+                guard follow.following else { return }
+                scrollToBottom(proxy, animated: true)
+            }
+        }
+    }
+
+    /// Everything that can change the height of the thread without adding an entry: the last
+    /// entry's own growth, the activity line, the queue, the phase.
+    private var tailSignature: String {
+        var parts = ["\(entries.count)"]
+        if let last = entries.last {
+            parts.append("\(last.id):\(last.text.count):\(last.blocks.count):\(last.attachments.count)")
+        }
+        parts.append(activity?.key ?? "")
+        parts.append(activity?.object ?? "")
+        parts.append(activity?.detail ?? "")
+        parts.append("\(phase)")
+        parts.append("\(queueCount)")
+        return parts.joined(separator: "|")
+    }
+
+    private var fileDropOverlay: some View {
+        ZStack {
+            Palette.content.opacity(0.72)
+                .background(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: Metrics.radiusModal, style: .continuous)
+                .strokeBorder(Palette.accent, style: StrokeStyle(lineWidth: 2, dash: [7, 5]))
+                .padding(18)
+            VStack(spacing: 9) {
+                Image(systemName: "doc.badge.plus")
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundStyle(Palette.accentEmphasis)
+                Text("Drop files to attach them")
+                    .font(Typo.cardTitle)
+                    .foregroundStyle(Palette.text)
+                Text("They will be added to this message")
+                    .font(Typo.caption)
+                    .foregroundStyle(Palette.textSecondary)
+            }
+        }
+        .allowsHitTesting(false)
+        .transition(.opacity)
+    }
+
+    private static let bottomAnchor = "conversation.bottom"
+
+    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
+        let go = {
+            scroll.scrollTo(edge: .bottom)
+            proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+        }
+        if animated { withAnimation(Motion.arrive) { go() } } else { go() }
+    }
+
+    // MARK: - Invitation
+
+    private var invitation: some View {
+        InviteState(
+            systemImage: "moon.stars",
+            title: Text("Start a Night Shift conversation"),
+            message: "Write exactly as you would in the terminal. Follow-up messages stay in this chat, and you can resume it later.")
+        .padding(.vertical, 60)
+    }
+
+    // MARK: - Feed
+
+    private var feed: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(entries) { entry in
+                EntryView(entry: entry, productID: productID)
+                    .padding(.bottom, 22)
+            }
+        }
+    }
+
+}
+
+// MARK: - Date rule
+
+struct DateRule: View {
+    let text: Text
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Hairline()
+            text.font(Typo.meta).foregroundStyle(Palette.textFaint).fixedSize()
+            Hairline()
+        }
+    }
+}
+
+private struct SessionStatusRow: View {
+    let phase: DirectChatPhase
+    let activity: NowLine?
+    let queueCount: Int
+    /// Working a hand short. The engine has always recorded this; until now nothing showed it, so
+    /// a run continuing without Codex looked exactly like one that had both engineers on it.
+    var degradation: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 7) {
+                if phase.isActive {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: phase.symbol)
+                }
+                Text(phase.label)
+                    .foregroundStyle(phase.isFailure ? Palette.red
+                                     : phase.wantsAttention ? Palette.orange
+                                     : Palette.textSecondary)
+                if phase == .auditing {
+                    Text(verbatim: "AUDIT")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(Palette.accentEmphasis)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Palette.accentSoft))
+                }
+                Spacer(minLength: 0)
+                if queueCount > 0 {
+                    HStack(spacing: 4) {
+                        Image(systemName: "clock.arrow.circlepath")
+                        Text(String(localized: "Queued up"))
+                        Text(verbatim: "\(queueCount)")
+                    }
+                    .foregroundStyle(Palette.textSecondary)
+                }
+            }
+            if let activity, phase == .working {
+                Text(activity.sentence)
+                    .foregroundStyle(Palette.textFaint)
+                    .lineLimit(2)
+                    .padding(.leading, 23)
+            }
+            if let degradation, phase.isActive {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Image(systemName: "person.fill.questionmark")
+                    Text(degradation)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(Palette.textFaint)
+                .padding(.leading, 23)
+            }
+        }
+        .font(Typo.meta)
+        .padding(.horizontal, phase.isActive || queueCount > 0 ? 10 : 0)
+        .padding(.vertical, phase.isActive || queueCount > 0 ? 8 : 4)
+        .background {
+            if phase.isActive || queueCount > 0 {
+                RoundedRectangle(cornerRadius: Metrics.radiusPanel, style: .continuous)
+                    .fill(Palette.panel.opacity(0.75))
+            }
+        }
+    }
+}

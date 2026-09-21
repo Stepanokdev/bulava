@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Notarisation requires the hardened runtime, and the hardened runtime blocks Apple Events
+	     unless the app says it needs them. Bulava sends one: "open Terminal and attach to this
+	     tmux session", which is how a person looks at a live run from the console side. Without
+	     this entitlement that button silently does nothing in a signed build. -->
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
+
+	<!-- The microphone, and this one is not optional the way it looks.
+	     The hardened runtime — which notarisation requires — gates the microphone on this
+	     entitlement, SEPARATELY from the permission a person grants in System Settings. Without
+	     it `AVCaptureDevice.authorizationStatus(for: .audio)` answers "denied" no matter what the
+	     Privacy pane says, so the readiness row read "Dictation does not work" and dictation
+	     refused to start, while the toggle beside Bulava's name was on. Removing and re-granting
+	     the permission cannot fix that, because the permission was never what was refusing. -->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+</dict>
+</plist>

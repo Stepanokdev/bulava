@@ -1,0 +1,26 @@
+{
+  "_comment": [
+    "The ONLY catalogues the index will ever ask. Nothing outside this list is contacted, and",
+    "adding a source is a deliberate act — it is an extension of trust, not a convenience.",
+    "Official sources first, on purpose: source_tier() reads github.com/anthropics/skills as",
+    "Tier 1, and everything here still passes through the same audit before anything installs.",
+    "",
+    "What is fetched is ONE file per source: .claude-plugin/marketplace.json. It is DATA — a list",
+    "of names and descriptions to match against — and it is never handed to an agent as text to",
+    "act on. Nothing is cloned, nothing is executed, and being in the index grants a skill nothing."
+  ],
+  "sources": [
+    {
+      "name": "anthropics/skills",
+      "repo": "https://github.com/anthropics/skills",
+      "manifest": "https://raw.githubusercontent.com/anthropics/skills/HEAD/.claude-plugin/marketplace.json",
+      "note": "official, narrow but high quality"
+    },
+    {
+      "name": "anthropics/claude-plugins-official",
+      "repo": "https://github.com/anthropics/claude-plugins-official",
+      "manifest": "https://raw.githubusercontent.com/anthropics/claude-plugins-official/HEAD/.claude-plugin/marketplace.json",
+      "note": "official plugin marketplace"
+    }
+  ]
+}

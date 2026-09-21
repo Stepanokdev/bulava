@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["scale", "needs_plan", "needs_external_research", "touches_interface", "reason"],
+  "properties": {
+    "scale": { "type": "string", "enum": ["small", "medium", "large"] },
+    "needs_plan": { "type": "boolean" },
+    "needs_external_research": { "type": "boolean" },
+    "touches_interface": { "type": "boolean" },
+    "reason": { "type": "string", "maxLength": 280 }
+  }
+}

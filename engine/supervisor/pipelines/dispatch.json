@@ -1,0 +1,15 @@
+{
+  "name": "dispatch",
+  "description": "A night task: neutral context, two independent positions, their comparison, then the worker.",
+  "stages": [
+    { "id": "context", "title": "neutral context", "run": ["preflight.sh", "--stage", "context"] },
+    { "id": "peer-claude", "title": "Claude's independent position", "group": "peers", "optional": true,
+      "run": ["preflight.sh", "--stage", "peer", "--engine", "claude"] },
+    { "id": "peer-codex", "title": "Codex's independent position", "group": "peers", "optional": true,
+      "run": ["preflight.sh", "--stage", "peer", "--engine", "codex"] },
+    { "id": "align", "title": "material deltas and acceptance checks", "optional": true,
+      "run": ["preflight.sh", "--stage", "align"] },
+    { "id": "compose", "title": "the prompt the worker receives", "run": ["pipeline-compose.sh"] },
+    { "id": "deliver", "title": "hand it to the worker", "run": ["pipeline-deliver.sh"] }
+  ]
+}
