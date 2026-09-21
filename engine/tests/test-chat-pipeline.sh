@@ -74,6 +74,12 @@ git -C "$PROJ" init -q 2>/dev/null
 : > "$PROJ/README.md"; git -C "$PROJ" add -A 2>/dev/null; git -C "$PROJ" -c user.email=t@t -c user.name=t commit -qm init 2>/dev/null
 
 . "$BIN/supervisor-lib.sh"
+# What "the window is spent" means, in today's terms. It used to be written into these fixtures
+# as 99%, back when the guard paused at 90; the guard is 100 now — quota is bought to be used —
+# and 99% is an engine that is still working. Taking the number from the guard keeps every
+# assertion below about what it was written to be about, under any configuration.
+SPENT="${SUPERVISOR_USAGE_GUARD:-100}"
+
 SLUG="$(slug_for "$PROJ")"
 IDIR="$(instance_dir "$SLUG")"
 SESSION="$(session_name "$SLUG")"
@@ -900,9 +906,9 @@ grep -q "закоміть, померджай" "$REC/injected.txt" 2>/dev/null \
 
 echo "===== a message parked behind a limit is not called 'both engines are reading it' ====="
 rm -f "$IDIR/queue-wait.json"
-jq -n --argjson ts "$(date +%s)" \
+jq -n --arg spent "$SPENT" --argjson ts "$(date +%s)" \
   '{ts:$ts, observed_at:$ts, source:"cli",
-    five_hour:{used_percentage:99, resets_at:($ts + 3600), window_minutes:300},
+    five_hour:{used_percentage:($spent|tonumber), resets_at:($ts + 3600), window_minutes:300},
     seven_day:{used_percentage:5, resets_at:($ts + 500000), window_minutes:10080}}' \
   > "$SUPERVISOR_STATE_DIR/usage.json"
 pause_record "$IDIR" claude "$(( $(date +%s) + 3600 ))" "usage guard"

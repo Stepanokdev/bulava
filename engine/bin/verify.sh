@@ -216,12 +216,24 @@ for _tdir in tests engine/tests; do
     continue
   fi
   ran_any=1
-  # Side by side, because a suite that cannot finish inside the step ceiling is a suite whose
-  # result nobody ever collects: it comes back as a timeout no matter what the code does, round
-  # after round. A shell test that needs the machine to itself is already broken in CI, so this
-  # assumes what the engine's own suite guarantees — each test builds its own state directory.
-  # SUPERVISOR_TEST_JOBS=1 puts it back in order when a failure needs to be read in sequence.
-  run_step "shell suite passes ($_tdir)" "$STEP_TO" bash -c '
+  # The suite gets whatever is left of the WHOLE verifier's budget, not the per-step ceiling.
+  # For a shell project the suite IS the verification, and capping it at one step's worth while
+  # 25 minutes of total budget sits unused is how a fifteen-minute suite came back as
+  # `exit_code: 142, inconclusive` round after round — a result that says nothing about the code.
+  # Same reasoning as `project verify.sh` below, which has taken the remaining budget all along.
+  SH_TO="$STEP_TO"; _sh_left=$(( TOTAL_TO - ( $(date +%s) - START_TS ) - 10 ))
+  [ "$_sh_left" -gt "$SH_TO" ] && SH_TO="$_sh_left"
+  # Side by side, because a suite that cannot finish inside its ceiling is a suite whose result
+  # nobody ever collects. A shell test that needs the machine to itself is already broken in CI,
+  # so this assumes what the engine's own suite guarantees — each test builds its own state
+  # directory. SUPERVISOR_TEST_JOBS=1 puts it back in order when a failure needs reading in
+  # sequence.
+  # One suite is left out of THIS run, by name: `test-export-suite.sh` publishes the tree and runs
+  # the whole suite again inside the copy, which doubles a fifteen-minute set and is the single
+  # reason no budget was ever enough. What it proves — that the shipped tree passes its own tests —
+  # is proved outside a review round, by `tests/run-all.sh` and by the publishing check, where an
+  # extra quarter of an hour costs nothing. A review round is not the place to pay it twice.
+  run_step "shell suite passes ($_tdir)" "$SH_TO" env SUPERVISOR_TEST_SKIP="test-export-suite.sh" bash -c '
     dir='"$_tdir"'
     jobs="${SUPERVISOR_TEST_JOBS:-}"
     if [ -z "$jobs" ]; then
@@ -231,15 +243,29 @@ for _tdir in tests engine/tests; do
     case "$jobs" in ""|*[!0-9]*) jobs=4 ;; esac
     [ "$jobs" -lt 1 ] && jobs=1
     out="$(mktemp -d)"; trap "rm -rf "$out"" EXIT
+    # The verifier runs inside the run it is verifying, and the worker environment carries that
+    # run identity plus the application tuning. A test that inherits either stops measuring the
+    # code and starts measuring the machine — which is how this step reported failures that the
+    # same commit passes on a clean shell. Same scrub as tests/run-all.sh.
+    scrub=()
+    for _name in $(env | sed "s/=.*//" | sort -u); do
+      case "$_name" in
+        SUPERVISOR_TEST_JOBS|SUPERVISOR_TEST_SKIP) ;;
+        SUPERVISOR_*|ORCHESTRATOR_*|IDIR|BULAVA_*)
+          scrub=(${scrub[@]+"${scrub[@]}"} -u "$_name") ;;
+      esac
+    done
     pids=()
     for t in "$dir"/test-*.sh; do
-      ( bash "$t" >/dev/null 2>&1; echo $? > "$out/$(basename "$t").rc" ) &
+      case " ${SUPERVISOR_TEST_SKIP:-} " in *" $(basename "$t") "*) continue ;; esac
+      ( env ${scrub[@]+"${scrub[@]}"} bash "$t" >/dev/null 2>&1; echo $? > "$out/$(basename "$t").rc" ) &
       pids=(${pids[@]+"${pids[@]}"} "$!")
       if [ "${#pids[@]}" -ge "$jobs" ]; then wait "${pids[0]}" 2>/dev/null; pids=(${pids[@]:1}); fi
     done
     wait
     rc=0
     for t in "$dir"/test-*.sh; do
+      case " ${SUPERVISOR_TEST_SKIP:-} " in *" $(basename "$t") "*) continue ;; esac
       [ "$(cat "$out/$(basename "$t").rc" 2>/dev/null || echo 1)" = 0 ] \
         || { echo "FAILED: $t"; rc=1; }
     done
