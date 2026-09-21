@@ -1,0 +1,9 @@
+{
+  "name": "dispatch-legacy",
+  "description": "The pre-adaptive night flow: one preflight call that plans and critiques, then the worker.",
+  "stages": [
+    { "id": "preflight", "title": "research and plan", "optional": true, "run": ["preflight.sh"] },
+    { "id": "compose", "title": "the prompt the worker receives", "run": ["pipeline-compose.sh"] },
+    { "id": "deliver", "title": "hand it to the worker", "run": ["pipeline-deliver.sh"] }
+  ]
+}

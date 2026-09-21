@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["goal", "steps", "acceptance_criteria", "risks"],
+  "properties": {
+    "goal": { "type": "string" },
+    "proposed_redirection": { "type": "string" },
+    "steps": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+    "acceptance_criteria": { "type": "array", "maxItems": 12, "items": { "type": "string" } },
+    "risks": { "type": "array", "maxItems": 8, "items": { "type": "string" } },
+    "disagreements": { "type": "array", "maxItems": 10, "items": { "type": "string" } },
+    "open_questions": { "type": "array", "maxItems": 8, "items": { "type": "string" } }
+  }
+}

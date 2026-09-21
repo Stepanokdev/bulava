@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Keys Xcode's generated Info.plist cannot carry: INFOPLIST_KEY_* only passes Apple's own
+	     names through, so Sparkle's settings live here and Xcode merges the generated keys in. -->
+
+	<!-- Where the app looks for new versions. Served as a static file from the product's own site. -->
+	<key>SUFeedURL</key>
+	<string>https://bulava.app/appcast.xml</string>
+
+	<!-- The public half of the update-signing key. Its private half never leaves the Keychain and
+	     is never in this repository: without it nobody can hand this app an update it will accept,
+	     even if the site serving the feed is taken over. -->
+	<key>SUPublicEDKey</key>
+	<string>ujpj9MQY9z1yX5BFRIm/jNUB2Jfqhn181PMkJUR3slI=</string>
+
+	<!-- Checked in the background, once a day. The first launch asks permission first. -->
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
+</dict>
+</plist>

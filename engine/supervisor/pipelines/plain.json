@@ -1,0 +1,8 @@
+{
+  "name": "plain",
+  "description": "What the engine has always done for a relay: compose the standing sections and inject.",
+  "stages": [
+    { "id": "compose", "title": "the prompt the worker receives", "run": ["pipeline-compose.sh"] },
+    { "id": "deliver", "title": "hand it to the worker",          "run": ["pipeline-deliver.sh"] }
+  ]
+}

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The runner is sandboxed by Xcode whatever the target says, and its fixture has to land
+	     where the APP looks: a worker's transcript lives in ~/.claude/projects, and the app is not
+	     sandboxed, so it reads the real one. Without this the fixture was written into the runner's
+	     own container and the app truthfully reported that it could not find any session log. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.temporary-exception.files.absolute-path.read-write</key>
+	<array>
+		<string>$(HOME)/.claude/</string>
+	</array>
+</dict>
+</plist>
