@@ -21,6 +21,12 @@ export SUPERVISOR_STATE_DIR="$TMP/state"; mkdir -p "$SUPERVISOR_STATE_DIR"
 unset SUPERVISOR_CHAT_CONTEXT_FILE SUPERVISOR_EXTRA_DIRS_FILE
 export SUPERVISOR_CLAUDE_USAGE_CMD="/usr/bin/true" SUPERVISOR_CODEX_USAGE_CMD="/usr/bin/true"
 . "$BIN/supervisor-lib.sh"
+# What "the window is spent" means, in today's terms. It used to be written into these fixtures
+# as 99%, back when the guard paused at 90; the guard is 100 now — quota is bought to be used —
+# and 99% is an engine that is still working. Taking the number from the guard keeps every
+# assertion below about what it was written to be about, under any configuration.
+SPENT="${SUPERVISOR_USAGE_GUARD:-100}"
+
 
 PROJ="$TMP/project"; mkdir -p "$PROJ"
 git -C "$PROJ" init -q 2>/dev/null
@@ -283,9 +289,9 @@ PATH="$TMP/stub:$PATH" bash "$BIN/preflight.sh" --art "$ART" --stage peer --engi
   || bad "participation was traded away for speed — the one thing that must not happen"
 
 echo "===== one engine out degrades honestly instead of stopping ====="
-jq -n --argjson ts "$(date +%s)" \
+jq -n --arg spent "$SPENT" --argjson ts "$(date +%s)" \
   '{ts:$ts, observed_at:$ts, source:"cli",
-    five_hour:{used_percentage:99, resets_at:($ts + 3600), window_minutes:300},
+    five_hour:{used_percentage:($spent|tonumber), resets_at:($ts + 3600), window_minutes:300},
     seven_day:{used_percentage:5, resets_at:($ts + 500000), window_minutes:10080}}' \
   > "$SUPERVISOR_STATE_DIR/codex-usage.json"
 ART2="$IDIR/messages/degraded"; mkdir -p "$ART2"

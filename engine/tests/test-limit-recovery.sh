@@ -48,6 +48,12 @@ usage() {   # $1=claude|codex  $2=five-hour %  $3=resets_at  [$4=weekly %]
       seven_day:{used_percentage:$w, resets_at:($ts + 500000), window_minutes:10080}}' > "$f"
 }
 no_usage() { rm -f "$SUPERVISOR_STATE_DIR/usage.json" "$SUPERVISOR_STATE_DIR/codex-usage.json"; }
+# What "the window is spent" means, in today's terms. It used to be written into these fixtures
+# as 99%, back when the guard paused at 90; the guard is 100 now — quota is bought to be used —
+# and 99% is an engine that is still working. Taking the number from the guard keeps every
+# assertion below about what it was written to be about, under any configuration.
+SPENT="${SUPERVISOR_USAGE_GUARD:-100}"
+
 # Nothing in this suite may go and ask a real CLI what its limits are.
 export SUPERVISOR_CLAUDE_USAGE_CMD="/usr/bin/true" SUPERVISOR_CODEX_USAGE_CMD="/usr/bin/true"
 
@@ -89,7 +95,7 @@ esac
 
 echo "===== whose limit it is decides who has to stop ====="
 usage claude 4 "$(( $(now) + 9000 ))"
-usage codex 99 "$(( $(now) + 9000 ))"
+usage codex "$SPENT" "$(( $(now) + 9000 ))"
 pause_record "$IDIR" codex "$(( $(now) + 9000 ))" "codex usage guard"
 pause_blocks_worker "$IDIR" \
   && bad "a Codex window stopped Claude — the bug this suite exists for" \
@@ -97,7 +103,7 @@ pause_blocks_worker "$IDIR" \
 [ "$(pause_provider "$IDIR")" = codex ] && ok "the marker says whose limit it is" \
   || bad "the marker does not name the engine"
 
-usage claude 99 "$(( $(now) + 9000 ))"
+usage claude "$SPENT" "$(( $(now) + 9000 ))"
 pause_record "$IDIR" claude "$(( $(now) + 9000 ))" "usage guard"
 pause_blocks_worker "$IDIR" && ok "Claude's own limit does stop preparation" \
   || bad "an exhausted Claude was treated as free"
@@ -132,7 +138,7 @@ echo "===== a lifted pause leaves the work owed a resume, whoever noticed it ===
 # resume that nobody remembered — and if the message was then taken back, the run sat at an idle
 # prompt for good.
 rm -f "$IDIR/resume-pending" "$(pause_last_file "$IDIR")" "$IDIR/dispatch.json"
-usage claude 99 "$(( $(now) + 9000 ))"
+usage claude "$SPENT" "$(( $(now) + 9000 ))"
 pause_record "$IDIR" claude "$(( $(now) + 9000 ))" "usage guard"
 usage claude 4 "$(( $(now) + 9000 ))"
 pause_blocks_worker "$IDIR" && bad "the pump still saw the worker as parked"   || ok "the pump sees the limit is gone"
@@ -155,16 +161,16 @@ rm -f "$IDIR/resume-pending"
 echo "===== an exhaustion whose own reset has passed stops being a fact ====="
 # Left unchecked this deadlocks: the marker re-arms itself half an hour at a time from a reset that
 # already happened, so the controlled attempt that should break it is never reachable.
-usage claude 99 "$(( $(now) - 600 ))"
+usage claude "$SPENT" "$(( $(now) - 600 ))"
 touch -t "$(date -v-2H '+%Y%m%d%H%M' 2>/dev/null || date '+%Y%m%d%H%M')" "$SUPERVISOR_STATE_DIR/usage.json"
 s="$(provider_state claude)"
 [ "${s%% *}" = unknown ]   && ok "a stale 'out of window' whose reset has passed is no longer believed"   || bad "an expired exhaustion was treated as current ($s) — the run would park for ever"
-usage claude 99 "$(( $(now) + 9000 ))"
+usage claude "$SPENT" "$(( $(now) + 9000 ))"
 touch -t "$(date -v-2H '+%Y%m%d%H%M' 2>/dev/null || date '+%Y%m%d%H%M')" "$SUPERVISOR_STATE_DIR/usage.json"
 s="$(provider_state claude)"
 [ "${s%% *}" = exhausted ]   && ok "…while one whose reset is still ahead is"   || bad "a still-valid exhaustion was thrown away ($s)"
 rm -f "$(pause_last_file "$IDIR")" "$IDIR/resume-pending"
-usage claude 99 "$(( $(now) - 600 ))"
+usage claude "$SPENT" "$(( $(now) - 600 ))"
 touch -t "$(date -v-2H '+%Y%m%d%H%M' 2>/dev/null || date '+%Y%m%d%H%M')" "$SUPERVISOR_STATE_DIR/usage.json"
 pause_record "$IDIR" claude "$(( $(now) - 300 ))" "usage guard"
 jq '.resume_after = 1' "$(pause_file "$IDIR")" > "$TMP/m" && mv "$TMP/m" "$(pause_file "$IDIR")"
@@ -213,9 +219,9 @@ rm -rf "$IDIR/delivery.lock" "$IDIR/delivery.lock.rescue"
 echo "===== a reading is as old as the OBSERVATION, not as the file ====="
 # The session fallback scrapes a number out of a log line written hours ago and writes it down now.
 # Judging by the file's own timestamp calls that measurement current.
-jq -n --argjson ts "$(now)" --argjson old "$(( $(now) - 7200 ))" \
+jq -n --argjson ts "$(now)" --argjson old "$(( $(now) - 7200 ))" --arg spent "$SPENT" \
   '{ts:$ts, observed_at:$old, source:"session",
-    five_hour:{used_percentage:99, resets_at:($ts - 600), window_minutes:300},
+    five_hour:{used_percentage:($spent|tonumber), resets_at:($ts - 600), window_minutes:300},
     seven_day:{used_percentage:5, resets_at:($ts + 500000), window_minutes:10080}}' \
   > "$SUPERVISOR_STATE_DIR/usage.json"
 s="$(provider_state claude)"
@@ -225,7 +231,7 @@ s="$(provider_state claude)"
 
 echo "===== a pause does not spend the run's own budget ====="
 rm -f "$(pause_file "$IDIR")" "$(pause_last_file "$IDIR")" "$IDIR/resume-pending"
-usage claude 99 "$(( $(now) + 60 ))"
+usage claude "$SPENT" "$(( $(now) + 60 ))"
 : > "$IDIR/started-at"
 before="$(stat -f %m "$IDIR/started-at")"
 pause_record "$IDIR" claude "$(( $(now) + 60 ))" "usage guard"
@@ -240,7 +246,7 @@ after="$(stat -f %m "$IDIR/started-at")"
 
 echo "===== a delivery that has already answered the pause leaves no nudge behind ====="
 rm -f "$IDIR/resume-pending" "$(pause_file "$IDIR")" "$(pause_last_file "$IDIR")"
-usage claude 99 "$(( $(now) + 9000 ))"
+usage claude "$SPENT" "$(( $(now) + 9000 ))"
 pause_record "$IDIR" claude "$(( $(now) + 9000 ))" "usage guard"
 usage claude 4 "$(( $(now) + 9000 ))"
 jq -nc --argjson pid "$$" '{pid:$pid, session:"x"}' > "$(delivering_file "$IDIR")"
@@ -287,7 +293,7 @@ provider_available codex && bad "an unreadable meter claimed availability" \
 
 echo "===== a pause left by work that is over resumes nothing ====="
 rm -f "$IDIR/last-resume" "$(pause_last_file "$IDIR")"
-usage claude 99 "$(( $(now) + 9000 ))"
+usage claude "$SPENT" "$(( $(now) + 9000 ))"
 pause_record "$IDIR" claude "$(( $(now) + 9000 ))" "usage guard"
 printf '%s\n' "RUN-B" > "$IDIR/run-id"
 v="$(pause_reconcile "$IDIR")"
@@ -509,9 +515,9 @@ QPROJ="$(canon_path "$QPROJ")"
 QSLUG="$(slug_for "$QPROJ")"; QIDIR="$(instance_dir "$QSLUG")"; mkdir -p "$QIDIR"
 printf '%s' "$QPROJ" > "$QIDIR/project"
 printf '%s' "QRUN" > "$QIDIR/run-id"; printf '%s' "q-session" > "$QIDIR/session"
-jq -n --argjson ts "$(now)" \
+jq -n --argjson ts "$(now)" --arg spent "$SPENT" \
   '{ts:$ts, observed_at:$ts, source:"cli",
-    five_hour:{used_percentage:99, resets_at:($ts + 14400), window_minutes:300},
+    five_hour:{used_percentage:($spent|tonumber), resets_at:($ts + 14400), window_minutes:300},
     seven_day:{used_percentage:5, resets_at:($ts + 500000), window_minutes:10080}}' \
   > "$SUPERVISOR_STATE_DIR/codex-usage.json"
 printf '#!/bin/bash\nexit 1\n' > "$TMP/no-codex"; chmod +x "$TMP/no-codex"
@@ -617,7 +623,7 @@ fi
 # and the queue with it; this one has to come round every poll and start the pump anyway.
 rm -f "$SUPERVISOR_STATE_DIR/pump-started" "$IDIR/last-resume" "$(pause_last_file "$IDIR")"
 rm -f "$IDIR/dispatch.json"
-usage codex 99 "$(( $(now) + 14400 ))"
+usage codex "$SPENT" "$(( $(now) + 14400 ))"
 usage claude 4 "$(( $(now) + 9000 ))"
 pause_record "$IDIR" codex "$(( $(now) + 14400 ))" "codex usage guard"
 pending_enqueue "$IDIR" "закоміть і випусти версію" "aaaaaaaa-0000-0000-0000-000000000001" adaptive-peer conversation >/dev/null
@@ -675,9 +681,13 @@ bash "$BIN/watchdog.sh" "$SLUG" >/dev/null 2>&1 &
 WD=$!
 tries=0
 while [ ! -e "$IDIR/last-resume" ] && [ "$tries" -lt 60 ]; do sleep 0.25; tries=$((tries + 1)); done
-# `last-resume` is written before the attempt; the line saying WHY comes after it finishes.
+# `last-resume` is written before the attempt; the line saying WHY comes after it finishes — and
+# what happens in between is a real resume: a tmux send, a confirmation wait, a settle. Ten
+# seconds was enough on an idle machine and not enough on a busy one, so this assertion failed
+# about half the time under a full suite and told nobody anything about the code. It waits for the
+# event now, with a bound long enough to survive the machine being busy.
 tries=0
-while ! grep -q "review was still owed" "$SUP_STATE/watchdog.log" 2>/dev/null && [ "$tries" -lt 40 ]; do
+while ! grep -q "review was still owed" "$SUP_STATE/watchdog.log" 2>/dev/null && [ "$tries" -lt 240 ]; do
   sleep 0.25; tries=$((tries + 1))
 done
 kill "$WD" 2>/dev/null; wait "$WD" 2>/dev/null
@@ -686,7 +696,7 @@ grep -q "review was still owed" "$SUP_STATE/watchdog.log" 2>/dev/null   && ok "�
 
 rm -f "$IDIR/last-resume" "$IDIR/resume-attempts" "$IDIR/stalled.json"
 jq -nc --argjson at "$(now)" '{reason:"x", at:$at}' > "$IDIR/review-pending"
-usage codex 99 "$(( $(now) + 9000 ))"
+usage codex "$SPENT" "$(( $(now) + 9000 ))"
 bash "$BIN/watchdog.sh" "$SLUG" >/dev/null 2>&1 &
 WD=$!
 sleep 2
@@ -768,7 +778,7 @@ rm -f "$IDIR/resume-refused" "$IDIR/stalled.json"
 printf '%s\n' "RUN-A" > "$IDIR/run-id"
 rm -f "$IDIR/stalled.json" "$(pause_last_file "$IDIR")" "$IDIR/dispatch.json"
 export SUPERVISOR_IDLE_KILL_SECS=1 SUPERVISOR_STALL_PARK_SECS=1
-usage claude 99 "$(( $(now) + 9000 ))"
+usage claude "$SPENT" "$(( $(now) + 9000 ))"
 pause_record "$IDIR" claude "$(( $(now) + 9000 ))" "usage guard"
 touch -t "$(date -v-2H '+%Y%m%d%H%M' 2>/dev/null || date '+%Y%m%d%H%M')" "$IDIR/last-activity" 2>/dev/null
 bash "$BIN/watchdog.sh" "$SLUG" >/dev/null 2>&1 &

@@ -36,6 +36,29 @@ skipped() {
   case " $SKIP " in *" $1 "*) return 0 ;; *) return 1 ;; esac
 }
 
+
+# The suite must not inherit the run that is running it.
+#
+# A worker's environment carries the live run's identity (`ORCHESTRATOR_RUN_ID`, `IDIR`) and some
+# seventy `SUPERVISOR_*` overrides the application passes down. Tests assert against the DOCUMENTED
+# defaults and build their own state directory, so inheriting either makes the result depend on who
+# pressed the button: `test-report-finding.sh` recorded a finding into the live run instead of
+# refusing outside one, and three suites read a usage guard the machine had tuned. So every test is
+# started with the engine's own variables removed — except the one that belongs to this runner.
+SCRUB=()
+while IFS='=' read -r _name _rest; do
+  case "$_name" in
+    SUPERVISOR_TEST_JOBS|SUPERVISOR_TEST_SKIP) ;;
+    SUPERVISOR_*|ORCHESTRATOR_*|IDIR|BULAVA_*)
+      SCRUB=(${SCRUB[@]+"${SCRUB[@]}"} -u "$_name") ;;
+  esac
+done <<EOF_ENV
+$(env | sed 's/=.*//' | sort -u)
+EOF_ENV
+run_test() {   # $1 = test file
+  env ${SCRUB[@]+"${SCRUB[@]}"} bash "$1"
+}
+
 ORDER=""
 [ -f test-export-suite.sh ] && ! skipped test-export-suite.sh && ORDER="test-export-suite.sh"
 for t in test-*.sh; do
@@ -51,7 +74,7 @@ if [ "$JOBS" = 1 ]; then
   rc=0
   for t in $ORDER; do
     echo "===== $t ====="
-    if bash "$t"; then :; else rc=1; echo "  ^^ FAILED: $t"; fi
+    if run_test "$t"; then :; else rc=1; echo "  ^^ FAILED: $t"; fi
     echo
   done
   [ "$rc" = 0 ] && echo "✅ ALL SUITES PASSED" || echo "❌ SOME SUITES FAILED"
@@ -65,9 +88,9 @@ inner_jobs=$(( JOBS / 2 )); [ "$inner_jobs" -lt 1 ] && inner_jobs=1
 pids=()
 for t in $ORDER; do
   if [ "$t" = "test-export-suite.sh" ]; then
-    ( SUPERVISOR_TEST_JOBS="$inner_jobs" bash "$t" > "$OUT/$t.log" 2>&1; echo $? > "$OUT/$t.rc" ) &
+    ( SUPERVISOR_TEST_JOBS="$inner_jobs" run_test "$t" > "$OUT/$t.log" 2>&1; echo $? > "$OUT/$t.rc" ) &
   else
-    ( bash "$t" > "$OUT/$t.log" 2>&1; echo $? > "$OUT/$t.rc" ) &
+    ( run_test "$t" > "$OUT/$t.log" 2>&1; echo $? > "$OUT/$t.rc" ) &
   fi
   pids=(${pids[@]+"${pids[@]}"} "$!")
   if [ "${#pids[@]}" -ge "$JOBS" ]; then
