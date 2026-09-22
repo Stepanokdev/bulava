@@ -16,6 +16,7 @@ struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: Metrics.sectionGap) {
                     appearanceSection
+                    learningSection
                     engineSection
                     diagnosticsSection
                     advancedSection
@@ -115,6 +116,66 @@ struct SettingsView: View {
         .labelsHidden()
         .pickerStyle(.menu)
         .frame(width: 152)
+    }
+
+    // MARK: - Learning about the work
+
+    private var learningSection: some View {
+        SettingsSection("Learning about the work") {
+            VStack(spacing: 0) {
+                toggleRow("Dev Learning Mode",
+                          help: "Puts an “Explain what happened” button on a finished result. One read-only request per press — it changes nothing, does not take the worker’s session, and never runs on its own.",
+                          isOn: liveBinding(\.devLearningEnabled))
+                    .settingsRow()
+                    .accessibilityIdentifier("learning.mode")
+
+                // Only once the mode is on. The switch answers one question — are explanations
+                // offered — and a field for the audience underneath an off switch would make its
+                // position unreadable.
+                if model.settings.devLearningEnabled {
+                    Hairline()
+                    profileField
+                        .settingsRow()
+                }
+            }
+            .animation(Motion.expand, value: model.settings.devLearningEnabled)
+        }
+    }
+
+    /// Free text, not a list of roles. The one thing worth knowing about the reader is the thing
+    /// a list of presets leaves out.
+    private var profileField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Who you are")
+                .font(Typo.panelRow)
+                .foregroundStyle(Palette.text)
+            TextField("iOS developer, Swift. Not much backend.", text: boundedProfile)
+                .textFieldStyle(.plain)
+                .font(Typo.body)
+                .foregroundStyle(Palette.textSecondary)
+                .padding(.horizontal, 9)
+                .frame(height: Metrics.controlHeight)
+                .background(
+                    RoundedRectangle(cornerRadius: Metrics.radiusControl, style: .continuous)
+                        .fill(Palette.field)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Metrics.radiusControl, style: .continuous)
+                        .strokeBorder(Palette.lineStrong, lineWidth: Metrics.hairline)
+                )
+                .accessibilityIdentifier("learning.profile")
+            Text("Optional. Empty, and an explanation is written in plain words. Filled in, it is written through what you already know — a Python backend put in terms of iOS, say. Bulava never guesses this, and the worker doing the work never sees it.")
+                .font(Typo.panelMeta)
+                .foregroundStyle(Palette.textFaint)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Cut to the length the prompt will actually use, as it is typed — so what is on screen is
+    /// what an explanation is written for.
+    private var boundedProfile: Binding<String> {
+        Binding(get: { draft.learningProfile },
+                set: { draft.learningProfile = String($0.prefix(LearningProfile.limit)) })
     }
 
     // MARK: - What the work runs on
@@ -461,6 +522,10 @@ struct SettingsView: View {
         settings.codexEffort = model.settings.codexEffort
         settings.claudeStandsInForCodex = model.settings.claudeStandsInForCodex
         settings.workersMayDriveApps = model.settings.workersMayDriveApps
+        // The switch is live, like every other switch here. The profile is NOT: it is typed, and
+        // a live binding on a text field would write the whole settings file — and re-publish the
+        // engine's configuration — once per keystroke. It goes through draft and Save.
+        settings.devLearningEnabled = model.settings.devLearningEnabled
         return settings
     }
 
