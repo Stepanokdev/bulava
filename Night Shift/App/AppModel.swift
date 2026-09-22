@@ -90,6 +90,37 @@ final class AppModel {
 
     var searchPresented = false
 
+    // MARK: Find in the open conversation
+    //
+    // Only the triggers live here. The session itself — the phrase, the results, where the reader
+    // is among them — belongs to `ConversationView`, together with the scrolling and the focus it
+    // has to drive; it must die with the conversation it was searching. But a `CommandGroup`
+    // cannot see a view's state, so ⌘F and ⌘G reach it by pulsing these.
+
+    var findOpenRequest = UUID()
+    var findNextRequest = UUID()
+    var findPreviousRequest = UUID()
+
+    /// Set by the conversation while its find bar is up, so Find Next and Find Previous are not
+    /// offered when there is nothing to walk.
+    var findBarOpen = false
+
+    /// Whether there is an open conversation to search at all.
+    ///
+    /// A report or a gallery covers the thread entirely, and the palette and the sheets take the
+    /// keyboard; opening a find bar over a thread nobody can see would be a search of nothing.
+    var conversationFindReachable: Bool {
+        route.productID != nil
+            && selectedProduct != nil
+            && !fullScreenSurfacePresented
+            && !searchPresented
+            && productSheet == nil
+            && taskDetailID == nil
+            && renamingProductID == nil
+            && renamingChatID == nil
+            && webPreview == nil
+    }
+
     var productSheet: ProductSheetMode?
 
     var renamingProductID: UUID?

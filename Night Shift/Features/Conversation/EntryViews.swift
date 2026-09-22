@@ -22,6 +22,7 @@ struct EntryView: View {
 
 private struct MessageEntry: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.findMark) private var findMark
     let entry: ConversationEntry
     let isUser: Bool
     @State private var copied = false
@@ -74,11 +75,14 @@ private struct MessageEntry: View {
 
             if !entry.blocks.renderable.isEmpty {
                 BlockStack(blocks: entry.blocks, artifactBase: model.artifactBase,
+                               entryID: entry.id,
                                productID: entry.productID, chatID: entry.chatID)
             } else if !entry.text.isEmpty {
                 if isUser {
 
-                    Text(entry.text)
+                    // His own message is text the app builds itself, so Find marks the phrase
+                    // exactly where it stands rather than colouring the whole bubble.
+                    findMark.text(entry.text, entry: entry.id)
                         .messageStyle()
                         .foregroundStyle(replaced ? Palette.textFaint : Palette.text)
                         .strikethrough(replaced, color: Palette.textFaint)
@@ -109,7 +113,8 @@ private struct MessageEntry: View {
 
                     MarkdownProse(text: entry.text,
                                   fileRoots: model.fileRoots(forProductID: entry.productID, chatID: entry.chatID),
-                                  openWeb: { model.webPreview = $0 })
+                                  openWeb: { model.webPreview = $0 },
+                                  find: findMark.prose(entry: entry.id, markdown: entry.text))
                 }
             }
 
@@ -409,6 +414,7 @@ private struct DeliveryActionStyle: ButtonStyle {
 
 private struct CodexMessageEntry: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.findMark) private var findMark
     let entry: ConversationEntry
 
     var body: some View {
@@ -426,11 +432,13 @@ private struct CodexMessageEntry: View {
             Group {
                 if !entry.blocks.renderable.isEmpty {
                     BlockStack(blocks: entry.blocks, artifactBase: model.artifactBase,
+                               entryID: entry.id,
                                productID: entry.productID, chatID: entry.chatID)
                 } else {
                     MarkdownProse(text: entry.text,
                                   fileRoots: model.fileRoots(forProductID: entry.productID, chatID: entry.chatID),
-                                  openWeb: { model.webPreview = $0 })
+                                  openWeb: { model.webPreview = $0 },
+                                  find: findMark.prose(entry: entry.id, markdown: entry.text))
                 }
             }
             .padding(.leading, 25)
@@ -506,6 +514,7 @@ private struct DecisionEntry: View {
 
 struct QuestionEntry: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.findMark) private var findMark
     let entry: ConversationEntry
 
     @State private var answer = ""
@@ -616,6 +625,10 @@ struct QuestionEntry: View {
                 .padding(.vertical, 11)
             }
         }
+        // A question card is put together out of the decision it carries, not out of one string
+        // the app draws, so Find marks it whole.
+        .findHighlight(findMark.state(entry: entry.id,
+                                      text: ConversationFind.questionText(entry)))
         .padding(.leading, 25)
     }
 
