@@ -583,7 +583,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 1.7.13;
+				MARKETING_VERSION = 1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "stepanok.com.Night-Shift";
 				PRODUCT_NAME = Bulava;
 				REGISTER_APP_GROUPS = YES;
@@ -628,7 +628,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 1.7.13;
+				MARKETING_VERSION = 1.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "stepanok.com.Night-Shift";
 				PRODUCT_NAME = Bulava;
 				REGISTER_APP_GROUPS = YES;
