@@ -62,6 +62,11 @@ nonisolated struct FindPlace: Identifiable, Equatable, Sendable {
 
 nonisolated enum ConversationFind {
 
+    /// The explanation panel under a turn, which is not one of the entry's blocks: it is kept
+    /// outside the conversation on purpose (see `ExplanationStore`). Find still has to key an
+    /// anchor to it, so it borrows a block id no engine block can collide with.
+    static let explainBlock = "explain"
+
     /// The id both the view and the scroll use, so a jump lands on the thing that was found.
     static func anchor(entry: UUID, block: String?) -> String {
         guard let block else { return "find.entry.\(entry.uuidString)" }
@@ -120,7 +125,13 @@ nonisolated enum ConversationFind {
     /// draws the blocks and NOT its own text. `ConversationStore.updateBlocks` writes the same
     /// prose into both, so searching both would count every answer twice and the counter would be
     /// wrong in a way nobody could explain.
-    static func places(in entries: [ConversationEntry], query: String) -> [FindPlace] {
+    ///
+    /// `explained` is what each turn's explanation panel is showing, keyed by the turn — already
+    /// reduced to displayed words by `explainedText`. It is passed in rather than read here
+    /// because explanations live in a store of their own, beside the conversation rather than in
+    /// it, and this index is a pure function of what is on the page.
+    static func places(in entries: [ConversationEntry], query: String,
+                       explained: [UUID: String] = [:]) -> [FindPlace] {
         guard !query.isEmpty else { return [] }
         var out: [FindPlace] = []
 
@@ -158,6 +169,18 @@ nonisolated enum ConversationFind {
             case .task, .report, .decision, .event:
                 continue
             }
+
+            // The explanation panel is drawn under everything else in the turn, so it is read —
+            // and found — last. One `.whole` result for the whole panel rather than one per
+            // paragraph: the reader can fold it away, and a jump has to land on something that
+            // is on screen.
+            if let text = explained[entry.id] {
+                let count = mentions(in: text, query: query)
+                if count > 0 {
+                    out.append(FindPlace(entryID: entry.id, blockID: explainBlock, mark: .whole,
+                                         mentions: count, opensBlock: true))
+                }
+            }
         }
         return out
     }
@@ -174,6 +197,16 @@ nonisolated enum ConversationFind {
     /// is on its header even while it is folded.
     static func consultText(answer: String, ask: String?) -> String {
         [displayedText(ofMarkdown: answer), ask ?? ""]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+    }
+
+    /// What the explanation panel under a turn puts on screen: the short explanation, and the
+    /// walk-through under it once one has been asked for.
+    static func explainedText(brief: String?, stepByStep: String?) -> String {
+        [brief, stepByStep]
+            .compactMap { $0 }
+            .map { displayedText(ofMarkdown: $0) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
     }
@@ -442,7 +475,7 @@ extension EnvironmentValues {
 
 // MARK: - A card Find may open
 
-/// A card folded by default, which Find may open and the reader may fold again.
+/// A card the reader can fold, which Find may open and the reader may fold again.
 ///
 /// Find opening a card is a loan, not a decision: the reader's own `expanded` is never written
 /// to, so closing the search leaves every card exactly as they had it. But while Find is holding
@@ -451,10 +484,13 @@ extension EnvironmentValues {
 /// comes back to this card. Without the second half, a card Find had opened answered every press
 /// of its own Hide button by staying open.
 nonisolated struct FoldedByDefault: Equatable, Sendable {
-    private var expanded = false
+    private var expanded: Bool
     private var overruledFind = false
 
-    init() {}
+    /// Where the card starts. Folded for a consultation, whose answer is often two pages and
+    /// whose paraphrase above it is usually what was wanted; open for an explanation, which is
+    /// on screen because somebody pressed a button asking for it.
+    init(expanded: Bool = false) { self.expanded = expanded }
 
     func showing(findOpened: Bool) -> Bool { expanded || (findOpened && !overruledFind) }
 

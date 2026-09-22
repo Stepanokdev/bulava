@@ -68,7 +68,7 @@ case "$cmd" in
     if [ "${SUPERVISOR_SKILL_NO_CODEX:-0}" != 1 ] && command -v codex >/dev/null 2>&1; then
       prompt="$(sed "s#{{SKILL_DIR}}#$SKILLDIR#" "$ROOT/supervisor/SKILL-AUDIT-PROMPT.md" 2>/dev/null)
 <<UNTRUSTED_SKILL_DATA>>
-$(find "$SKILLDIR" -type f -not -path '*/.git/*' 2>/dev/null | while read -r f; do echo "----- $f -----"; head -c 4000 "$f"; echo; done)
+$(find "$SKILLDIR" -type f -not -path '*/.git/*' 2>/dev/null | while read -r f; do echo "----- $f -----"; clip_utf8 4000 < "$f"; echo; done)
 <<END>>"
       b_out="$(perl -e 'alarm shift; exec @ARGV' "$SCHEMA_TO" codex exec $(codex_effort_flags) --sandbox read-only --skip-git-repo-check "$prompt" 2>>"$CODEX_LOG")"
       b_verdict="$(printf '%s' "$b_out" | grep -m1 -oiE 'VERDICT: *(PASS|PROPOSE|REJECT)' | grep -oiE 'PASS|PROPOSE|REJECT' | tr a-z A-Z || echo INCONCLUSIVE)"

@@ -38,7 +38,7 @@ case "$cmd" in
     for d in $(ls -1d "$PEND"/*/ 2>/dev/null | sort); do
       n=$((n+1)); d="${d%/}"
       echo "$(basename "$d" | cut -d- -f1).  $(cat "$d/project")"
-      echo "      → $(head -c 100 "$d/task")"
+      echo "      → $(clip_utf8 100 < "$d/task")"
     done
     [ "$n" = 0 ] && echo "(черга порожня)"
     if runner_alive; then

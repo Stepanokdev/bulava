@@ -84,7 +84,7 @@ _rj="$IDIR/reports/review.json"
 if [ -f "$_rj" ]; then
   REVIEW_STATE="$(jq -r '.state // ""' "$_rj" 2>/dev/null)"
   REVIEW_DISP="$(jq -r '.disposition // ""' "$_rj" 2>/dev/null)"
-  REVIEW_WHY="$(jq -r '.findings // ""' "$_rj" 2>/dev/null | head -c 800)"
+  REVIEW_WHY="$(jq -r '.findings // ""' "$_rj" 2>/dev/null | clip_utf8 800)"
 fi
 CRITERIA_TEXT=""
 _dfile="$SUP_STATE/runs/$(cat "$IDIR/run-id" 2>/dev/null)/criteria-decisions.jsonl"
@@ -160,10 +160,10 @@ What this run actually produced:
 $AVAILABLE
 
 Findings it filed (kind + text — a blocker that was later retracted is NOT an open blocker):
-$(printf '%s' "$FINDINGS_JSON" | jq -r '.[] | "- [\(.kind)] \(.text)"' 2>/dev/null | head -c 1500)
+$(printf '%s' "$FINDINGS_JSON" | jq -r '.[] | "- [\(.kind)] \(.text)"' 2>/dev/null | clip_utf8 1500)
 
 Machine evidence:
-$(printf '%s' "$EVIDENCE_JSON" | jq -r 'if .==null then "(the verifier did not run)" else "overall: \(.overall_status // "?") — " + ((.criteria // []) | map("\(.criterion)=\(.status)") | join(", ")) end' 2>/dev/null | head -c 900)
+$(printf '%s' "$EVIDENCE_JSON" | jq -r 'if .==null then "(the verifier did not run)" else "overall: \(.overall_status // "?") — " + ((.criteria // []) | map("\(.criterion)=\(.status)") | join(", ")) end' 2>/dev/null | clip_utf8 900)
 
 $BLOCK_SPEC"
   case "$WRITER" in

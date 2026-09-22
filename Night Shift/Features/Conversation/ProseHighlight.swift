@@ -130,9 +130,17 @@ nonisolated enum ProseStyle {
     static let bodyLineSpacing = 0.22
     static let codeBlockLineSpacing = 0.2
 
-    static let body = Font.system(size: bodySize)
-    static let inlineCode = Font.system(size: inlineCodeSize, design: .monospaced)
-    static let codeBlock = Font.system(size: codeBlockSize, design: .monospaced)
+    /// Rounded, because that is the size MarkdownUI actually draws: `Font.withProperties` takes
+    /// `round(size * scale)`, so a `FontSize(13.5)` in the theme comes out as a 14pt face. Asking
+    /// SwiftUI for 13.5 here instead gave a line one point shorter, and a three-line paragraph
+    /// therefore rose by three points the moment somebody searched a word in it — the exact
+    /// relayout this whole file exists to prevent.
+    static let body = Font.system(size: drawn(bodySize))
+    static let inlineCode = Font.system(size: drawn(inlineCodeSize), design: .monospaced)
+    static let codeBlock = Font.system(size: drawn(codeBlockSize), design: .monospaced)
+
+    /// The point size MarkdownUI resolves a `FontSize` to.
+    static func drawn(_ size: CGFloat) -> CGFloat { size.rounded() }
 
     static func headingSize(_ level: Int) -> CGFloat {
         switch level {
@@ -143,7 +151,7 @@ nonisolated enum ProseStyle {
     }
 
     static func heading(_ level: Int) -> Font {
-        .system(size: headingSize(level), weight: .semibold)
+        .system(size: drawn(headingSize(level)), weight: .semibold)
     }
 }
 

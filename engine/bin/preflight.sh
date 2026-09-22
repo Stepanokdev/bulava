@@ -94,7 +94,27 @@ stage_log_for() {   # $1 = stage name
 render() { TASK="$task" perl -0777 -pe '
   for my $k (qw(TASK CONTEXT RECENT RESEARCH DESIGN ARGUE PLAN_A PLAN_B BRIEF_A BRIEF_B)) { my $v = defined $ENV{$k} ? $ENV{$k} : ""; s/\Q{{$k}}\E/$v/g; }
   ' "$1" 2>/dev/null; }
-codex_ro() { perl -e 'alarm shift; exec @ARGV' "$1" codex exec $(codex_effort_flags) --sandbox read-only --skip-git-repo-check "${@:2}" </dev/null 2>>"${STAGE_LOG:-$LOG}"; }
+# Nothing reaches a peer's argv unchecked.
+#
+# `codex exec` refuses the WHOLE invocation when any argument is not valid UTF-8, and it does so
+# in its argument parser — before the session opens, before the sandbox, five seconds in, with
+# `error: invalid UTF-8 was detected in one or more arguments` followed by a usage block that the
+# diagnostic below then dutifully quoted instead of the error. The truncations that used to
+# produce such an argument all go through `clip_utf8` now, so what is left is a stored context
+# file that was already broken when it arrived — and for that the reader needs to be told where
+# it came from, not handed clap's opinion of it.
+prompt_is_sound() {   # $1 = the prompt about to be an argument
+  printf '%s' "${1:-}" | text_is_utf8 && return 0
+  printf '%s [preflight] the prepared prompt is not valid UTF-8 — codex exec would refuse it before starting; check %s\n' \
+    "$(date '+%F %T')" "${SUPERVISOR_CHAT_CONTEXT_FILE:-the context and alignment files}" \
+    >> "${STAGE_LOG:-$LOG}" 2>/dev/null || true
+  return 1
+}
+
+codex_ro() {
+  prompt_is_sound "${*: -1}" || return 90
+  perl -e 'alarm shift; exec @ARGV' "$1" codex exec $(codex_effort_flags) --sandbox read-only --skip-git-repo-check "${@:2}" </dev/null 2>>"${STAGE_LOG:-$LOG}";
+}
 claude_plan() { ( cd "$PROJ" && perl -e 'alarm shift; exec @ARGV' "$1" claude -p $(claude_effort_args) ${SUPERVISOR_CLAUDE_MODEL:+--model "$SUPERVISOR_CLAUDE_MODEL"} --permission-mode plan "$2" </dev/null 2>>"${STAGE_LOG:-$LOG}" ); }
 
 
@@ -133,6 +153,9 @@ run_peer() {   # $1=who  $2=prompt  $3=file to leave the final text in  [$4=labe
   poll="${SUPERVISOR_PEER_POLL:-5}"
   PEER_IDLE_FOR=0; PEER_EXIT=0
   : > "$stream"; : > "$outfile"
+
+  # Before the call, not five seconds into it. See `prompt_is_sound`.
+  prompt_is_sound "$prompt" || return 5
 
   if [ "$who" = claude ]; then
     ( cd "$PROJ" && exec claude -p --output-format stream-json --verbose --include-partial-messages \
@@ -200,14 +223,14 @@ build_context() {
   f="${SUPERVISOR_CHAT_CONTEXT_FILE:-}"
   if [ -n "$f" ] && [ -s "$f" ]; then
     out="--- PRODUCT AND PROJECT CONTEXT (the implementer receives this same text) ---
-$(head -c 6000 "$f" 2>/dev/null)"
+$(clip_utf8 6000 < "$f" 2>/dev/null)"
   fi
   f="${SUPERVISOR_EXTRA_DIRS_FILE:-}"
   if [ -n "$f" ] && [ -s "$f" ]; then
     out="$out
 
 --- ADDITIONAL READABLE DIRECTORIES ---
-$(head -c 2000 "$f" 2>/dev/null)"
+$(clip_utf8 2000 < "$f" 2>/dev/null)"
   fi
   printf '%s' "$out"
 }
@@ -394,10 +417,31 @@ clear_peer_claims() {
 # it reads the same whether the login expired, the window ran out or the binary is missing. The
 # sentence that WOULD say which has been written to the stage log all along and was never read by
 # anyone. Codex's own "Reading additional input from stdin..." is noise, not news.
+#
+# And it is not the LAST lines either. A CLI that refuses its arguments says why on line 1 and
+# then prints five lines of usage, so `tail -2` kept the usage and threw the reason away — an
+# evening went into "codex exec [OPTIONS] <COMMAND> [ARGS] For more information, try '--help'",
+# which says nothing about what went wrong. The first line that names a cause wins; the tail is
+# still there for everything that does not announce itself that way.
 peer_stderr_note() {   # $1=stage log
   [ -s "${1:-}" ] || return 0
-  grep -v -e '^[[:space:]]*$' -e 'Reading additional input from stdin' "$1" 2>/dev/null \
-    | tail -2 | tr '\n' ' ' | sed 's/[[:space:]]\{2,\}/ /g' | cut -c1-240
+  local clean note
+  clean="$(grep -v -e '^[[:space:]]*$' -e 'Reading additional input from stdin' "$1" 2>/dev/null)"
+  [ -n "$clean" ] || return 0
+  # From the first line that names a cause, and the two after it — a CLI that prints a bare
+  # "error:" and puts the sentence on the next line would otherwise be quoted as "error:".
+  # Usage text is dropped wherever it lands: it is what a parser prints AFTER the reason, never
+  # the reason.
+  note="$(printf '%s\n' "$clean" \
+    | awk 'BEGIN { seen = 0 }
+           !seen && /^([[:space:]]*)(error|Error|ERROR)[:[:space:]]|invalid|[Nn]ot logged in|[Uu]nauthorized|401|403|quota|rate limit/ { seen = 1 }
+           seen { print; if (++n == 3) exit }' \
+    | grep -v -E "^Usage:|^For more information|^Options:|^Commands:|^Arguments:|try .--help.")"
+  [ -n "$note" ] || note="$(printf '%s\n' "$clean" \
+      | grep -v -E "^Usage:|^For more information|^Options:|^Commands:|^Arguments:|try .--help." \
+      | tail -2)"
+  [ -n "$note" ] || note="$(printf '%s\n' "$clean" | tail -2)"
+  printf '%s' "$note" | tr '\n' ' ' | sed 's/[[:space:]]\{2,\}/ /g' | cut -c1-240
 }
 
 # Why a position will be missing, written where both the brief and the app read it.
@@ -422,6 +466,20 @@ stage_peer() {   # $1 = claude|codex
   fi
   out="$ART/peer-$who.md"; tmp="$ART/.peer-$who.partial"
   STAGE_LOG="$(stage_log_for "peer-$who")"
+  # Fresh for THIS attempt. `peer_stderr_note` takes the first line that names a cause, and a log
+  # that accumulates across retries would hand it a 401 from an hour ago as the explanation for
+  # what just happened.
+  : > "$STAGE_LOG" 2>/dev/null || true
+
+  # Before anything is published about this call. `run_peer` checks too, for the align stage, but
+  # by then the app has already been told a peer is reading — and a peer that cannot start has
+  # not been reading for ten seconds.
+  if ! prompt_is_sound "$prompt"; then
+    peer_unavailable "$who" "$who не запускався: підготовлений текст питання не є коректним UTF-8, і CLI відхилив би виклик ще до старту сесії. Це не збій моделі — зіпсуті байти прийшли зі збереженого контексту, і виправляти треба джерело"
+    rm -f "$IDIR/peer-$who.running" 2>/dev/null || true
+    log "peer/$who: NOT STARTED — the prepared prompt is not valid UTF-8"
+    return 1
+  fi
   # A signed-out Codex is not a slow Codex. It answers 401 in twenty seconds, every time, and the
   # meter below cannot see it: that meter reads the last successful measurement, so a login that
   # died an hour ago still shows a half-full window. Asked here, the stage is skipped in a tenth of
@@ -511,12 +569,21 @@ stage_peer() {   # $1 = claude|codex
   case "$rc" in
     2) reason="$who замовк на ${PEER_IDLE_FOR}с і не подавав ознак роботи — виклик зупинено" ;;
     3) reason="$who завершився без помилки, але не сказав нічого" ;;
+    5) reason="$who не запускався: підготовлений текст питання не є коректним UTF-8, і CLI відхилив би виклик ще до старту сесії. Це не збій моделі — зіпсутий текст прийшов із збереженого контексту, і його треба виправити в джерелі" ;;
     *) reason="$who зупинився з помилкою (код ${PEER_EXIT:-$rc}) через ${elapsed}с" ;;
   esac
   [ -n "$note" ] && reason="$reason — $note"
   [ -n "$(auth_failure_hint "$note")" ] && reason="$reason $(auth_failure_hint "$note")"
   [ "$shape" = "partial output discarded" ] \
     && reason="$reason; неповну відповідь відкинуто, бо половина позиції — не позиція"
+  # The whole log, not just the line that fitted. Two hundred and forty characters of a CLI's last
+  # words are a hint; the file behind them is the answer, and the app draws an absolute path as a
+  # link the director can open.
+  #
+  # On ONE line, and that is not cosmetic: `settle_plan` sets this sentence inside "Позиції %s
+  # немає (…)", so a reason with a newline in it leaves the closing bracket on a line of its own
+  # and the brief reads as though it had been cut off.
+  [ -s "$STAGE_LOG" ] && reason="$reason; повний лог: $STAGE_LOG"
   peer_unavailable "$who" "$reason"
   log "peer/$who: FAILED after ${elapsed}s (exit $rc, $shape) — $reason"
   return 1
@@ -553,6 +620,7 @@ stage_align() {
   rm -f "$ART/.align.partial" 2>/dev/null || true
   case "$rc" in
     2) log "align: STOPPED after ${PEER_IDLE_FOR}s of silence — both positions stay available, work continues without the comparison" ;;
+    5) log "align: NOT STARTED — the assembled prompt is not valid UTF-8; both positions stay available, work continues without the comparison" ;;
     *) log "align: FAILED (exit ${PEER_EXIT:-$rc}) — both positions stay available, work continues without the comparison" ;;
   esac
   return 1

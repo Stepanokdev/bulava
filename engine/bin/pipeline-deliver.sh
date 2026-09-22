@@ -84,7 +84,7 @@ case "$rc" in
     rm -f "$IDIR/resume-pending" 2>/dev/null || true
     cleanup_handoff
     [ -n "$MSG_ID" ] && reset_review_budget "$IDIR"
-    journal_event "$IDIR" dispatch-delivered "$(printf '%s' "$TASK" | head -c 160)" \
+    journal_event "$IDIR" dispatch-delivered "$(printf '%s' "$TASK" | clip_utf8 160)" \
       "$(jq -nc --arg p "${PIPE_PIPELINE:-plain}" '{source:"pipeline", pipeline:$p}')"
     exit 0 ;;
   *)

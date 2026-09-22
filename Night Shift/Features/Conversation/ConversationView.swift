@@ -127,6 +127,11 @@ struct ConversationView: View {
             // An answer still being written grows the results under the reader. The cursor is
             // held by identity, so it stays on the very result they are standing on.
             .onChange(of: tailSignature) { _, _ in refreshFind() }
+            // An explanation finishing adds words to a turn that is otherwise standing still,
+            // so the counter has to be told about it the same way. Watching the assembled prose
+            // rather than the store's count also catches "Explain again", which replaces one in
+            // place; while nobody is searching it is empty and this costs nothing.
+            .onChange(of: explainedProse) { _, _ in refreshFind() }
 
             .onChange(of: findShown) { _, shown in model.findBarOpen = shown }
             .onDisappear { model.findBarOpen = false }
@@ -245,7 +250,24 @@ struct ConversationView: View {
             if find.query.isEmpty { follow.unpin() }
             return
         }
-        find.refresh(ConversationFind.places(in: entries, query: find.query))
+        find.refresh(ConversationFind.places(in: entries, query: find.query,
+                                             explained: explainedProse))
+    }
+
+    /// What each turn's explanation panel is showing, for the index to walk with everything else
+    /// on the page. Empty while nobody is searching — rendering every stored explanation to plain
+    /// text costs more than the thread itself, and nothing needs it until a phrase is typed.
+    private var explainedProse: [UUID: String] {
+        guard findShown, !find.query.isEmpty else { return [:] }
+        var out: [UUID: String] = [:]
+        for entry in entries where entry.kind == .foreman {
+            let state = model.explainState(turn: entry)
+            guard state.hasAnything else { continue }
+            let text = ConversationFind.explainedText(brief: state.brief?.text,
+                                                      stepByStep: state.stepByStep?.text)
+            if !text.isEmpty { out[entry.id] = text }
+        }
+        return out
     }
 
     private func go(to place: FindPlace, _ proxy: ScrollViewProxy) {
