@@ -286,6 +286,10 @@ final class ChatTranscriptFeed {
             }
             store.updateBlocks(entryID: id, blocks: blocks,
                                text: turn.reducer.plainText, persist: persist)
+            // The reducer's own answer, written down while it is still in hand. Nothing outside
+            // this fold can work it out afterwards, and the action that explains a finished result
+            // needs it — see `ConversationEntry.turnFinished`.
+            store.setTurnFinished(entryID: id, turn.reducer.isFinished)
         }
         retireStaleSegments()
         adoptLegacyReportKey()

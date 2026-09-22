@@ -248,6 +248,25 @@ final class AppModel {
     let products = ProductsStore()
     let conversations = ConversationStore()
 
+    // MARK: Explaining a result
+
+    let explanations = ExplanationStore()
+
+    /// Records with an explanation being written right now, keyed the same way the store is.
+    ///
+    /// Keyed by RECORD and depth rather than by chat, unlike `generatingChatReportIDs`: keyed by
+    /// chat, explaining one answer would lock every other answer in the same conversation, and a
+    /// night task and the turn above it could not be read at the same time.
+    private(set) var explainInFlight: Set<String> = []
+
+    /// Why the last attempt on a record came to nothing, in words worth showing. Cleared on the
+    /// next attempt, so a refusal is never permanent.
+    private(set) var explainErrors: [String: String] = [:]
+
+    func beginExplaining(_ key: String) { explainInFlight.insert(key); explainErrors[key] = nil }
+    func endExplaining(_ key: String) { explainInFlight.remove(key) }
+    func failExplaining(_ key: String, _ reason: String) { explainErrors[key] = reason }
+
     let icons = ProductIcons()
 
     let workItems = WorkItemStore()

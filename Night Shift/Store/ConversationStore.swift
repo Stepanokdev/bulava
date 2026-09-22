@@ -16,6 +16,7 @@ final class ConversationStore {
         chatFile = JSONFile<[Chat]>(url: chatsURL)
         entries = file.load() ?? []
         chats = chatFile.load() ?? []
+        adoptFinishedTurns()
         heal()
     }
 
@@ -362,6 +363,34 @@ final class ConversationStore {
               entries[i].hiddenNotice != true else { return }
         entries[i].hiddenNotice = true
         persist()
+    }
+
+    /// Record whether the turn behind an entry has ended.
+    ///
+    /// Called by `ChatTranscriptFeed.publish` on every drain with the reducer's own answer, so it
+    /// corrects itself as well as sets: a segment the fold decides to keep writing goes back to
+    /// unfinished, and the action that reads this disappears while it does. Persisted only on a
+    /// change, because the drain runs once a second.
+    func setTurnFinished(entryID: UUID, _ finished: Bool) {
+        guard let i = entries.firstIndex(where: { $0.id == entryID }),
+              entries[i].turnFinished != finished else { return }
+        entries[i].turnFinished = finished
+        persist()
+    }
+
+    /// Settle the entries written before anything recorded this, once.
+    ///
+    /// Launch is the one moment when the answer is knowable without the fold: no feed has started,
+    /// so nothing in the file is being written to. An answer that was cut off by a crash is
+    /// finished in the only sense that matters here — it is not streaming — and if its session is
+    /// resumed the fold says so again on its first drain.
+    private func adoptFinishedTurns() {
+        var touched = false
+        for i in entries.indices where entries[i].kind == .foreman && entries[i].turnFinished == nil {
+            entries[i].turnFinished = true
+            touched = true
+        }
+        if touched { persist() }
     }
 
     func dropIfEmpty(entryID: UUID) {

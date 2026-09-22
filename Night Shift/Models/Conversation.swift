@@ -153,6 +153,21 @@ nonisolated struct ConversationEntry: Identifiable, Codable, Equatable, Sendable
     /// refused message showed the first one's offer: pressing it re-sent the wrong text.
     var codexWall: String?
 
+    /// The turn behind this entry has ended. Written by the feed that builds the entry, because
+    /// nothing else in the app can know it.
+    ///
+    /// `TurnReducer.isFinished` lives in the fold and is gone by the time anyone asks, and every
+    /// cheaper reading is wrong in both directions: `isDirectChatBusy` is true while a review, an
+    /// audit or a preparation holds a chat whose last answer finished minutes ago, and false for a
+    /// worker that is merely holding a question, paused on a usage window or waiting out a network
+    /// outage — see `SupervisorInstance.waitingToContinue`. And "the newest entry in a busy chat"
+    /// loses the finished answer for as long as it takes a freshly sent message to produce its
+    /// first block.
+    ///
+    /// Optional because every entry written before this existed has no answer; `adoptFinishedTurns`
+    /// settles those once, at launch, when by definition nothing is streaming.
+    var turnFinished: Bool?
+
     init(id: UUID = UUID(),
          productID: UUID,
          chatID: UUID? = nil,
@@ -167,7 +182,8 @@ nonisolated struct ConversationEntry: Identifiable, Codable, Equatable, Sendable
          decision: DecisionRecord? = nil,
          delivery: Delivery? = nil,
          hiddenNotice: Bool? = nil,
-         codexWall: String? = nil) {
+         codexWall: String? = nil,
+         turnFinished: Bool? = nil) {
         self.id = id
         self.productID = productID
         self.chatID = chatID
@@ -183,6 +199,7 @@ nonisolated struct ConversationEntry: Identifiable, Codable, Equatable, Sendable
         self.delivery = delivery
         self.hiddenNotice = hiddenNotice
         self.codexWall = codexWall
+        self.turnFinished = turnFinished
     }
 
     init(from decoder: Decoder) throws {
@@ -202,6 +219,7 @@ nonisolated struct ConversationEntry: Identifiable, Codable, Equatable, Sendable
         delivery = try? c.decodeIfPresent(Delivery.self, forKey: .delivery)
         hiddenNotice = try? c.decodeIfPresent(Bool.self, forKey: .hiddenNotice)
         codexWall = try? c.decodeIfPresent(String.self, forKey: .codexWall)
+        turnFinished = try? c.decodeIfPresent(Bool.self, forKey: .turnFinished)
     }
 
     var isSpoken: Bool { kind == .user || kind == .foreman || kind == .codex }
