@@ -332,6 +332,110 @@ abs_target() {  # $1=cwd  $2=file_path → absolute path on stdout
   _lexical_abs "$full"
 }
 
+# ------------------------------------------------------------------ text that survives the trip
+#
+# `head -c` counts BYTES. Every Cyrillic letter in this product is two of them, every dash and
+# quotation mark three, every emoji four — so a byte limit lands mid-character sooner or later, and
+# what it leaves behind is not UTF-8 at all. The prompt then travels as an argv to `codex exec`,
+# whose argument parser refuses the whole invocation before the session opens:
+#
+#     error: invalid UTF-8 was detected in one or more arguments
+#
+# Codex did not take part in that night's work, and nothing said why — the diagnostic below is the
+# other half of the same evening. The same broken bytes reaching `jq --arg` do not announce
+# themselves at all: jq 1.8 writes U+FFFD where the half-character was and exits 0, so the journal
+# keeps a record of a question nobody asked.
+#
+# `claude_last_reply` already solved this for its own excerpt, whole lines at a time, and says so
+# in a comment. These two are that rule made available to everything else.
+
+# The longest prefix of stdin that fits in $1 BYTES and ends on a character boundary.
+#
+# The budget stays in bytes on purpose: it is the size of the prompt that matters, and a character
+# limit would quietly triple it for a Ukrainian task. Bytes already invalid on the way in are left
+# as they are — repairing them here would hide where they came from, which is what `text_is_utf8`
+# is for.
+clip_utf8() {   # $1 = byte budget
+  perl -e '
+    my $max = shift // 0;
+    binmode(STDIN); binmode(STDOUT);
+    my $s = "";
+    if ($max > 0) {
+      # Only what the budget can possibly need, plus the four bytes of the character that may
+      # straddle it. `head -c` stopped reading at the limit; a slurp would sit on an open pipe
+      # for ever and hold a whole file in memory to throw most of it away.
+      my $want = $max + 4;
+      while (length($s) < $want) {
+        my $got = read(STDIN, my $buf, $want - length($s));
+        last if !defined $got || $got == 0;
+        $s .= $buf;
+      }
+    } else {
+      # No budget means no limit, which is what a caller passing nothing asks for.
+      $s = do { local $/; <STDIN> };
+      $s = "" unless defined $s;
+    }
+    if ($max > 0 && length($s) > $max) {
+      $s = substr($s, 0, $max);
+      my $end = length($s);
+      for (my $j = $end - 1; $j >= 0 && $j > $end - 5; $j--) {
+        my $b = ord(substr($s, $j, 1));
+        next if ($b & 0xC0) == 0x80;          # a continuation byte: keep walking back
+        my $need = ($b & 0x80) == 0x00 ? 1
+                 : ($b & 0xE0) == 0xC0 ? 2
+                 : ($b & 0xF0) == 0xE0 ? 3
+                 : ($b & 0xF8) == 0xF0 ? 4
+                 : 0;                          # not a lead byte at all
+        $s = substr($s, 0, $j) if $need == 0 || $j + $need > $end;
+        last;
+      }
+    }
+    print $s;
+  ' "${1:-0}"
+}
+
+# Is stdin valid UTF-8? Asked locally, before an argument parser answers it for us five seconds
+# into a call nobody can read the error of.
+#
+# Written out as the Unicode well-formed-byte-sequence table rather than handed to a library,
+# because two libraries were tried first and both answered the wrong question:
+#
+#   - `iconv -f UTF-8 -t UTF-8 >/dev/null` — Apple's iconv exits 1 with "iconv(): Inappropriate
+#     ioctl for device" on perfectly good multibyte input whenever its stdout is /dev/null.
+#     Measured on a 6 KB Ukrainian prompt that Perl and Python both decode without complaint.
+#   - `Encode::decode("UTF-8", …, FB_CROAK)` — refuses the noncharacters U+FDD0 and U+FFFE, and
+#     refuses U+10FFFF, which is simply the last character there is.
+#
+# Either one turns "Codex refuses broken text" into "Codex will not run on a Ukrainian task",
+# which is worse than the defect being fixed. The table below is the rule the CLI on the other
+# side actually applies: every scalar value, minus the surrogates, minus overlong encodings,
+# minus anything past U+10FFFF.
+text_is_utf8() {
+  perl -e '
+    use strict;
+    binmode(STDIN);
+    my $s = do { local $/; <STDIN> };
+    $s = "" unless defined $s;
+    my $n = length($s);
+    pos($s) = 0;
+    # A chunk at a time, and that is not an optimisation. `(?:…)*+` over the whole string stops
+    # matching somewhere past thirty thousand repetitions and reports NO MATCH, with no warning —
+    # so a one-megabyte prompt that is perfectly good came back refused.
+    1 while $s =~ m{\G(?:
+          [\x00-\x7F]
+        | [\xC2-\xDF][\x80-\xBF]
+        | \xE0[\xA0-\xBF][\x80-\xBF]
+        | [\xE1-\xEC][\x80-\xBF]{2}
+        | \xED[\x80-\x9F][\x80-\xBF]
+        | [\xEE-\xEF][\x80-\xBF]{2}
+        | \xF0[\x90-\xBF][\x80-\xBF]{2}
+        | [\xF1-\xF3][\x80-\xBF]{3}
+        | \xF4[\x80-\x8F][\x80-\xBF]{2}
+      ){1,4096}}gcx;
+    exit((pos($s) // 0) == $n ? 0 : 1);
+  '
+}
+
 TASK_PREFIX_SCOPED="Пиши тільки в межах write_paths цього RunSpec; помічене поза ними — через report-finding, не редагуй. Саму задачу виконай ПОВНІСТЮ (acceptance — це як її перевірятимуть, а не менша версія задачі). Задача:"
 
 TASK_PREFIX_BROAD="Працюй за стандартами якості (дизайн-скіли для візуального, humanizer лише для user-facing тексту, без AI-slop, без заглушок). Задача:"
@@ -419,7 +523,7 @@ open_revision() {
     && mv -f "$idir/dispatch.json.tmp" "$idir/dispatch.json" \
     || rm -f "$idir/dispatch.json.tmp" 2>/dev/null || true
   echo "$(date '+%F %T') [revision] $did → $(basename "$idir")" >> "$SUP_STATE/supervisor.log"
-  journal_event "$idir" revision "$(printf '%s' "$asked" | head -c 160)" '{"source":"director"}'
+  journal_event "$idir" revision "$(printf '%s' "$asked" | clip_utf8 160)" '{"source":"director"}'
   report_directive "$dir"
 }
 
@@ -480,7 +584,7 @@ compose_task_prompt() {   # stdout = full injected task
       printf 'Якщо, прочитавши це, ти бачиш що воно насправді НЕ про поточну задачу, а окрема робота — скажи це рушію: `%s/task-boundary new "що це за задача"`. Тоді бриф для Codex, перевірка і звіт підуть за новою межею, а не за старою метою.\n' "$idir"
     fi
     if [ -s "$art/degraded.md" ]; then
-      printf '\n[ДЕГРАДОВАНИЙ РЕЖИМ] %s\n' "$(head -c 600 "$art/degraded.md" 2>/dev/null)"
+      printf '\n[ДЕГРАДОВАНИЙ РЕЖИМ] %s\n' "$(clip_utf8 600 < "$art/degraded.md" 2>/dev/null)"
       printf 'Це не блокер і не привід зупинятися. Працюй на доказах з репозиторію, ухвалюй оборотні рішення сам — і поверни другу модель у роботу на першій же консультації чи фінальній перевірці, коли вона стане доступною.\n'
     fi
     if [ -s "$art/peer-claude.md" ] || [ -s "$art/peer-codex.md" ] || [ -s "$art/peer-alignment.md" ]; then
@@ -2153,7 +2257,7 @@ codex_owe_consultation() {   # $1=idir $2=call number $3=question $4=why it went
   local idir="${1:-}" n="${2:-0}" q="${3:-}" why="${4:-}" own rid
   [ -n "$idir" ] && [ -d "$idir" ] || return 1
   own="$(_codex_owner "$idir")"; rid="${own%% *}"
-  jq -nc --argjson n "$n" --arg q "$(printf '%s' "$q" | head -c 400)" --arg w "$why" \
+  jq -nc --argjson n "$n" --arg q "$(printf '%s' "$q" | clip_utf8 400)" --arg w "$why" \
      --arg rid "$rid" --argjson at "$(date +%s)" \
      '{call:$n, question:$q, reason:$w, at:$at, run_id:$rid}' \
      >> "$idir/consult-unanswered.jsonl" 2>/dev/null || return 1
@@ -2662,11 +2766,11 @@ thread_brief() {   # $1=idir $2=project dir $3=new message (optional)
   [ -n "$obj" ] || return 1
   rev="$(thread_get "$idir" '.revision')"; case "$rev" in ''|*[!0-9]*) rev=1 ;; esac
 
-  printf '## ПОТОЧНА ЗАДАЧА (ревізія %s)\n%s\n' "$rev" "$(printf '%s' "$obj" | head -c 1500)"
+  printf '## ПОТОЧНА ЗАДАЧА (ревізія %s)\n%s\n' "$rev" "$(printf '%s' "$obj" | clip_utf8 1500)"
 
   if [ -s "$idir/peer-alignment.md" ]; then
     printf '\n## Звірена позиція, з якої почалася робота\n%s\n' \
-      "$(head -c 1200 "$idir/peer-alignment.md" 2>/dev/null)"
+      "$(clip_utf8 1200 < "$idir/peer-alignment.md" 2>/dev/null)"
   fi
 
   if [ -n "$proj" ] && [ -d "$proj" ]; then
@@ -2693,7 +2797,7 @@ thread_brief() {   # $1=idir $2=project dir $3=new message (optional)
   n="$(claude_last_reply "$idir" 2>/dev/null || true)"
   [ -n "$n" ] && printf '\n## Останнє, що Claude сказав директорові (нове повідомлення відповідає САМЕ на це)\n%s\n' "$n"
 
-  [ -n "$msg" ] && printf '\n## Саме нове питання\n%s\n' "$(printf '%s' "$msg" | head -c 2000)"
+  [ -n "$msg" ] && printf '\n## Саме нове питання\n%s\n' "$(printf '%s' "$msg" | clip_utf8 2000)"
   return 0
 }
 

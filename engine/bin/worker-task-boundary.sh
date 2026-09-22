@@ -39,11 +39,11 @@ if [ "$WANT" = new ] && [ -z "$WHY" ]; then
 fi
 
 thread_boundary "$IDIR" "$WANT" "$WHY" || { echo "could not change the task boundary" >&2; exit 1; }
-journal_event "$IDIR" task-boundary "$WANT: $(printf '%s' "$WHY" | head -c 160)" '{"source":"worker"}'
-echo "$(date '+%F %T') [task-boundary] $WANT — $(printf '%s' "$WHY" | head -c 120)" >> "$SUP_STATE/supervisor.log"
+journal_event "$IDIR" task-boundary "$WANT: $(printf '%s' "$WHY" | clip_utf8 160)" '{"source":"worker"}'
+echo "$(date '+%F %T') [task-boundary] $WANT — $(printf '%s' "$WHY" | clip_utf8 120)" >> "$SUP_STATE/supervisor.log"
 
 case "$WANT" in
-  new)      echo "Межу задачі оновлено: далі це нова задача — «$(printf '%s' "$WHY" | head -c 120)»." ;;
+  new)      echo "Межу задачі оновлено: далі це нова задача — «$(printf '%s' "$WHY" | clip_utf8 120)»." ;;
   continue) echo "Межу задачі оновлено: це продовження поточної задачі." ;;
 esac
 exit 0

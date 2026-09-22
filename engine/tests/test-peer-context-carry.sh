@@ -53,7 +53,10 @@ GOT="$(claude_last_reply "$IDIR")"
 case "$GOT" in *"фіча синхронізації"*) ok "the question is found in Claude's own transcript" ;;
                *) bad "nothing came back: ${GOT:-<empty>}" ;; esac
 # Cut on whole lines: `tail -c` used to open the excerpt with half a character.
-if printf '%s' "$GOT" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; then
+# Through the engine's own gate, not `iconv >/dev/null`: Apple's iconv answers "Inappropriate
+# ioctl for device" on valid multibyte input when its stdout is /dev/null, so this check was one
+# Cyrillic kilobyte away from failing a correct excerpt.
+if printf '%s' "$GOT" | text_is_utf8; then
   ok "and it is valid UTF-8 from its first byte"
 else
   bad "the excerpt starts mid-character"

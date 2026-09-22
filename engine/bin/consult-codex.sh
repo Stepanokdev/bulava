@@ -179,6 +179,22 @@ Reply with exactly these compact sections: RECOMMENDATION, MISSED RISKS, REPOSIT
 PROOF, CONFIDENCE. Name uncertainty honestly and make checks concrete."
 
 TIMEOUT="${SUPERVISOR_CONSULT_TIMEOUT:-900}"
+
+# Before the call. `codex exec` refuses the whole invocation when an argument is not valid UTF-8,
+# in its argument parser, and the usage block it prints afterwards is what used to reach the
+# reader instead of the reason. Every truncation on the way here now goes through `clip_utf8`, so
+# what is left is text that was already broken when it arrived — and that is worth saying plainly,
+# locally, rather than spending fifteen minutes of budget to be told by a parser.
+if ! printf '%s' "$prompt" | text_is_utf8; then
+  reason="Питання не передано: підготовлений текст не є коректним UTF-8, і codex exec відхилив би виклик ще до старту сесії. Зіпсуті байти прийшли зі збереженого контексту — виправ джерело, а не питання."
+  printf '%s\n' "$reason" >&2
+  printf '%s [consult-codex] consultation %s refused locally — prompt is not valid UTF-8\n' \
+    "$(date '+%F %T')" "$n" >> "$LOG" 2>/dev/null || true
+  run_still_ours "$IDIR" && journal_event "$IDIR" peer-consultation-failed "consultation $n: $reason" \
+    "$(jq -nc --argjson n "$n" '{source:"worker",call:$n,status:"refused"}')"
+  exit 5
+fi
+
 started="$(date +%s)"
 ( cd "$ASK_DIR" && perl -e 'alarm shift; exec @ARGV' "$TIMEOUT" \
   "$CODEX_BIN" exec $(codex_effort_flags) --sandbox read-only --skip-git-repo-check --ephemeral --json \
@@ -190,10 +206,26 @@ usage="$(jq -sc '[.. | objects | .usage? // empty] | last // {}' "$CALL_DIR/even
 # What Codex actually said on its way out. The reason was always on disk and never reached anyone:
 # the feed showed a bare "code 1" and the director was left guessing between a crash, an expired
 # login and a subscription that had run out.
+#
+# And it is not the LAST lines. A refusal says why on line 1 and prints five lines of usage after
+# it, so `tail -3` kept "Usage: codex exec [OPTIONS] <COMMAND> [ARGS] For more information, try
+# '--help'" and dropped `error: invalid UTF-8 was detected in one or more arguments` — the only
+# line that said anything. The same rule as `preflight.sh`'s `peer_stderr_note`, deliberately.
 stderr_note() {
   [ -s "$CALL_DIR/stderr.log" ] || return 0
-  grep -v -e '^[[:space:]]*$' -e 'Reading additional input from stdin' "$CALL_DIR/stderr.log" 2>/dev/null \
-    | tail -3 | tr '\n' ' ' | sed 's/[[:space:]]\{2,\}/ /g' | cut -c1-300
+  local clean note
+  clean="$(grep -v -e '^[[:space:]]*$' -e 'Reading additional input from stdin' "$CALL_DIR/stderr.log" 2>/dev/null)"
+  [ -n "$clean" ] || return 0
+  note="$(printf '%s\n' "$clean" \
+    | awk 'BEGIN { seen = 0 }
+           !seen && /^([[:space:]]*)(error|Error|ERROR)[:[:space:]]|invalid|[Nn]ot logged in|[Uu]nauthorized|401|403|quota|rate limit/ { seen = 1 }
+           seen { print; if (++n == 3) exit }' \
+    | grep -v -E "^Usage:|^For more information|^Options:|^Commands:|^Arguments:|try .--help.")"
+  [ -n "$note" ] || note="$(printf '%s\n' "$clean" \
+      | grep -v -E "^Usage:|^For more information|^Options:|^Commands:|^Arguments:|try .--help." \
+      | tail -3)"
+  [ -n "$note" ] || note="$(printf '%s\n' "$clean" | tail -3)"
+  printf '%s' "$note" | tr '\n' ' ' | sed 's/[[:space:]]\{2,\}/ /g' | cut -c1-300
 }
 
 if [ "$rc" = 0 ] && [ -s "$CALL_DIR/final.md" ]; then
@@ -212,6 +244,9 @@ else
   hint="$(auth_failure_hint "$note")"
   [ -n "$hint" ] && reason="$reason
 $hint"
+  # The line that fitted is a hint; the file behind it is the answer.
+  [ -s "$CALL_DIR/stderr.log" ] && reason="$reason
+Повний лог запуску: $CALL_DIR/stderr.log"
 fi
 
 jq -n --argjson n "$n" --arg run "$RUN_ID" --arg dispatch "$DISPATCH_ID" --argjson rc "$rc" \
@@ -226,7 +261,7 @@ if [ "$status" = ok ]; then
   # Codex answered, so the queue of questions he never saw is no longer owed: the worker is back in
   # touch with him and can ask the rest itself.
   run_still_ours "$IDIR" && codex_consultations_settled "$IDIR"
-  run_still_ours "$IDIR" && journal_event "$IDIR" peer-consultation "consultation $n completed" "$(jq -nc --argjson n "$n" --arg q "$(printf '%s' "$QUESTION" | head -c 180)" '{source:"worker",call:$n,question:$q}')"
+  run_still_ours "$IDIR" && journal_event "$IDIR" peer-consultation "consultation $n completed" "$(jq -nc --argjson n "$n" --arg q "$(printf '%s' "$QUESTION" | clip_utf8 180)" '{source:"worker",call:$n,question:$q}')"
   cat "$CALL_DIR/final.md"
   exit 0
 fi

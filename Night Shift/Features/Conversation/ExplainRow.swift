@@ -7,6 +7,7 @@ import SwiftUI
 /// features that happen to share a name. The call sites differ only in what they are anchored to.
 struct ExplainRow: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.findMark) private var findMark
 
     enum Target {
         case turn(ConversationEntry)
@@ -19,7 +20,9 @@ struct ExplainRow: View {
     /// Set on the cards, whose own rows are separated by hairlines.
     var showsDivider = false
 
-    @State private var expanded = true
+    /// Open to begin with: it is on screen because somebody pressed a button asking for it. Find
+    /// may still open it after the reader has folded it away, and they can fold it again.
+    @State private var fold = FoldedByDefault(expanded: true)
 
     private var state: ExplainState {
         switch target {
@@ -29,6 +32,33 @@ struct ExplainRow: View {
     }
 
     private var profile: String { model.settings.learningProfileForPrompt }
+
+    // MARK: Find
+
+    /// Find only walks the conversation, so only a turn can be found. A task card lives on the
+    /// backlog, where there is nothing searching for it.
+    private var findEntryID: UUID? {
+        switch target {
+        case .turn(let entry): entry.id
+        case .task:            nil
+        }
+    }
+
+    /// Find arrived at this panel and opened what the reader had folded away. Their own state is
+    /// left alone, so closing the search puts the panel back exactly as they had it.
+    private var openedByFind: Bool {
+        guard let findEntryID else { return false }
+        return findMark.isActive(entry: findEntryID, block: ConversationFind.explainBlock)
+    }
+
+    private var expanded: Bool { fold.showing(findOpened: openedByFind) }
+
+    private func findState(_ state: ExplainState) -> FindHighlight.State {
+        guard let findEntryID else { return .none }
+        return findMark.state(entry: findEntryID, block: ConversationFind.explainBlock,
+                              text: ConversationFind.explainedText(brief: state.brief?.text,
+                                                                   stepByStep: state.stepByStep?.text))
+    }
 
     var body: some View {
         let state = state
@@ -41,6 +71,9 @@ struct ExplainRow: View {
             }
             .animation(Motion.standard, value: state.hasAnything)
             .animation(Motion.standard, value: state.isRunning)
+            .findHighlight(findState(state))
+            .modifier(FindAnchoredExplanation(entryID: findEntryID))
+            .onChange(of: openedByFind) { _, now in if now { fold.findArrived() } }
         }
     }
 
@@ -148,7 +181,9 @@ struct ExplainRow: View {
     /// Who the explanation was written for, said out loud and stored with it — so it stays true
     /// after the profile in Settings is edited.
     @ViewBuilder private func header(_ head: Explanation, state: ExplainState) -> some View {
-        Button { withAnimation(Motion.expand) { expanded.toggle() } } label: {
+        Button {
+            withAnimation(Motion.expand) { fold.toggle(findOpened: openedByFind) }
+        } label: {
             HStack(spacing: 7) {
                 Image(systemName: "graduationcap")
                     .font(.system(size: 10.5, weight: .medium))
@@ -186,7 +221,11 @@ struct ExplainRow: View {
         if expanded {
             MarkdownProse(text: text,
                           fileRoots: model.fileRoots(forProductID: productID, chatID: chatID),
-                          openWeb: { model.webPreview = $0 })
+                          openWeb: { model.webPreview = $0 },
+                          find: findEntryID.flatMap {
+                              findMark.prose(entry: $0, block: ConversationFind.explainBlock,
+                                             markdown: text)
+                          })
         }
     }
 
@@ -271,6 +310,19 @@ struct ExplainRow: View {
         switch target {
         case .turn(let entry): entry.chatID
         case .task: nil
+        }
+    }
+}
+
+/// The scroll anchor a find jump lands on, applied only where there is a turn to key it to.
+private struct FindAnchoredExplanation: ViewModifier {
+    let entryID: UUID?
+
+    func body(content: Content) -> some View {
+        if let entryID {
+            content.findAnchor(entry: entryID, block: ConversationFind.explainBlock)
+        } else {
+            content
         }
     }
 }
