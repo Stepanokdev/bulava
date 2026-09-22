@@ -16,6 +16,12 @@ struct ConversationView: View {
     /// this tracks "did they scroll away" rather than "are they at the bottom".
     @State private var follow = TailFollow()
 
+    /// Find in this conversation. It belongs to the view and not to the model on purpose: it owns
+    /// scrolling and focus, and it has to die with the thread it was searching.
+    @State private var find = FindSession()
+    @State private var findShown = false
+    @FocusState private var findFocused: Bool
+
     private var product: Product? { model.products.product(id: productID) }
 
     private var chatID: UUID? { model.conversations.currentChatID(for: productID) }
@@ -71,6 +77,15 @@ struct ConversationView: View {
                         scrollToBottom(proxy, animated: false)
                     }
                 }
+                // A hand on the trackpad is the one thing that takes the thread back from a find
+                // jump. A programmatic scroll reports `.animating`, so this cannot mistake Find's
+                // own jump for the reader changing their mind.
+                .onScrollPhaseChange { _, phase in
+                    guard follow.pinned else { return }
+                    if phase == .interacting || phase == .tracking { follow.unpin() }
+                }
+
+                .safeAreaInset(edge: .top, spacing: 0) { findLayer(proxy) }
 
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     Composer(productID: productID)
@@ -86,13 +101,35 @@ struct ConversationView: View {
                 model.importDrop(providers, into: productID)
             }
             .animation(Motion.hover, value: dropTargeted)
+            .environment(\.findMark, findMark)
             .task(id: chatID) {
+                closeFind(focusComposer: false)
                 follow.rejoin()
                 model.syncDirectChats()
                 scrollToBottom(proxy, animated: false)
                 try? await _Concurrency.Task.sleep(for: .milliseconds(350))
+                // The catch-up scroll belongs to the chat that asked for it. Without this guard
+                // it fires for a chat already left behind — and lands on a find jump the reader
+                // has just made in the new one.
+                guard !_Concurrency.Task.isCancelled else { return }
                 scrollToBottom(proxy, animated: false)
             }
+
+            // ⌘F, ⌘G and ⇧⌘G come from the menu bar, which cannot see this view's state.
+            .onChange(of: model.findOpenRequest) { _, _ in openFind() }
+            .onChange(of: model.findNextRequest) { _, _ in step(1, proxy) }
+            .onChange(of: model.findPreviousRequest) { _, _ in step(-1, proxy) }
+
+            .onChange(of: find.query) { _, _ in
+                refreshFind()
+                if let place = find.active { go(to: place, proxy) }
+            }
+            // An answer still being written grows the results under the reader. The cursor is
+            // held by identity, so it stays on the very result they are standing on.
+            .onChange(of: tailSignature) { _, _ in refreshFind() }
+
+            .onChange(of: findShown) { _, shown in model.findBarOpen = shown }
+            .onDisappear { model.findBarOpen = false }
 
             // A working agent does not add entries — it grows the last one, and the status line
             // under it changes as it goes. Watching only the COUNT meant the thread sat still
@@ -144,6 +181,88 @@ struct ConversationView: View {
         .transition(.opacity)
     }
 
+    // MARK: - Find in this conversation
+
+    /// The bar sits in the thread's top safe area, so a result scrolled to lands below it instead
+    /// of behind it. The gradient is the same trick the composer plays at the other end: the
+    /// inset reserves the room, and the thread still passes under it as it scrolls.
+    @ViewBuilder private func findLayer(_ proxy: ScrollViewProxy) -> some View {
+        if findShown {
+            FindBar(session: $find,
+                    focused: $findFocused,
+                    onStep: { delta in step(delta, proxy) },
+                    onClose: { closeFind(focusComposer: true) })
+                // Right-hand end of the reading column — the same edge the composer ends on, and
+                // out of the way of the prose, which is set left.
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.horizontal, 30)
+                .padding(.top, 12)
+                .padding(.bottom, 10)
+                .frame(maxWidth: Metrics.readingWidth + 60)
+                .frame(maxWidth: .infinity)
+                .background(
+                    LinearGradient(colors: [Palette.content, Palette.content.opacity(0)],
+                                   startPoint: .top, endPoint: .bottom)
+                        .allowsHitTesting(false)
+                )
+                .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
+    private var findMark: FindMark {
+        guard findShown, let active = find.active else { return FindMark() }
+        var mark = FindMark(query: find.query,
+                            activeEntryID: active.entryID,
+                            activeBlockID: active.blockID)
+        if case .range(let occurrence) = active.mark { mark.activeOccurrence = occurrence }
+        return mark
+    }
+
+    private func openFind() {
+        withAnimation(Motion.arrive) { findShown = true }
+        refreshFind()
+        // ⌘F pressed a second time, with the bar already up and the caret back in the composer:
+        // setting a focus flag that is already true changes nothing, so it is put down and taken
+        // up again on the next turn of the loop.
+        findFocused = false
+        _Concurrency.Task { @MainActor in findFocused = true }
+    }
+
+    private func closeFind(focusComposer: Bool) {
+        guard findShown || !find.query.isEmpty else { return }
+        withAnimation(Motion.arrive) { findShown = false }
+        find.clear()
+        findFocused = false
+        follow.unpin()
+        if focusComposer { model.composerFocusRequest = UUID() }
+    }
+
+    private func refreshFind() {
+        guard findShown, !find.query.isEmpty else {
+            if !find.isEmpty { find.refresh([]) }
+            // Nothing to stand on any more, so the thread goes back to following its own tail.
+            // Without this, deleting the phrase left a live answer pinned and apparently frozen.
+            if find.query.isEmpty { follow.unpin() }
+            return
+        }
+        find.refresh(ConversationFind.places(in: entries, query: find.query))
+    }
+
+    private func go(to place: FindPlace, _ proxy: ScrollViewProxy) {
+        // Pinned BEFORE the scroll: a result within the last forty points of the thread is inside
+        // the tail-follow slack, and without the pin the next chunk of a streaming answer would
+        // drag the reader straight back down off it.
+        follow.pin()
+        withAnimation(Motion.arrive) {
+            proxy.scrollTo(place.scrollID, anchor: .top)
+        }
+    }
+
+    private func step(_ delta: Int, _ proxy: ScrollViewProxy) {
+        guard findShown else { return }
+        if let place = find.step(delta) { go(to: place, proxy) }
+    }
+
     private static let bottomAnchor = "conversation.bottom"
 
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
@@ -171,6 +290,9 @@ struct ConversationView: View {
             ForEach(entries) { entry in
                 EntryView(entry: entry, productID: productID)
                     .padding(.bottom, 22)
+                    // Where a find jump lands when the whole entry is the result: his own
+                    // message, or an answer that carries no blocks of its own.
+                    .findAnchor(entry: entry.id)
             }
         }
     }

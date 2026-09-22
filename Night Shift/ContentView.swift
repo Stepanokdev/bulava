@@ -169,7 +169,7 @@ struct RootView: View {
                 Image(systemName: "magnifyingglass")
             }
             .buttonStyle(.icon)
-            .help(Text("Find a product, chat or report (⌘K)"))
+            .help(Text("Go to a product, chat or report (⌘K)"))
 
             if model.route.productID != nil {
                 ProductMenu()

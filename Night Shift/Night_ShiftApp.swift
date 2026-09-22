@@ -61,8 +61,30 @@ struct NightShiftApp: App {
                     .keyboardShortcut("n", modifiers: .command)
                     .disabled(model.route.productID == nil)
             }
+            // Find belongs under Edit, beside the rest of the text commands, and the name "Find…"
+            // belongs to it. ⌘K searches the whole app — every product, chat and report — and
+            // while it was the only search in the app calling it "Find…" was fair enough. With a
+            // real in-conversation find on ⌘F, two menu items of the same name meaning different
+            // scopes is the defect; ⌘K is a way to somewhere else, so it says so.
+            CommandGroup(after: .textEditing) {
+                Divider()
+                Button("Find…") {
+                    model.findOpenRequest = UUID()
+                }
+                .keyboardShortcut("f", modifiers: .command)
+                .disabled(!model.conversationFindReachable)
+
+                Button("Find Next") { model.findNextRequest = UUID() }
+                    .keyboardShortcut("g", modifiers: .command)
+                    .disabled(!model.conversationFindReachable || !model.findBarOpen)
+
+                Button("Find Previous") { model.findPreviousRequest = UUID() }
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
+                    .disabled(!model.conversationFindReachable || !model.findBarOpen)
+            }
+
             CommandGroup(after: .sidebar) {
-                Button("Find…") { model.searchPresented = true }
+                Button("Go to…") { model.searchPresented = true }
                     .keyboardShortcut("k", modifiers: .command)
                 Button("Refresh") { model.refreshNow() }
                     .keyboardShortcut("r", modifiers: .command)
