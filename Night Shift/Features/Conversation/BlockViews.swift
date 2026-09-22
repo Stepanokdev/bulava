@@ -10,6 +10,9 @@ struct BlockStack: View {
 
     let artifactBase: URL
 
+    /// The entry these blocks belong to. Find's anchors are keyed by entry AND block, because a
+    /// block id is only unique inside the message it came from.
+    var entryID: UUID? = nil
     var productID: UUID? = nil
     var chatID: UUID? = nil
 
@@ -22,7 +25,8 @@ struct BlockStack: View {
             ForEach(Self.grouped(blocks.renderable)) { group in
                 switch group.content {
                 case .single(let block):
-                    BlockView(block: block, artifactBase: artifactBase, productID: productID, chatID: chatID)
+                    BlockView(block: block, artifactBase: artifactBase, entryID: entryID,
+                              productID: productID, chatID: chatID)
                 case .trace(let activities):
                     ActivityTrace(activities: activities, startsOpen: tracesOpen)
                 }
@@ -120,25 +124,51 @@ private struct ActivityTrace: View {
 }
 
 struct BlockView: View {
+    @Environment(\.findMark) private var findMark
     let block: ConversationBlock
     let artifactBase: URL
+    var entryID: UUID? = nil
     var productID: UUID? = nil
     var chatID: UUID? = nil
 
     var body: some View {
+        content
+            // Every searchable block carries the anchor a find jump lands on, so the reader
+            // arrives at the paragraph rather than at the top of a three-page answer.
+            .modifier(FindAnchored(entryID: entryID, blockID: block.id))
+    }
+
+    @ViewBuilder private var content: some View {
         switch block.kind {
-        case .markdown: MarkdownBlock(text: block.text, productID: productID, chatID: chatID)
+        case .markdown: MarkdownBlock(text: block.text, entryID: entryID, blockID: block.id,
+                                      productID: productID, chatID: chatID)
 
                 .accessibilityIdentifier("block-\(block.id)")
         case .activity: if let a = block.activity { ActivityBlock(activity: a) }
         case .consult:  if let a = block.activity {
-                            ConsultBlock(activity: a, answer: block.text,
+                            ConsultBlock(activity: a, answer: block.text, blockID: block.id,
+                                         entryID: entryID,
                                          productID: productID, chatID: chatID)
                         }
         case .file:     if let ref = block.artifacts.first { FileBlock(ref: ref, base: artifactBase) }
         case .gallery:  GalleryBlock(refs: block.artifacts, caption: block.text, base: artifactBase)
-        case .error:    ErrorBlock(text: block.text)
-        case .unknown:  UnknownBlock(block: block)
+        case .error:    ErrorBlock(text: block.text, blockID: block.id, entryID: entryID)
+        case .unknown:  UnknownBlock(block: block, entryID: entryID)
+        }
+    }
+
+}
+
+/// The scroll anchor, applied only where there is an entry to key it to.
+private struct FindAnchored: ViewModifier {
+    let entryID: UUID?
+    let blockID: String
+
+    func body(content: Content) -> some View {
+        if let entryID {
+            content.findAnchor(entry: entryID, block: blockID)
+        } else {
+            content
         }
     }
 }
@@ -147,14 +177,20 @@ struct BlockView: View {
 
 private struct MarkdownBlock: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.findMark) private var findMark
     let text: String
 
+    var entryID: UUID? = nil
+    var blockID: String? = nil
     let productID: UUID?
     let chatID: UUID?
 
     var body: some View {
         MarkdownProse(text: text, fileRoots: model.fileRoots(forProductID: productID, chatID: chatID),
-                      openWeb: { model.webPreview = $0 })
+                      openWeb: { model.webPreview = $0 },
+                      find: entryID.flatMap {
+                          findMark.prose(entry: $0, block: blockID, markdown: text)
+                      })
     }
 }
 
@@ -244,23 +280,45 @@ struct ActivityBlock: View {
 struct ConsultBlock: View {
     let activity: BlockActivity
     let answer: String
+    var blockID: String? = nil
+    var entryID: UUID? = nil
     var productID: UUID? = nil
     var chatID: UUID? = nil
 
     @Environment(AppModel.self) private var model
-    @State private var expanded = false
+    @Environment(\.findMark) private var findMark
+    @State private var fold = FoldedByDefault()
 
     private var agent: String { activity.object ?? "Codex" }
     private var running: Bool { activity.status == .running }
     private var failed: Bool { activity.status == .failed }
 
+    /// Find opened this card to show what it had folded away. Its own `expanded` is left alone,
+    /// so closing the search puts the card back exactly as the reader had it.
+    private var openedByFind: Bool {
+        guard let entryID, let blockID else { return false }
+        return findMark.isActive(entry: entryID, block: blockID)
+    }
+
+    private var showing: Bool { fold.showing(findOpened: openedByFind) }
+
+    private var findState: FindHighlight.State {
+        guard let entryID, let blockID else { return .none }
+        return findMark.state(entry: entryID, block: blockID,
+                              text: ConversationFind.consultText(answer: answer,
+                                                                 ask: activity.detail))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            if expanded, !running, !answer.isEmpty {
+            if showing, !running, !answer.isEmpty {
                 MarkdownProse(text: answer,
                               fileRoots: model.fileRoots(forProductID: productID, chatID: chatID),
-                              openWeb: { model.webPreview = $0 })
+                              openWeb: { model.webPreview = $0 },
+                              find: entryID.flatMap {
+                                  findMark.prose(entry: $0, block: blockID, markdown: answer)
+                              })
                     .padding(.horizontal, 11)
                     .padding(.bottom, 10)
                     .textSelection(.enabled)
@@ -275,13 +333,15 @@ struct ConsultBlock: View {
                 .padding(.vertical, 6)
         }
         .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusPanel, style: .continuous))
+        .findHighlight(findState)
+        .onChange(of: openedByFind) { _, now in if now { fold.findArrived() } }
         .accessibilityIdentifier("consult-\(activity.toolCallID)")
     }
 
     private var header: some View {
         Button {
             guard !running, !answer.isEmpty else { return }
-            withAnimation(Motion.expand) { expanded.toggle() }
+            withAnimation(Motion.expand) { fold.toggle(findOpened: openedByFind) }
         } label: {
             HStack(alignment: .firstTextBaseline, spacing: 7) {
                 SpeakerAvatar(initial: String(agent.prefix(1)), isForeman: true)
@@ -300,7 +360,7 @@ struct ConsultBlock: View {
                                 .foregroundStyle(Palette.textFaint)
                         }
                     }
-                    if let ask = activity.detail, !ask.isEmpty, !expanded {
+                    if let ask = activity.detail, !ask.isEmpty, !showing {
                         Text(ask)
                             .font(Typo.meta)
                             .foregroundStyle(Palette.textFaint)
@@ -313,7 +373,7 @@ struct ConsultBlock: View {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(Palette.textFaint)
-                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                        .rotationEffect(.degrees(showing ? 90 : 0))
                 }
             }
             .padding(.horizontal, 11)
@@ -501,7 +561,16 @@ private struct Thumbnail: View {
 // MARK: - Error
 
 private struct ErrorBlock: View {
+    @Environment(\.findMark) private var findMark
     let text: String
+    var blockID: String? = nil
+    var entryID: UUID? = nil
+
+    /// Plain text the app draws itself, so the phrase is marked where it stands.
+    private var shown: Text {
+        guard let entryID, let blockID else { return Text(text) }
+        return findMark.text(text, entry: entryID, block: blockID)
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
@@ -509,7 +578,7 @@ private struct ErrorBlock: View {
                 .font(.system(size: 11))
                 .foregroundStyle(Palette.red)
                 .padding(.top, 2)
-            Text(text)
+            shown
                 .font(Typo.caption)
                 .foregroundStyle(Palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -526,8 +595,24 @@ private struct ErrorBlock: View {
 // MARK: - Unknown
 
 private struct UnknownBlock: View {
+    @Environment(\.findMark) private var findMark
     let block: ConversationBlock
-    @State private var expanded = false
+    var entryID: UUID? = nil
+    @State private var fold = FoldedByDefault()
+
+    /// Find opened it to show the phrase; the card's own `expanded` is untouched, so closing the
+    /// search folds it back the way the reader left it.
+    private var openedByFind: Bool {
+        guard let entryID else { return false }
+        return findMark.isActive(entry: entryID, block: block.id)
+    }
+
+    private var showing: Bool { fold.showing(findOpened: openedByFind) }
+
+    private var shown: Text {
+        guard let entryID else { return Text(block.text) }
+        return findMark.text(block.text, entry: entryID, block: block.id)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -539,8 +624,8 @@ private struct UnknownBlock: View {
                     .font(Typo.meta)
                     .foregroundStyle(Palette.textFaint)
                 Spacer(minLength: 8)
-                Button { withAnimation(Motion.hover) { expanded.toggle() } }
-                    label: { expanded ? Text("Hide") : Text("Show") }
+                Button { withAnimation(Motion.hover) { fold.toggle(findOpened: openedByFind) } }
+                    label: { showing ? Text("Hide") : Text("Show") }
                     .buttonStyle(.bulava(.quiet))
                 Button("Copy") {
                     NSPasteboard.general.clearContents()
@@ -548,8 +633,8 @@ private struct UnknownBlock: View {
                 }
                 .buttonStyle(.bulava(.quiet))
             }
-            if expanded, !block.text.isEmpty {
-                Text(block.text)
+            if showing, !block.text.isEmpty {
+                shown
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(Palette.textTertiary)
                     .textSelection(.enabled)
@@ -560,6 +645,7 @@ private struct UnknownBlock: View {
         .frame(maxWidth: 680, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: Metrics.radiusPanel, style: .continuous)
             .fill(Palette.panelMuted))
+        .onChange(of: openedByFind) { _, now in if now { fold.findArrived() } }
     }
 }
 

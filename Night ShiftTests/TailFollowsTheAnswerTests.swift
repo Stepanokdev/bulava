@@ -85,6 +85,41 @@ nonisolated final class TailFollowsTheAnswerTests: XCTestCase {
         XCTAssertTrue(follow.following)
     }
 
+    // MARK: - A find jump holds the thread where it put the reader
+
+    /// The case ordinary "did they scroll away" cannot cover: a result forty points from the end
+    /// is INSIDE the slack, so the usual rule reads it as "they are at the bottom" and the next
+    /// chunk of the answer drags them straight off it.
+    func testAResultNearTheEndIsNotDraggedBackDownByTheNextChunk() {
+        var follow = TailFollow()
+        follow.pin()
+
+        let atResult = TailFollow.Frame(offsetY: 1490, contentHeight: 2000, viewportHeight: 500)
+        XCTAssertFalse(follow.advance(from: atResult, to: atResult),
+                       "ten points from the end is still where Find put them")
+        let grew = TailFollow.Frame(offsetY: 1490, contentHeight: 2400, viewportHeight: 500)
+        XCTAssertFalse(follow.advance(from: atResult, to: grew))
+        XCTAssertFalse(follow.following)
+    }
+
+    func testAHandOnTheTrackpadTakesTheThreadBack() {
+        var follow = TailFollow()
+        follow.pin()
+        follow.unpin()
+
+        // The ordinary rule is in charge again: back at the end means follow again.
+        XCTAssertTrue(follow.advance(from: atEnd(2000), to: atEnd(2000)))
+        XCTAssertTrue(follow.following)
+    }
+
+    func testHisOwnMessageBeatsAFindJump() {
+        var follow = TailFollow()
+        follow.pin()
+        follow.rejoin()
+        XCTAssertFalse(follow.pinned)
+        XCTAssertTrue(follow.following)
+    }
+
     func testAThreadShorterThanTheViewportIsAlwaysAtTheEnd() {
         var follow = TailFollow(following: false)
         let short = TailFollow.Frame(offsetY: 0, contentHeight: 200, viewportHeight: 500)
