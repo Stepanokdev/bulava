@@ -12,9 +12,13 @@ struct MarkdownProse: View {
 
     var openWeb: ((URL) -> Void)? = nil
 
+    /// Where Find stands inside this prose, when a search is running. Nil the rest of the time,
+    /// and then nothing here behaves differently from before the feature existed.
+    var find: ProseFind? = nil
+
     var body: some View {
         Markdown(FilePathLinks.rewrite(text, roots: fileRoots))
-            .markdownTheme(.bulava)
+            .markdownTheme(.bulava(marking: find))
 
             .markdownImageProvider(LocalImageProvider(roots: fileRoots))
             .markdownInlineImageProvider(LocalImageProvider(roots: fileRoots))
@@ -49,38 +53,60 @@ struct MarkdownProse: View {
 
 extension Theme {
 
-    static let bulava = Theme()
+    static let bulava = Theme.bulava(marking: nil)
+
+    /// The prose theme, with the leaves told where the found phrase is.
+    ///
+    /// `marking` is nil whenever nobody is searching, and then every block style is exactly the
+    /// one that has always drawn this app's answers. When a search IS running, a paragraph,
+    /// heading or code block that holds the phrase draws itself instead — see `ProseLeaf` for
+    /// why the library cannot be asked to do it.
+    static func bulava(marking find: ProseFind?) -> Theme {
+        Theme()
         .text {
             FontFamilyVariant(.normal)
-            FontSize(13.5)
+            FontSize(ProseStyle.bodySize)
             ForegroundColor(Palette.textSecondary)
         }
         .code {
             FontFamilyVariant(.monospaced)
-            FontSize(12)
+            FontSize(ProseStyle.inlineCodeSize)
             ForegroundColor(Palette.text)
             BackgroundColor(Palette.panelMuted)
         }
         .strong { FontWeight(.semibold); ForegroundColor(Palette.text) }
         .link { ForegroundColor(Palette.accent) }
         .heading1 { config in
-            config.label
+            ProseLeaf(find: find, markdown: config.content.renderMarkdown(),
+                      leaf: .heading(level: 1)) { config.label }
                 .markdownMargin(top: 16, bottom: 6)
-                .markdownTextStyle { FontSize(16); FontWeight(.semibold); ForegroundColor(Palette.text) }
+                .markdownTextStyle {
+                    FontSize(ProseStyle.headingSize(1)); FontWeight(.semibold)
+                    ForegroundColor(Palette.text)
+                }
         }
         .heading2 { config in
-            config.label
+            ProseLeaf(find: find, markdown: config.content.renderMarkdown(),
+                      leaf: .heading(level: 2)) { config.label }
                 .markdownMargin(top: 14, bottom: 5)
-                .markdownTextStyle { FontSize(14.5); FontWeight(.semibold); ForegroundColor(Palette.text) }
+                .markdownTextStyle {
+                    FontSize(ProseStyle.headingSize(2)); FontWeight(.semibold)
+                    ForegroundColor(Palette.text)
+                }
         }
         .heading3 { config in
-            config.label
+            ProseLeaf(find: find, markdown: config.content.renderMarkdown(),
+                      leaf: .heading(level: 3)) { config.label }
                 .markdownMargin(top: 12, bottom: 4)
-                .markdownTextStyle { FontSize(13.5); FontWeight(.semibold); ForegroundColor(Palette.text) }
+                .markdownTextStyle {
+                    FontSize(ProseStyle.headingSize(3)); FontWeight(.semibold)
+                    ForegroundColor(Palette.text)
+                }
         }
         .paragraph { config in
-            config.label
-                .relativeLineSpacing(.em(0.22))
+            ProseLeaf(find: find, markdown: config.content.renderMarkdown(),
+                      leaf: .paragraph) { config.label }
+                .relativeLineSpacing(.em(ProseStyle.bodyLineSpacing))
                 .markdownMargin(top: 0, bottom: 10)
         }
         .listItem { config in
@@ -95,9 +121,11 @@ extension Theme {
         }
         .codeBlock { config in
 
-            config.label
-                .relativeLineSpacing(.em(0.2))
-                .markdownTextStyle { FontFamilyVariant(.monospaced); FontSize(11.5) }
+            ProseLeaf(find: find, markdown: config.content, leaf: .codeBlock) { config.label }
+                .relativeLineSpacing(.em(ProseStyle.codeBlockLineSpacing))
+                .markdownTextStyle {
+                    FontFamilyVariant(.monospaced); FontSize(ProseStyle.codeBlockSize)
+                }
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(11)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -123,6 +151,7 @@ extension Theme {
         .thematicBreak {
             Rectangle().fill(Palette.line).frame(height: 1).markdownMargin(top: 12, bottom: 12)
         }
+    }
 }
 
 // MARK: - Images: from this machine, in scope, or not at all

@@ -36,11 +36,20 @@ nonisolated struct TailFollow: Equatable, Sendable {
 
     private(set) var following = true
 
+    /// Find took the reader to a result and they are to stay on it.
+    ///
+    /// Stronger than "they scrolled away", and it has to be: a result forty points from the end
+    /// is inside the slack, so the ordinary rule would decide the reader is at the bottom and the
+    /// next chunk of the answer would drag the thread straight back down. Only three things
+    /// release it: closing Find, their own message, and their own hand on the trackpad.
+    private(set) var pinned = false
+
     init(following: Bool = true) { self.following = following }
 
     /// Take a new reading. Returns true when the thread should scroll to the end.
     @discardableResult
     mutating func advance(from old: Frame, to new: Frame) -> Bool {
+        guard !pinned else { return false }
         let shrank = new.contentHeight < old.contentHeight - 0.5
         let scrolledUp = new.offsetY < old.offsetY - Self.deadband
 
@@ -55,6 +64,20 @@ nonisolated struct TailFollow: Equatable, Sendable {
         return following
     }
 
-    /// Their own message always brings them back, wherever they were reading.
-    mutating func rejoin() { following = true }
+    /// Their own message always brings them back, wherever they were reading — and whatever Find
+    /// had pinned them to.
+    mutating func rejoin() {
+        pinned = false
+        following = true
+    }
+
+    /// Hold the thread where a find jump put it.
+    mutating func pin() {
+        pinned = true
+        following = false
+    }
+
+    /// Hand the thread back to the ordinary rule: the next reading decides whether the reader is
+    /// at the end and the answer may follow again.
+    mutating func unpin() { pinned = false }
 }
