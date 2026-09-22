@@ -143,6 +143,39 @@ final class TestDrive {
             LanguageBundle.adopt(lang)
             note("language: \(want)")
 
+        case "learning":
+
+            // The same shape as `theme` and `language` above: a setting a fixture has to be able
+            // to put the app into, because the surface being checked only exists when it is on and
+            // the Settings window it lives in is a separate scene.
+            let on = (obj["on"] as? Bool) ?? true
+            model.settings.devLearningEnabled = on
+            if let profile = obj["profile"] as? String {
+                model.settings.learningProfile = profile
+            }
+            note("learning: \(on ? "on" : "off")"
+                 + (model.settings.learningProfile.isEmpty
+                    ? "" : " · profile «\(model.settings.learningProfile)»"))
+
+        case "explain":
+
+            // Presses the action on the newest finished answer in this product's open chat.
+            // The only way to see the panel itself without a mouse, and it goes through exactly
+            // the code the button goes through — including the paid call, which is why this is
+            // driven by hand and not by a check that reruns.
+            guard let product = resolveProduct(productName, model) else { return }
+            model.open(product: product.id)
+            guard let chatID = model.conversations.currentChatID(for: product.id) else {
+                note("explain: no chat open in \(product.name)"); return
+            }
+            guard let entry = model.conversations.entries(inChat: chatID)
+                .last(where: { model.explainState(turn: $0).available }) else {
+                note("explain: nothing finished to explain in \(product.name)"); return
+            }
+            let depth: ExplainDepth = (obj["depth"] as? String) == "steps" ? .stepByStep : .brief
+            model.explain(turn: entry, depth: depth)
+            note("explain: asked for \(depth.rawValue) on \(entry.id)")
+
         case "snapshot":
             note(snapshot(model))
 

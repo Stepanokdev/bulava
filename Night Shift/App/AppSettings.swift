@@ -416,6 +416,32 @@ nonisolated struct AppSettings: Codable, Equatable {
     /// What he speaks when he dictates. Separate from the interface language on purpose.
     var dictationLanguage: DictationLanguage = .interface
 
+    // MARK: Learning about the work
+
+    /// Whether a finished result offers to explain itself.
+    ///
+    /// Off by default, and it is a named mode rather than a quiet feature: the explanation is a
+    /// paid call, and an action that spends quota does not appear on somebody's screen because a
+    /// new version shipped. Turning it on is the permission; pressing the button is the spend.
+    var devLearningEnabled: Bool = false
+
+    /// Who he is and what he already knows, in his own words — "iOS / Swift", "designer, no code".
+    ///
+    /// Optional on purpose. Empty means the explanation is written in plain words for somebody
+    /// with no stated background; filled, it is written through that background and says which one
+    /// it used. It is never guessed at and never inferred from the code he happens to be in.
+    ///
+    /// Read ONLY when composing an explanation. It is deliberately not part of the context the
+    /// worker gets: the request was to have results explained, not to have the work done
+    /// differently, and a stack written here has no business reaching a commit message.
+    var learningProfile: String = ""
+
+    /// The profile as it is actually used: trimmed, on one line, and bounded.
+    ///
+    /// Whitespace alone is empty — otherwise the button promises a tailored explanation and the
+    /// prompt carries three spaces.
+    var learningProfileForPrompt: String { LearningProfile.normalized(learningProfile) }
+
     static var defaultStateDirPath: String {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/supervisor").path
@@ -538,5 +564,11 @@ nonisolated extension AppSettings {
         standInMigrated = true
         workersMayDriveApps = (try? c.decodeIfPresent(Bool.self,
                                                       forKey: .workersMayDriveApps)) ?? true
+        // Absent in every settings file written before this feature, and absent means off with no
+        // profile. Both lines have to be HERE: this decoder is written by hand, and a property
+        // that only has a default in the declaration is silently reset on every launch.
+        devLearningEnabled = (try? c.decodeIfPresent(Bool.self,
+                                                     forKey: .devLearningEnabled)) ?? false
+        learningProfile = (try? c.decodeIfPresent(String.self, forKey: .learningProfile)) ?? ""
     }
 }

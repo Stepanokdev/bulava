@@ -5,7 +5,7 @@ struct TaskCard: View {
     let task: BacklogTask
 
     @State private var evidence: Evidence?
-    @State private var hasReport = false
+    @State private var manifest: ReportManifest?
 
     @State private var disposition: String?
 
@@ -17,7 +17,7 @@ struct TaskCard: View {
     private var state: WorkState { model.workState(of: task) }
     private var milestones: [WorkMilestone] {
         WorkProgress.milestones(task: task, instance: instance, evidence: evidence,
-                                disposition: disposition, hasReport: hasReport)
+                                disposition: disposition, hasReport: manifest != nil)
     }
     private var now: NowLine? {
         WorkProgress.nowLine(task: task, instance: instance,
@@ -26,15 +26,18 @@ struct TaskCard: View {
     private var actions: [ResultAction] { TaskPresentation.cardActions(for: task, model: model) }
 
     var body: some View {
-        Card {
-            VStack(alignment: .leading, spacing: 0) {
-                header
-                if let whyStopped { why(whyStopped) }
-                if state != .planned { steps }
-                if let now { nowStrip(now) }
-                if !task.planSteps.isEmpty { coverage }
-                actionRow
+        VStack(alignment: .leading, spacing: 8) {
+            Card {
+                VStack(alignment: .leading, spacing: 0) {
+                    header
+                    if let whyStopped { why(whyStopped) }
+                    if state != .planned { steps }
+                    if let now { nowStrip(now) }
+                    if !task.planSteps.isEmpty { coverage }
+                    actionRow
+                }
             }
+            ExplainRow(target: .task(task, manifest: manifest))
         }
         .padding(.leading, 25)
         .task(id: task.id) { await loadArtifacts() }
@@ -297,7 +300,7 @@ struct TaskCard: View {
     // MARK: - Artifacts
 
     private func loadArtifacts() async {
-        hasReport = await model.reportManifest(for: task) != nil
+        manifest = await model.reportManifest(for: task)
         evidence = model.verifiedEvidence[task.id]
 
         guard task.dispatchedAt != nil, !task.state.isActive || task.state == .blocked else {

@@ -827,6 +827,10 @@ nonisolated final class LocalizationCompletenessTests: XCTestCase {
         // A reasoning level the service names in English on every model it offers it on.
         "Ultra",
         "gpt-5-codex",
+        // The name of a mode, like "Ultracode" above it: it is what the director called the thing,
+        // and the switch is easier to find in any language under the name it was asked for. The
+        // sentence explaining it underneath is translated.
+        "Dev Learning Mode",
     ]
 
     private func catalog() throws -> [String: Any] {
