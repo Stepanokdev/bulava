@@ -3013,6 +3013,38 @@
         }
       }
     },
+    "A short read-only explanation of this result, in plain words. It changes nothing and does not interrupt the work.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Короткое объяснение именно этого результата, только на чтение, простыми словами. Ничего не меняет и не прерывает работу."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Коротке пояснення саме цього результату, лише на читання, простими словами. Нічого не змінює і не перериває роботу."
+          }
+        }
+      }
+    },
+    "A short read-only explanation of this result, written through the background you set in Settings. It changes nothing and does not interrupt the work.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Короткое объяснение именно этого результата, только на чтение, написанное через твой фон из настроек. Ничего не меняет и не прерывает работу."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Коротке пояснення саме цього результату, лише на читання, написане через твій фон із налаштувань. Нічого не змінює і не перериває роботу."
+          }
+        }
+      }
+    },
     "A worker cannot answer that dialog, so work in these folders would stop on it. Answering it here is the same yes.": {
       "extractionState": "manual",
       "localizations": {
@@ -3964,6 +3996,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Максимум, який CLI дає за один виклик."
+          }
+        }
+      }
+    },
+    "Ask again — after editing your background in Settings, or when this result has moved on.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Спросить ещё раз — после изменения своего фона в настройках или когда результат уже изменился."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Спитати ще раз — після зміни свого фону в налаштуваннях або коли результат уже змінився."
           }
         }
       }
@@ -5824,6 +5872,23 @@
         }
       }
     },
+    "Claude asked to be signed in again, so there is nothing to explain yet. A login happens in a terminal: claude auth login": {
+      "extractionState": "stale",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude попросил залогиниться снова, так что объяснения пока нет. Логин делается в терминале: claude auth login"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude попросив залогінитися знову, тож пояснення поки нема. Логін робиться в термінал: claude auth login"
+          }
+        }
+      }
+    },
     "Claude asked to be signed in again. It happens in a terminal — a login cannot be done for you.": {
       "extractionState": "manual",
       "localizations": {
@@ -5871,6 +5936,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Глибина Claude"
+          }
+        }
+      }
+    },
+    "Claude did not answer. It is either signed out or out of quota — Settings → Diagnostics says which.": {
+      "extractionState": "stale",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude не ответил. Либо разлогинен, либо исчерпал квоту — «Диагностика» в настройках скажет, что именно."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude не відповів. Або розлогінений, або вичерпав квоту — «Діагностика» в налаштуваннях скаже, що саме."
           }
         }
       }
@@ -8325,6 +8407,22 @@
         }
       }
     },
+    "Dev Learning Mode": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dev Learning Mode"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dev Learning Mode"
+          }
+        }
+      }
+    },
     "Diagnostics": {
       "localizations": {
         "ru": {
@@ -8824,6 +8922,70 @@
           "stringUnit": {
             "state": "translated",
             "value": "Докази"
+          }
+        }
+      }
+    },
+    "Explain again": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Объясни ещё раз"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Поясни ще раз"
+          }
+        }
+      }
+    },
+    "Explain what happened": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Объясни, что произошло"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Поясни, що сталося"
+          }
+        }
+      }
+    },
+    "Explained": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Объяснено"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Пояснено"
+          }
+        }
+      }
+    },
+    "Explaining again…": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Объясняю ещё раз…"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Пояснюю ще раз…"
           }
         }
       }
@@ -9468,6 +9630,22 @@
         }
       }
     },
+    "Go through it step by step": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разбери шаг за шагом"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Розбери крок за кроком"
+          }
+        }
+      }
+    },
     "Go to a product, chat or report (⌘K)": {
       "extractionState": "manual",
       "localizations": {
@@ -9530,6 +9708,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Цілі, аудиторія, обмеження — усе, що не змінюється"
+          }
+        }
+      }
+    },
+    "Going through it…": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разбираю шаг за шагом…"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Розбираю крок за кроком…"
           }
         }
       }
@@ -9768,6 +9962,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Сховати скіли"
+          }
+        }
+      }
+    },
+    "Hide the explanation": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Свернуть объяснение"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Згорнути пояснення"
           }
         }
       }
@@ -10381,6 +10591,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "У черзі — спершу має завершитися поточна відповідь"
+          }
+        }
+      }
+    },
+    "In plain words.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Простыми словами."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Простими словами."
           }
         }
       }
@@ -11009,6 +11235,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Останній звіт"
+          }
+        }
+      }
+    },
+    "Learning about the work": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разобраться в работе"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Розібратися в роботі"
           }
         }
       }
@@ -13468,6 +13710,22 @@
         }
       }
     },
+    "Optional. Empty, and an explanation is written in plain words. Filled in, it is written through what you already know — a Python backend put in terms of iOS, say. Bulava never guesses this, and the worker doing the work never sees it.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Необязательно. Пустое — и объяснение будет простыми словами. Заполненное — и его напишут через то, что ты уже знаешь: например, бэкенд на Python в понятиях iOS. Булава это не угадывает, а воркер, который делает работу, этого не видит."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Необовʼязково. Порожнє — і пояснення буде простими словами. Заповнене — і його напишуть через те, що ти вже знаєш: наприклад, бекенд на Python у поняттях iOS. Булава цього не вгадує, а воркер, який робить роботу, цього не бачить."
+          }
+        }
+      }
+    },
     "Opus": {
       "extractionState": "manual",
       "localizations": {
@@ -14186,6 +14444,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Повернути це повідомлення на редагування"
+          }
+        }
+      }
+    },
+    "Puts an “Explain what happened” button on a finished result. One read-only request per press — it changes nothing, does not take the worker’s session, and never runs on its own.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавляет к готовому результату кнопку «Объясни, что произошло». Один запрос только на чтение за нажатие — ничего не меняет, не занимает сессию воркера и сам собой не запускается."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Додає до готового результату кнопку «Поясни, що сталося». Один запит лише на читання за натискання — нічого не змінює, не займає сесію воркера і сам собою не запускається."
           }
         }
       }
@@ -15867,6 +16141,22 @@
         }
       }
     },
+    "Show the explanation": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показать объяснение"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показати пояснення"
+          }
+        }
+      }
+    },
     "Show the limits": {
       "localizations": {
         "ru": {
@@ -16234,6 +16524,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Тека стану"
+          }
+        }
+      }
+    },
+    "Step by step": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Шаг за шагом"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Крок за кроком"
           }
         }
       }
@@ -17860,6 +18166,23 @@
         }
       }
     },
+    "There is nothing readable in this result yet.": {
+      "extractionState": "stale",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В этом результате пока нечего читать."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "У цьому результаті поки нема чого читати."
+          }
+        }
+      }
+    },
     "There is nothing recorded about where this rule belongs.": {
       "extractionState": "manual",
       "localizations": {
@@ -18199,6 +18522,22 @@
         }
       }
     },
+    "This result has changed since the explanation was written.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Результат изменился после того, как объяснение было написано."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Результат змінився після того, як пояснення було написане."
+          }
+        }
+      }
+    },
     "This rule is already out of force.": {
       "extractionState": "manual",
       "localizations": {
@@ -18365,6 +18704,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "У цієї роботи немає теки на диску, тож і сліду читати нема."
+          }
+        }
+      }
+    },
+    "Through what you already know: %@": {
+      "extractionState": "stale",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Через то, что ты уже знаешь: %@"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Через те, що ти вже знаєш: %@"
           }
         }
       }
@@ -19869,6 +20225,22 @@
         }
       }
     },
+    "Who you are": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кто ты"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Хто ти"
+          }
+        }
+      }
+    },
     "Work handed over": {
       "extractionState": "manual",
       "localizations": {
@@ -20066,6 +20438,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "В роботі"
+          }
+        }
+      }
+    },
+    "Working out what happened…": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разбираюсь, что произошло…"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Розбираюся, що сталося…"
           }
         }
       }
@@ -20829,6 +21217,23 @@
         }
       }
     },
+    "for %@": {
+      "extractionState": "stale",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "для %@"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "для %@"
+          }
+        }
+      }
+    },
     "for every project": {
       "extractionState": "manual",
       "localizations": {
@@ -20944,6 +21349,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "git доступний"
+          }
+        }
+      }
+    },
+    "iOS developer, Swift. Not much backend.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iOS-разработчик, Swift. Бэкенд почти не знаю."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iOS-розробник, Swift. Бекенду майже не знаю."
           }
         }
       }

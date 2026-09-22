@@ -200,6 +200,13 @@ private struct MessageEntry: View {
                 confirmRow(proposal)
                     .padding(.top, 2)
             }
+
+            // Bulava's own answers only. His own message needs no explaining, and the row keeps
+            // itself off a turn that has not finished — see `ExplainAvailability`.
+            if !isUser {
+                ExplainRow(target: .turn(entry))
+                    .padding(.top, 2)
+            }
         }
         .transition(.opacity.combined(with: .move(edge: .bottom)))
     }
@@ -763,6 +770,18 @@ struct ReportCard: View {
     @State private var manifest: ReportManifest?
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            card
+            // Outside the card on purpose: the whole card is one tap target that opens the
+            // report, and an explanation that can be selected, scrolled and folded away cannot
+            // live inside something that opens a document when touched.
+            ExplainRow(target: .task(task, manifest: manifest))
+        }
+        .padding(.leading, 25)
+        .task(id: task.id) { manifest = await model.reportManifest(for: task) }
+    }
+
+    private var card: some View {
         Card {
             VStack(spacing: 0) {
                 HStack(spacing: 12) {
@@ -810,8 +829,6 @@ struct ReportCard: View {
         }
         .onHover { isHovering in withAnimation(Motion.hover) { hovering = isHovering } }
         .onTapGesture { model.openReport(task) }
-        .task(id: task.id) { manifest = await model.reportManifest(for: task) }
-        .padding(.leading, 25)
     }
 
     private var subtitle: String {
