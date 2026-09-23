@@ -95,9 +95,14 @@ nonisolated struct ClaudeModelCatalog: Equatable, Sendable {
 
     /// Read the newest catalogue on disk.
     ///
-    /// The directory holds one file per source plus `published-floor.json`, which is a bookkeeping
-    /// record rather than a catalogue. Taking the freshest `fetchedAt` means a machine that has
-    /// talked to more than one endpoint still gets the current answer.
+    /// The directory holds catalogues in two shapes, and a machine can have both. `published-*.json`
+    /// is the whole service document, one file per source, beside `published-floor.json`, which is
+    /// a bookkeeping record rather than a catalogue. CLI 2.1.280 stopped refreshing those and
+    /// writes `<account>-<org>-cc.json` instead: just this surface's selector, per account. Opus
+    /// 5.5 arrived only in the second shape, so reading the first alone kept the menu on the
+    /// models of a fortnight earlier. Every file is tried, and the freshest `fetchedAt` wins — a
+    /// machine that has talked to more than one endpoint, or run more than one CLI, still gets the
+    /// current answer.
     static func read(cliVersion: String = "", from directory: URL? = nil,
                      settings settingsFile: URL? = nil) -> ClaudeModelCatalog {
         let dir = directory ?? cacheDirectory
@@ -105,7 +110,7 @@ nonisolated struct ClaudeModelCatalog: Equatable, Sendable {
             return .empty
         }
         var best: (stamp: Double, catalogue: ClaudeModelCatalog)?
-        for name in names where name.hasPrefix("published-") && name.hasSuffix(".json") {
+        for name in names where name.hasSuffix(".json") {
             guard name != "published-floor.json",
                   let data = try? Data(contentsOf: dir.appendingPathComponent(name)) else { continue }
             let found = decode(data, cliVersion: cliVersion)
@@ -130,8 +135,10 @@ nonisolated struct ClaudeModelCatalog: Equatable, Sendable {
         return catalogue
     }
 
-    /// Decode either the cache file (whose `documentBytes` carries the catalogue in base64) or the
-    /// catalogue document itself. Tests read the document; the app reads the file.
+    /// Decode any of the shapes the CLI keeps: the older cache file (whose `documentBytes` carries
+    /// the service document in base64), that document itself, or the newer per-account file whose
+    /// `catalog` carries this surface's selector directly. Tests read the documents; the app reads
+    /// the files.
     static func decode(_ data: Data, cliVersion: String = "") -> ClaudeModelCatalog {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return .empty
@@ -140,16 +147,41 @@ nonisolated struct ClaudeModelCatalog: Equatable, Sendable {
             guard let inner = Data(base64Encoded: encoded) else { return .empty }
             return decode(inner, cliVersion: cliVersion)
         }
+        // CLI 2.1.280 on: `{version: 2, fetchedAt, catalog: {surface, config, state}}` — the same
+        // selector the document nests under `surfaces.cc`, with the nesting taken away.
+        if let catalog = root["catalog"] as? [String: Any] {
+            guard (catalog["surface"] as? String ?? "cc") == "cc",
+                  let config = catalog["config"] as? [String: Any] else { return .empty }
+            return decode(config: config, state: catalog["state"] as? [String: Any],
+                          cliVersion: cliVersion)
+        }
         guard let surfaces = root["surfaces"] as? [String: Any],
               let cc = surfaces["cc"] as? [String: Any],
               let configs = cc["model_selector_config"] as? [[String: Any]],
-              let config = configs.first(where: { $0["id"] as? String == "cc" }) ?? configs.first,
-              let rows = config["models"] as? [[String: Any]] else { return .empty }
+              let config = configs.first(where: { $0["id"] as? String == "cc" }) ?? configs.first
+        else { return .empty }
+
+        let states = (cc["model_selector_state"] as? [[String: Any]]) ?? []
+        return decode(config: config,
+                      state: states.first { $0["id"] as? String == "cc" } ?? states.first,
+                      cliVersion: cliVersion)
+    }
+
+    /// One surface's selector — its models and the state the CLI starts from — whichever file it
+    /// came out of.
+    ///
+    /// The two shapes do not carry the same fields. The document gives each model a `runtime`
+    /// (family, levels, default level), says who may run it in `offered_on`, and names what each
+    /// family alias resolves to. The per-account file drops all three, because it is already the
+    /// answer for one account: the levels are the model's own `effort_options`, its default is
+    /// the one badged "Default", and the alias is the family's newest model in the main list —
+    /// which is what the document's own alias table says today for every family.
+    private static func decode(config: [String: Any], state: [String: Any]?,
+                               cliVersion: String) -> ClaudeModelCatalog {
+        guard let rows = config["models"] as? [[String: Any]] else { return .empty }
 
         // What the CLI runs when nobody names a model. `thinking_by_model` carries each model's
         // own default depth, which is what `Automatic` then means for depth as well.
-        let states = (cc["model_selector_state"] as? [[String: Any]]) ?? []
-        let state = states.first { $0["id"] as? String == "cc" } ?? states.first
         let stateModel = (state?["model"] as? String).flatMap(safeID) ?? ""
         var stateDepths: [String: String] = [:]
         for row in (state?["thinking_by_model"] as? [[String: Any]]) ?? [] {
@@ -176,18 +208,24 @@ nonisolated struct ClaudeModelCatalog: Equatable, Sendable {
                isVersion(cliVersion, olderThan: needs) { continue }
 
             let runtime = (row["runtime"] as? [String: Any]) ?? [:]
-            let levels = (runtime["effort_levels"] as? [String] ?? []).filter { !$0.isEmpty }
-            let thinking = (row["thinking"] as? [String: Any])?["type"] as? String ?? ""
+            let thinkingRow = (row["thinking"] as? [String: Any]) ?? [:]
+            let thinking = thinkingRow["type"] as? String ?? ""
+            let options = (thinkingRow["effort_options"] as? [[String: Any]]) ?? []
+            let levels = ((runtime["effort_levels"] as? [String])
+                          ?? options.compactMap { $0["id"] as? String }).filter { !$0.isEmpty }
+            let badged = options.first { $0["badge"] != nil }?["id"] as? String
+            let shortName = (row["short_name"] as? String) ?? (row["name"] as? String) ?? id
 
             out.append(ClaudeModel(
                 id: id,
                 name: (row["name"] as? String) ?? id,
-                familyName: (row["short_name"] as? String) ?? (row["name"] as? String) ?? id,
+                familyName: shortName,
                 summary: (row["description"] as? String) ?? "",
-                family: (runtime["family"] as? String) ?? "",
+                family: (runtime["family"] as? String) ?? shortName.lowercased(),
                 isCurrent: (row["section"] as? String ?? "main") == "main",
                 levels: levels,
-                defaultLevel: (runtime["default_effort"] as? String) ?? "high",
+                defaultLevel: (runtime["default_effort"] as? String) ?? badged
+                    ?? stateDepths[id] ?? "high",
                 thinks: thinking != "none" && !levels.isEmpty,
                 minimumCLIVersion: (row["min_claude_code_version"] as? String) ?? "",
                 priority: index))
@@ -195,12 +233,24 @@ nonisolated struct ClaudeModelCatalog: Equatable, Sendable {
         guard !out.isEmpty else { return .empty }
 
         var aliases: [String: String] = [:]
-        for (alias, target) in (config["provider_alias_targets"] as? [String: Any]) ?? [:] {
-            // `per_provider` names what each hosting provider resolves the alias to; Bulava runs
-            // the CLI on a subscription, so `default` is the one that answers here.
-            guard let id = ((target as? [String: Any])?["default"] as? String).flatMap(safeID),
-                  out.contains(where: { $0.id == id }) else { continue }
-            aliases[alias] = id
+        if let table = config["provider_alias_targets"] as? [String: Any] {
+            for (alias, target) in table {
+                // `per_provider` names what each hosting provider resolves the alias to; Bulava
+                // runs the CLI on a subscription, so `default` is the one that answers here.
+                guard let id = ((target as? [String: Any])?["default"] as? String).flatMap(safeID),
+                      out.contains(where: { $0.id == id }) else { continue }
+                aliases[alias] = id
+            }
+        } else {
+            // No table: the family's first model in the catalogue's own order, which puts the main
+            // list ahead of the older versions. `short_name` is the family as the service names
+            // it — "Opus", "Fable" — and the alias is that word in lower case.
+            for family in ClaudeModelChoice.families {
+                let named = out.filter { $0.familyName.lowercased() == family.rawValue }
+                if let pick = named.first(where: \.isCurrent) ?? named.first {
+                    aliases[family.rawValue] = pick.id
+                }
+            }
         }
 
         var catalogue = ClaudeModelCatalog(models: out, aliases: aliases, loaded: true)

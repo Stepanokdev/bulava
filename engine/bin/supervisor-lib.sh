@@ -9,6 +9,75 @@ SUP_STATE="${SUPERVISOR_STATE_DIR:-$HOME/.claude/supervisor}"
 SUP_INSTANCES="$SUP_STATE/instances"
 CODEX_LOG="${SUPERVISOR_CODEX_LOG:-$SUP_STATE/codex.log}"
 
+# ------------------------------------------------------------------ which Codex answers
+#
+# The newest Codex on this Mac, not merely the first one on PATH.
+#
+# A second install is the normal state of a developer's machine: an npm-global one under Homebrew's
+# node and another under nvm's, one of them updated and the other forgotten. PATH picks whichever
+# directory comes first, and the service answers each CLI for ITS version — GPT-6 Sol and Luna were
+# offered to 0.156 and simply did not exist for the 0.153 that Homebrew's PATH entry put first. So
+# the menu could not show them, and a run told to use one would have been refused. Once before, the
+# forgotten copy had lost its native binary and every review came back "Codex unavailable".
+#
+# Only real installs are compared — the npm package's launcher, or a native binary. Anything else
+# first on PATH (a wrapper somebody wrote, a test's stand-in) is a deliberate choice and is left
+# alone, without so much as being run. What each install reported is remembered against its
+# modification time, so an upgrade is noticed, and an ordinary script start costs a few `stat`
+# calls whichever order its PATH happens to list them in.
+_codex_is_install() {   # $1=path of a `codex` on PATH → 0 for the CLI itself
+  local c="${1:-}" target
+  target="$(readlink "$c" 2>/dev/null || true)"
+  case "$target" in *@openai/codex/*) return 0 ;; esac
+  file -bL "$c" 2>/dev/null | grep -q 'Mach-O'
+}
+
+_codex_version_key() {   # $1="codex-cli 0.156.0" → a sortable 000000015600000, or nothing
+  printf '%s' "${1:-}" | sed -nE 's/^codex-cli ([0-9]+)\.([0-9]+)\.([0-9]+).*/\1 \2 \3/p' \
+    | awk '{ printf "%05d%05d%05d", $1, $2, $3 }'
+}
+
+codex_prefer_newest() {
+  [ -n "${SUPERVISOR_CODEX_BIN:-}" ] && return 0      # a caller named the binary outright
+  [ "${SUPERVISOR_CODEX_PREFER_NEWEST:-1}" = 1 ] || return 0
+  local shim="$SUP_STATE/codex-bin" seen c m row inst v first_inst="" best="" best_v="" n=0
+  local -a cands=()
+  while IFS= read -r c; do
+    [ -n "$c" ] && [ "$c" != "$shim/codex" ] && cands+=("$c")
+  done < <(type -ap codex 2>/dev/null)
+  [ "${#cands[@]}" -ge 2 ] || return 0                 # one install: there is nothing to choose
+  mkdir -p "$shim" 2>/dev/null || return 0
+  seen="$shim/installs"
+  for c in "${cands[@]}"; do
+    m="$(stat -L -f %m "$c" 2>/dev/null || echo 0)"
+    row="$(awk -F'|' -v p="$c" -v m="$m" '$1 == p && $2 == m' "$seen" 2>/dev/null | tail -1)"
+    if [ -z "$row" ]; then
+      inst=0; v=""
+      if _codex_is_install "$c"; then
+        inst=1
+        v="$(_codex_version_key "$(perl -e 'alarm shift; exec @ARGV' 10 "$c" --version 2>/dev/null | head -1)")"
+      fi
+      row="$c|$m|$inst|$v"
+      printf '%s\n' "$row" >> "$seen" 2>/dev/null
+    fi
+    inst="$(printf '%s' "$row" | cut -d'|' -f3)"
+    v="$(printf '%s' "$row" | cut -d'|' -f4)"
+    [ -n "$first_inst" ] || first_inst="$inst"
+    [ "$first_inst" = 1 ] || return 0                  # something deliberate is first on PATH
+    [ "$inst" = 1 ] || continue
+    n=$((n + 1))
+    [ -n "$v" ] || continue                            # an install that cannot say its version
+    if [ -z "$best_v" ] || [ "$v" \> "$best_v" ]; then best="$c"; best_v="$v"; fi
+  done
+  [ "$n" -ge 2 ] && [ -n "$best" ] || return 0
+  if [ "$(readlink "$shim/codex" 2>/dev/null)" != "$best" ]; then
+    ln -sfn "$best" "$shim/codex.$$" 2>/dev/null && mv -f "$shim/codex.$$" "$shim/codex" 2>/dev/null
+  fi
+  case ":$PATH:" in *":$shim:"*) ;; *) export PATH="$shim:$PATH" ;; esac
+  return 0
+}
+codex_prefer_newest
+
 # The director's choices, named once. Both the tmux launch line and the durable file below are
 # generated from this list, so a variable added here reaches every later process automatically.
 _RUN_ENV_VARS="SUPERVISOR_CODEX_EFFORT SUPERVISOR_CODEX_MODEL \
@@ -41,6 +110,37 @@ run_env_stamp() {
 #
 # Written as `export VAR='value'` with the same quoting as the launch line: a value is data, and a
 # semicolon in a language name must not become a command.
+# ------------------------------------------------------------------ worker generations
+#
+# A worker's launch line ends in `night-shift.sh stop`, so a Claude that exits takes its instance
+# down with it. A worker restarted IN PLACE (`worker_relaunch`) must not: the old process's tail
+# still runs as it dies. Every launch therefore carries a generation, `stop` ignores one that is no
+# longer the instance's, and the line to start the worker again is kept beside it — the same
+# flags, the same run, `--resume` on whatever session the hooks recorded.
+new_worker_generation() {   # $1=idir → a fresh generation, recorded as the instance's current one
+  local g; g="$(uuidgen 2>/dev/null || printf 'g-%s-%s' "$(date +%s)" "$$")"
+  printf '%s\n' "$g" > "${1:-}/worker-generation" 2>/dev/null || true
+  printf '%s' "$g"
+}
+
+save_relaunch_template() {   # $1=idir $2=launch line carrying @CLAUDE_SESSION@ and @GENERATION@
+  printf '%s\n' "${2:-}" > "${1:-}/relaunch-template" 2>/dev/null || true
+}
+
+worker_tail_is_stale() {   # $1=idir $2=generation the exiting worker's tail names (may be empty)
+  local idir="${1:-}" g="${2:-}" cur at
+  [ -d "$idir" ] || return 1
+  cur="$(tr -d '[:space:]' < "$idir/worker-generation" 2>/dev/null || true)"
+  if [ -n "$g" ]; then
+    [ -n "$cur" ] && [ "$cur" != "$g" ]
+    return
+  fi
+  # A launch line from before generations existed: only a restart in progress makes it stale.
+  at="$(cat "$idir/relaunching" 2>/dev/null || echo 0)"
+  case "$at" in ''|*[!0-9]*) at=0 ;; esac
+  [ $(( $(date +%s) - at )) -lt 300 ]
+}
+
 run_env_file() { printf '%s/run-env' "${1:-}"; }
 
 run_env_save() {                                                 # $1=instance dir
@@ -677,6 +777,381 @@ clear_composer() {  # $1=session
   return 0
 }
 
+# ------------------------------------------------------------------ what the transcript says
+#
+# The screen and the status file are both the CLI's account of itself, and both can be wrong in the
+# same direction at the same time. One night a prepared task was typed, Enter was pressed, and
+# Claude Code wrote the task into its transcript — and then produced nothing, for four hours, with
+# a status that never said busy and a screen that never changed. Reading only the screen, the
+# engine concluded the task had not gone in, pressed Escape into the composer, and typed the whole
+# thing again three times into a process that was no longer drawing. The transcript is the one
+# record the CLI writes for itself rather than for a person looking at it: a prompt that is in it
+# was received, and a question with nothing after it has not been answered.
+
+worker_transcript() {   # $1=tmux session [$2=instance dir] → path of the worker's transcript
+  local session="${1:-}" idir="${2:-}" f sid csid cpath p
+  if [ -n "$idir" ] && [ -r "$idir/.transcript-path" ]; then
+    sid="$(tr -d '[:space:]' < "$idir/claude-session-id" 2>/dev/null || true)"
+    IFS='	' read -r csid cpath < "$idir/.transcript-path" 2>/dev/null || true
+    if [ -r "${cpath:-}" ] && { [ -z "$sid" ] || [ "$csid" = "$sid" ]; }; then
+      printf '%s' "$cpath"; return 0
+    fi
+  fi
+  f="$(worker_session_file "$session" 2>/dev/null)" || f=""
+  sid=""
+  [ -n "$f" ] && sid="$(jq -r '.sessionId // empty' "$f" 2>/dev/null)"
+  [ -n "$sid" ] || sid="$(tr -d '[:space:]' < "${idir:-/nonexistent}/claude-session-id" 2>/dev/null || true)"
+  [ -n "$sid" ] || return 1
+  p="$(find "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects" -maxdepth 2 -name "$sid.jsonl" -print -quit 2>/dev/null)"
+  [ -n "$p" ] || return 1
+  printf '%s' "$p"
+}
+
+_transcript_size() { stat -f %z "${1:-/nonexistent}" 2>/dev/null || echo 0; }
+
+# Entries written after a byte offset, one JSON object each; a line still being written is skipped
+# rather than failing the whole read.
+_transcript_since() {   # $1=transcript $2=offset
+  tail -c +"$(( ${2:-0} + 1 ))" "${1:-/nonexistent}" 2>/dev/null \
+    | jq -c -R 'fromjson? // empty' 2>/dev/null
+}
+
+# What kind of entry the CLI wrote, for the few questions asked of it. A user entry is a prompt or
+# a tool result unless it is one of the CLI's own asides: a meta line, a local slash command and its
+# output, or the note an interruption leaves — an explicit stop is not a question waiting for an
+# answer. On the assistant side, `<synthetic>` is the CLI talking to itself: resuming a session
+# whose last word was a question writes "No response requested." there, which is not the model
+# doing anything.
+_TRANSCRIPT_KIND='
+  def text: (.message.content | if type == "string" then . elif type == "array"
+             then (map(select(.type == "text") | .text) | first // "") else "" end);
+  if .type == "assistant" then
+    (if (.isApiErrorMessage // false) then "api-error"
+     elif (.message.model // "") == "<synthetic>" then "synthetic"
+     else "assistant" end)
+  elif .type == "user" then
+    (if (.isMeta // false) then "meta"
+     elif (text | startswith("[Request interrupted by user")) then "interrupted"
+     elif (text | test("^<(command-name|command-message|local-command-|bash-input|bash-stdout|bash-stderr)")) then "local"
+     elif ((.message.content | type) == "array" and ((.message.content | map(.type) | index("tool_result")) != null)) then "tool-result"
+     else "prompt" end)
+  else empty end'
+
+# 0 when the worker's transcript recorded a prompt after the offset — the typed text went in. With
+# a needle, only a prompt that carries it counts: whatever else lands in the transcript meanwhile
+# is not proof that THIS text arrived. Claude Code files a long paste inside a `<pasted_content>`
+# wrapper, which is why the needle is looked for inside the prompt rather than at its start.
+transcript_prompt_since() {   # $1=transcript $2=offset [$3=needle]
+  _transcript_since "${1:-}" "${2:-0}" \
+    | jq -e -s --arg needle "${3:-}" "
+        def text: (.message.content | if type == \"string\" then . elif type == \"array\"
+                   then (map(select(.type == \"text\") | .text) | join(\"\n\")) else \"\" end);
+        map(select(((.isSidechain // false) | not) and (($_TRANSCRIPT_KIND) == \"prompt\")
+                   and (\$needle == \"\" or (text | contains(\$needle)))))
+        | length > 0" >/dev/null 2>&1
+}
+
+# The first words of a task, as a needle for `transcript_prompt_since`: the first line that has
+# anything on it, cut to a length no wrapper or wrap can split.
+prompt_needle() {   # $1=text
+  printf '%s' "${1:-}" | awk 'NF { print; exit }' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' \
+    | LC_ALL=en_US.UTF-8 cut -c1-60
+}
+
+# 0 when the model actually said something after the offset: an assistant entry that is not an API
+# error. What a recovery is measured by — the worker producing work again, not a turn "starting".
+transcript_progress_since() {   # $1=transcript $2=offset
+  _transcript_since "${1:-}" "${2:-0}" \
+    | jq -e -s "map(select((.isSidechain // false) | not) | $_TRANSCRIPT_KIND) | index(\"assistant\") != null" \
+      >/dev/null 2>&1
+}
+
+# The last word in the conversation: "<kind> <uuid> <api status or -> <epoch or 0>". `prompt` and
+# `tool-result` are a question nobody has answered; `api-error` is a turn the service ended.
+transcript_last_word() {   # $1=transcript
+  [ -r "${1:-}" ] || return 1
+  tail -n "${SUPERVISOR_TRANSCRIPT_TAIL:-400}" "$1" 2>/dev/null \
+    | jq -c -R 'fromjson? // empty' 2>/dev/null \
+    | jq -r -s "map(select((.type == \"user\" or .type == \"assistant\") and ((.isSidechain // false) | not)))
+                | last // empty
+                | [ ($_TRANSCRIPT_KIND), (.uuid // \"-\"),
+                    ((.apiErrorStatus // \"-\") | tostring),
+                    ((.timestamp // \"\") | (sub(\"\\\\.[0-9]+\";\"\") | fromdateiso8601? // 0) | tostring) ]
+                | join(\" \")" 2>/dev/null
+}
+
+# ------------------------------------------------------------------ a worker that took the task and froze
+#
+# The failure this answers, as it happened: the task went in, the transcript recorded it, and the
+# process stopped drawing — no spinner, no answer, no error — while a Claude peer call started the
+# same minute hung the same way. Everything downstream looked at the screen and the status file,
+# saw an idle worker, and in four hours did three things: typed the task again into the frozen pane,
+# marked the run stalled, and finally deleted it. Nobody restarted the process, which is the one
+# thing that would have worked: `claude --resume` on the same session picks the conversation up
+# with the task in it, and a short nudge starts the turn.
+#
+# What is recovered, and only this:
+#   unanswered  the transcript's last word is a prompt or a tool result, no tool is still out, and
+#               both the pane and the transcript have been still for the threshold. A live turn
+#               redraws its spinner every second, so a still pane with a question in the transcript
+#               is a process that is not running the turn it has.
+#   api-error   the service ended the turn with a 5xx and nobody said anything since.
+# Not recovered: the director's own Stop, a question to him, a review, a usage limit (the pause
+# machinery owns it), no route to the API (the offline state owns it), or a run that is finished.
+#
+# One episode per frozen turn, kept on disk, with a fixed budget. Only the model producing work
+# again closes it — not the nudge the recovery typed, not the synthetic line a resume writes, not a
+# fresh API error. Each attempt is charged BEFORE it is made, and each waits twice as long as the
+# last: ten minutes, twenty, forty — and the verdict after another forty, written where the app
+# and the queue already look (`stalled.json`), with the reason.
+
+: "${SUPERVISOR_HUNG_TURN_SECS:=600}"     # stillness after which a question with no answer is a hang
+: "${SUPERVISOR_HUNG_RECOVERIES:=3}"      # actions per episode: restarts and the nudges after them
+
+HUNG_RELAUNCH_PROMPT="Сесію Claude Code перезапущено: попередній хід завис і не дав жодної відповіді. Нічого не втрачено — продовжуй роботу над поточною задачею з того місця, де вона обірвалася. Якщо останнє повідомлення вище ще не виконане, виконай його повністю."
+HUNG_ERROR_PROMPT="Попередній хід обірвала помилка сервісу Claude. Продовжуй роботу над поточною задачею з того місця, де вона обірвалася; якщо останнє повідомлення вище ще не виконане, виконай його повністю."
+
+hung_file() { printf '%s/hung-recovery.json' "${1:-}"; }
+
+# An episode that is still being worked on — exhausted ones are a verdict, not work in flight.
+hung_recovery_open() {   # $1=idir
+  local f; f="$(hung_file "${1:-}")"
+  [ -s "$f" ] && [ "$(jq -r '.exhausted // false' "$f" 2>/dev/null)" != true ]
+}
+
+# A tool the model called whose result is not in yet — a subagent, a long build, a permission
+# question. A turn waiting on one of those is waiting, not frozen.
+transcript_tools_outstanding() {   # $1=transcript
+  tail -n "${SUPERVISOR_TRANSCRIPT_TAIL:-400}" "${1:-/nonexistent}" 2>/dev/null \
+    | jq -c -R 'fromjson? // empty' 2>/dev/null \
+    | jq -e -s '
+        ([ .[] | select(.type == "assistant") | .message.content[]?
+           | select(type == "object" and .type == "tool_use") | .id ]) as $asked
+        | ([ .[] | select(.type == "user") | .message.content[]?
+             | select(type == "object" and .type == "tool_result") | .tool_use_id ]) as $answered
+        | ($asked - $answered | length) > 0' >/dev/null 2>&1
+}
+
+hung_turn_kind() {   # $1=transcript → "unanswered <uuid> <epoch>" | "api-error <uuid> <epoch>", or fails
+  local word kind uuid status at
+  word="$(transcript_last_word "${1:-}")" || return 1
+  read -r kind uuid status at <<< "$word"
+  case "$at" in ''|*[!0-9]*) at=0 ;; esac
+  case "$kind" in
+    prompt|tool-result)
+      transcript_tools_outstanding "$1" && return 1
+      printf 'unanswered %s %s' "$uuid" "$at" ;;
+    api-error)
+      case "$status" in 5[0-9][0-9]) printf 'api-error %s %s' "$uuid" "$at" ;; *) return 1 ;; esac ;;
+    *) return 1 ;;
+  esac
+}
+
+# 0 while the worker's transcript holds a question THIS process was given and has not answered,
+# with no tool still out. Anything typed at such a worker lands in a process that is not running the
+# turn it already has. A question older than the process — asked before a restart, whose resume did
+# not write its synthetic reply — binds nobody: the worker in the pane now never saw it arrive. The
+# SessionStart hook's `handshake-ok` is when the current process started.
+worker_owes_answer() {   # $1=session [$2=idir]
+  local tx found kind uuid at born
+  tx="$(worker_transcript "${1:-}" "${2:-}" 2>/dev/null)" || return 1
+  found="$(hung_turn_kind "$tx")" || return 1
+  read -r kind uuid at <<< "$found"
+  [ "$kind" = unanswered ] || return 1
+  [ -n "${2:-}" ] && [ -f "$2/handshake-ok" ] && [ "${at:-0}" -gt 0 ] || return 0
+  born="$(stat -f %m "$2/handshake-ok" 2>/dev/null || echo 0)"
+  [ "$at" -ge "$born" ]
+}
+
+# The service itself, not "some website answers": the general `network_up` is satisfied by ChatGPT
+# alone, which says nothing about whether a restarted Claude could reach anything.
+claude_reachable() {
+  if [ -n "${SUPERVISOR_CLAUDE_REACHABLE_CMD:-}" ]; then "$SUPERVISOR_CLAUDE_REACHABLE_CMD"; return; fi
+  curl -sS --head --max-time 6 https://api.anthropic.com/ >/dev/null 2>&1
+}
+
+# Restart the worker in place: same tmux session and pane, same run, `claude --resume` on the same
+# conversation.
+#
+# The launch line ends in `; night-shift.sh stop …`, so a Claude that exits takes its instance down
+# with it — which is right when the worker quits and exactly wrong here. Each launch therefore
+# carries a generation, and `stop` ignores a generation that is no longer the instance's. The new
+# generation is written BEFORE the old process is touched, so the old tail finds itself replaced
+# whichever instant it runs; `relaunching` covers the launch lines written before generations
+# existed. The old process is killed and confirmed gone before the new one starts, so two Claudes
+# never write the same transcript.
+worker_relaunch() {   # $1=idir $2=session → 0 when a fresh worker has shaken hands on the session
+  local idir="${1:-}" session="${2:-}" tpl sid gen pane shell_pid old_pid launch i
+  local plog="${INJECT_LOG:-$SUP_STATE/supervisor.log}"
+  tpl="$(cat "$idir/relaunch-template" 2>/dev/null || true)"
+  sid="$(tr -d '[:space:]' < "$idir/claude-session-id" 2>/dev/null || true)"
+  [ -n "$tpl" ] && [ -n "$sid" ] || return 3            # no way to start it again as it was
+  pane="$(tmux display-message -p -t "$session" '#{pane_id}' 2>/dev/null || true)"
+  [ -n "$pane" ] || return 1
+  shell_pid="$(tmux display-message -p -t "$pane" '#{pane_pid}' 2>/dev/null || true)"
+  old_pid="$(session_worker_pid "$session" 2>/dev/null || true)"
+  gen="$(uuidgen 2>/dev/null || printf 'g-%s-%s' "$(date +%s)" "$$")"
+
+  : > "$idir/recovering" 2>/dev/null || true
+  date +%s > "$idir/relaunching" 2>/dev/null || true
+  printf '%s\n' "$gen" > "$idir/worker-generation" 2>/dev/null || true
+  tmux set-option -w -t "$pane" remain-on-exit on 2>/dev/null || true
+
+  # The frozen Claude and everything it started. TERM first — a process that is merely wedged in
+  # its event loop may never act on it — and KILL after a short grace.
+  if [ -n "$old_pid" ]; then kill_tree "$old_pid" TERM
+  elif [ -n "$shell_pid" ]; then for i in $(pgrep -P "$shell_pid" 2>/dev/null); do kill_tree "$i" TERM; done
+  fi
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    [ "$(tmux display-message -p -t "$pane" '#{pane_dead}' 2>/dev/null)" = 1 ] && break
+    { [ -z "$old_pid" ] || ! kill -0 "$old_pid" 2>/dev/null; } && [ "$i" -ge 4 ] && break
+    sleep 0.5
+  done
+  if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then kill_tree "$old_pid" KILL; sleep 1; fi
+  if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+    echo "$(date '+%F %T') [recover] the frozen worker (pid $old_pid) survived KILL — not starting a second one on $session" >> "$plog"
+    tmux set-option -w -t "$pane" remain-on-exit off 2>/dev/null || true
+    rm -f "$idir/recovering" 2>/dev/null
+    return 1
+  fi
+
+  rm -f "$idir/handshake-ok" 2>/dev/null || true
+  launch="${tpl//@CLAUDE_SESSION@/$(shq "$sid")}"
+  launch="${launch//@GENERATION@/$(shq "$gen")}"
+  if ! tmux respawn-pane -k -t "$pane" -c "$(cat "$idir/project" 2>/dev/null || pwd)" "$launch" 2>>"$plog"; then
+    echo "$(date '+%F %T') [recover] could not start the worker again on $session" >> "$plog"
+    rm -f "$idir/recovering" 2>/dev/null
+    return 1
+  fi
+  tmux set-option -w -t "$pane" remain-on-exit off 2>/dev/null || true
+  for i in $(seq 1 "${SUPERVISOR_RELAUNCH_HANDSHAKE_WAIT:-45}"); do
+    [ -f "$idir/handshake-ok" ] && break
+    sleep 1
+  done
+  rm -f "$idir/relaunching" "$idir/recovering" 2>/dev/null || true
+  if [ ! -f "$idir/handshake-ok" ]; then
+    echo "$(date '+%F %T') [recover] the restarted worker never shook hands on $session" >> "$plog"
+    return 1
+  fi
+  echo "$(date '+%F %T') [recover] restarted the worker on $session (claude --resume $sid)" >> "$plog"
+  return 0
+}
+
+_hung_write() {   # $1=idir $2=jq filter applied to the current record
+  local f; f="$(hung_file "${1:-}")"
+  { [ -s "$f" ] && cat "$f" || printf '{}'; } | jq -c "$2" > "$f.tmp" 2>/dev/null && mv -f "$f.tmp" "$f"
+}
+
+# One look, once per watchdog poll. 0 means it acted (or is holding the pane) and the rest of the
+# poll should wait for the next one.
+hung_turn_check() {   # $1=idir $2=session $3=seconds the pane has been still $4=this watchdog's run id
+  local idir="${1:-}" session="${2:-}" still="${3:-0}" wd_run="${4:-}" plog="$SUP_STATE/watchdog.log"
+  local f tx now attempts need tx_age found kind entry mark owed pane_before rc
+  local max="${SUPERVISOR_HUNG_RECOVERIES:-3}" base="${SUPERVISOR_HUNG_TURN_SECS:-600}"
+  f="$(hung_file "$idir")"
+  tx="$(worker_transcript "$session" "$idir" 2>/dev/null)" || return 1
+  now="$(date +%s)"
+  _hlog() { echo "$(date '+%F %T') [$(basename "$idir")] $*" >> "$plog"; }
+
+  # The only thing that closes an episode: the model saying something again.
+  if [ -s "$f" ] && transcript_progress_since "$tx" "$(jq -r '.mark // 0' "$f" 2>/dev/null)"; then
+    rm -f "$f" 2>/dev/null
+    [ "$(jq -r '.recovery // empty' "$idir/stalled.json" 2>/dev/null)" = hung ] && rm -f "$idir/stalled.json"
+    _hlog "the worker is producing again — frozen-turn episode closed"
+    return 1
+  fi
+
+  if [ "$(jq -r '.exhausted // false' "$f" 2>/dev/null)" = true ]; then
+    # Parked — until the director writes again. A message waiting to reach this worker is the
+    # "try again" a parked run was waiting for, and without one more restart it could never be
+    # delivered: the frozen pane takes no typing and nothing else would ever replace it.
+    { [ "$(pending_count "$idir")" != 0 ] || [ -s "$(undelivered_file "$idir")" ]; } || return 1
+    _hung_write "$idir" ".exhausted = false | .retry_now = true | .attempts = ($max - 1)"
+    [ "$(jq -r '.recovery // empty' "$idir/stalled.json" 2>/dev/null)" = hung ] && rm -f "$idir/stalled.json"
+    _hlog "the director wrote to a parked frozen worker — one more restart, now"
+  fi
+  for found in done ask-user.json review-active director-stopped paused-for-limit.json; do
+    [ -e "$idir/$found" ] && return 1
+  done
+
+  attempts="$(jq -r '.attempts // 0' "$f" 2>/dev/null)"; case "$attempts" in ''|*[!0-9]*) attempts=0 ;; esac
+  owed="$(jq -r '.nudge_owed // false' "$f" 2>/dev/null)"
+  if [ "$owed" = true ]; then
+    # The restart went through and the nudge did not: that nudge is still owed, soon, and the
+    # screen being still is not evidence of anything on a worker that has just started.
+    [ $(( now - $(jq -r '.last_at // 0' "$f" 2>/dev/null) )) -ge "${SUPERVISOR_HUNG_NUDGE_RETRY:-120}" ] || return 1
+    _turn_running "$session" && return 1
+    kind="nudge"; entry="$(jq -r '.entry // "-"' "$f" 2>/dev/null)"
+  else
+    need=$(( base << (attempts > 2 ? 2 : attempts) ))
+    [ "$(jq -r '.retry_now // false' "$f" 2>/dev/null)" = true ] && need=0
+    [ "$still" -ge "$need" ] || return 1
+    tx_age=$(( now - $(stat -f %m "$tx" 2>/dev/null || echo "$now") ))
+    [ "$tx_age" -ge "$need" ] || return 1
+    found="$(hung_turn_kind "$tx")" || return 1
+    read -r kind entry _ <<< "$found"
+  fi
+  claude_reachable || return 1                 # offline: the offline state owns this
+  provider_exhausted claude && return 1        # a limit: the pause machinery owns this
+
+  if [ "$attempts" -ge "$max" ]; then
+    _hung_write "$idir" '.exhausted = true'
+    jq -n --arg since "$(date '+%F %T')" --argjson tries "$attempts" --arg kind "$kind" \
+      '{reason:"the worker froze after taking the task and did not come back after restarts",
+        recovery:"hung", kind:$kind, since:$since, recovery_attempts:$tries,
+        needs:"a person to look at the session; the next message starts it again"}' \
+      > "$idir/stalled.json" 2>/dev/null || true
+    _hlog "FROZEN TURN — $attempts recoveries did not bring the worker back; parked (stalled.json)"
+    return 1
+  fi
+
+  mark="$(jq -r '.mark // empty' "$f" 2>/dev/null)"
+  [ -n "$mark" ] || mark="$(_transcript_size "$tx")"
+  _hung_write "$idir" ". + $(jq -nc --arg k "$kind" --arg e "$entry" --argjson m "$mark" \
+      --argjson a "$((attempts + 1))" --argjson t "$now" \
+      '{kind:(if $k == "nudge" then null else $k end), entry:$e, mark:$m, attempts:$a, last_at:$t,
+        retry_now:false} | with_entries(select(.value != null))')"
+
+  if ! delivery_claim "$idir" "watchdog-recover"; then
+    _hlog "frozen-turn recovery deferred — another process is at the composer"
+    return 0
+  fi
+  pane_before="$(tmux display-message -p -t "$session" '#{pane_id}' 2>/dev/null || true)"
+  if [ -n "$wd_run" ] && [ "$(tr -d '[:space:]' < "$idir/run-id" 2>/dev/null)" != "$wd_run" ]; then
+    delivery_release "$idir"; return 0
+  fi
+
+  if [ "$kind" = unanswered ]; then
+    _hlog "FROZEN TURN — pane and transcript still for ${still}s with a question unanswered (entry $entry); restarting the worker (attempt $((attempts + 1))/$max)"
+    worker_relaunch "$idir" "$session"; rc=$?
+    if [ "$rc" != 0 ]; then
+      [ "$rc" = 3 ] && _hlog "cannot restart this worker (no launch template or session id) — left for the stall watch"
+      delivery_release "$idir"; return 0
+    fi
+    _hung_write "$idir" '.nudge_owed = true'
+    [ "$(tmux display-message -p -t "$session" '#{pane_id}' 2>/dev/null)" = "$pane_before" ] \
+      || { delivery_release "$idir"; return 0; }
+  fi
+
+  # Something the director actually said, already on its way, carries the work on far better than
+  # a generic nudge — and two of them would arrive one inside the other.
+  if [ "$(pending_count "$idir")" != 0 ] || [ -s "$(undelivered_file "$idir")" ]; then
+    _hung_write "$idir" '.nudge_owed = false'
+    _hlog "a queued message will carry the work on — no nudge typed"
+    delivery_release "$idir"; return 0
+  fi
+  if INJECT_IDIR="$idir" INJECT_IGNORE_OWED=1 inject_task "$session" \
+       "$([ "$kind" = api-error ] && printf '%s' "$HUNG_ERROR_PROMPT" || printf '%s' "$HUNG_RELAUNCH_PROMPT")"; then
+    _hung_write "$idir" '.nudge_owed = false'
+    _hlog "nudged the worker to carry on ($kind)"
+  else
+    _hung_write "$idir" '.nudge_owed = true'
+    _hlog "the nudge did not go in — it stays owed"
+  fi
+  delivery_release "$idir"
+  return 0
+}
+
 resume_worker() {
   local session="$1" idir="$2" prompt="$3" needle="${4:-}"
   local max="${SUPERVISOR_RESUME_MAX_ATTEMPTS:-3}"
@@ -692,6 +1167,10 @@ resume_worker() {
     _park_resume_refused "$idir" "$n" "$max"
     return 1
   fi
+
+  local tx tx_off=0
+  tx="$(worker_transcript "$session" "$idir" 2>/dev/null || true)"
+  [ -n "$tx" ] && tx_off="$(_transcript_size "$tx")"
 
   if composer_pending "$session" "$needle"; then
     tmux send-keys -t "$session" Enter 2>/dev/null
@@ -711,6 +1190,11 @@ resume_worker() {
     sleep 0.25
     if _turn_running "$session"; then _resume_ok "$idir"; return 0; fi
   done
+  # The same receipt `inject_task` reads: a nudge in the transcript went in, and the Escape below
+  # would only interrupt a turn whose status has not caught up.
+  if [ -n "$tx" ] && transcript_prompt_since "$tx" "$tx_off" "$needle"; then
+    _resume_ok "$idir"; return 0
+  fi
 
   n=$((n + 1))
   printf '%s\n' "$n" > "$attempts_file" 2>/dev/null || true
@@ -808,8 +1292,14 @@ inject_task() {
   _inject_phase waiting
   while [ "$waited" -lt "${SUPERVISOR_PROMPT_WAIT:-90}" ]; do
     tmux has-session -t "$session" 2>/dev/null || return 1
+    # A prompt on the screen is not an idle worker when its transcript still holds a question it
+    # has not answered: that screen belongs to a process that stopped drawing. The recovery's own
+    # nudge is the exception — it is typed into the process that replaced that one.
     if tmux capture-pane -pt "$session" 2>/dev/null | grep -qE '❯|│ >' \
-       && ! _turn_running "$session"; then seen=1; break; fi
+       && ! _turn_running "$session" \
+       && { [ "${INJECT_IGNORE_OWED:-0}" = 1 ] || ! worker_owes_answer "$session" "${INJECT_IDIR:-}"; }; then
+      seen=1; break
+    fi
     sleep 1; waited=$((waited + 1))
   done
   [ "$seen" = 1 ] || return 1              # never became idle at the prompt — fail fast
@@ -822,7 +1312,11 @@ inject_task() {
     prev="$snap"; sleep 1; waited=$((waited + 1))
   done
 
-  local typed=0 attempt=0 before tf
+  local typed=0 attempt=0 before tf tx tx_off=0
+  # Where the worker's transcript ends before anything is typed. A prompt recorded past this point
+  # is this one: only the holder of the delivery claim types into this pane.
+  tx="$(worker_transcript "$session" "${INJECT_IDIR:-}" 2>/dev/null || true)"
+  [ -n "$tx" ] && tx_off="$(_transcript_size "$tx")"
   tf="$(mktemp -t bulava-inject)" || return 1
   printf '%s' "$task" > "$tf"
   while [ "$attempt" -lt "${SUPERVISOR_INJECT_TYPE_TRIES:-3}" ]; do
@@ -863,6 +1357,15 @@ inject_task() {
       sleep 0.25
       _turn_running "$session" && { _inject_phase confirmed; return 0; }
     done
+    # No turn on the screen — but the transcript is the CLI's own receipt. A prompt in it was
+    # received, whatever the status says, and it must not be typed again or followed by the
+    # Escape below: that is how a task that had arrived was retyped into a frozen process three
+    # times. Whether the turn then runs is the watchdog's to see (`hung_turn_check`).
+    if [ -n "$tx" ] && transcript_prompt_since "$tx" "$tx_off" "$(prompt_needle "$task")"; then
+      echo "$(date '+%F %T') [inject] the worker recorded the task but showed no turn — delivered; left to the hung-turn watch ($session)" >> "$plog"
+      _inject_phase confirmed
+      return 0
+    fi
   done
   clear_composer "$session" >/dev/null 2>&1 || true
   return 2
@@ -1230,7 +1733,7 @@ flush_undelivered() {  # $1=session  $2=instance dir
     return 1
   fi
 
-  if inject_task "$session" "$msg"; then
+  if INJECT_IDIR="$idir" inject_task "$session" "$msg"; then
     local _mid; _mid="$(printf '%s' "$line" | jq -r '.id // ""' 2>/dev/null)"
     if [ -n "$_mid" ]; then
       reset_review_budget "$idir"
@@ -1238,7 +1741,7 @@ flush_undelivered() {  # $1=session  $2=instance dir
       mark_delivered "$idir" "$_mid"
       thread_delivered "$idir" "$_mid"
     fi
-    rm -f "$idir/resume-pending" 2>/dev/null || true
+    rm -f "$idir/resume-pending" "$idir/director-stopped" 2>/dev/null || true
     _drop_first_undelivered
     return 0
   fi

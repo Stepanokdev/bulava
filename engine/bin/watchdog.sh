@@ -143,10 +143,22 @@ while [ -d "$IDIR" ]; do
   paused_now=0
   [ -f "$PAUSED" ] && paused_now=1
 
+  # A worker that took its task and froze: a question in its transcript with nothing after it, and a
+  # screen that has not changed since. The stall and the teardown below used to be all that ever
+  # happened to one — marked, then deleted four hours later with the task still in it. This restarts
+  # the process on the same conversation and nudges it, within a fixed budget, and it comes first so
+  # that neither of those two fires while it is still trying.
+  if [ "$awaiting_active" = 0 ] && [ "$preparing" = 0 ] && [ "$paused_now" = 0 ]; then
+    still=$(( now - $(stat -f %m "$IDIR/last-activity" 2>/dev/null || echo "$now") ))
+    if hung_turn_check "$IDIR" "$SESSION" "$still" "$WD_RUN"; then
+      sleep "$POLL"; continue
+    fi
+  fi
+
   # A run parked on a usage window is waiting, not dead. While the pause was one long `sleep` this
   # loop never reached here during one; now that it does, the teardown has to say so itself.
   if [ "$STALE_SECS" -gt 0 ] && [ "$awaiting_active" = 0 ] && [ "$preparing" = 0 ] \
-     && [ "$paused_now" = 0 ]; then
+     && [ "$paused_now" = 0 ] && ! hung_recovery_open "$IDIR"; then
     idle=$(( now - $(stat -f %m "$IDIR/last-activity" 2>/dev/null || echo "$now") ))
     if [ "$idle" -ge "$STALE_SECS" ]; then
       log "IDLE ${idle}s ≥ ${STALE_SECS}s (screen unchanged) — full teardown: killing claude+tmux, supervision off"
@@ -158,8 +170,10 @@ while [ -d "$IDIR" ]; do
   fi
 
   STALL_PARK_SECS="${SUPERVISOR_STALL_PARK_SECS:-900}"
+  # Not while a frozen turn is being recovered: `stalled.json` is terminal to the night queue, and a
+  # worker between its first restart and its second is being worked on, not given up on.
   if [ "$STALL_PARK_SECS" -gt 0 ] && [ "$awaiting_active" = 0 ] && [ "$preparing" = 0 ] \
-     && [ "$paused_now" = 0 ] \
+     && [ "$paused_now" = 0 ] && ! hung_recovery_open "$IDIR" \
      && [ ! -e "$IDIR/done" ] && [ ! -e "$IDIR/review-active" ] \
      && [ ! -e "$IDIR/ask-user.json" ] && [ ! -e "$PAUSED" ] && [ ! -e "$IDIR/stalled.json" ]; then
     idle=$(( now - $(stat -f %m "$IDIR/last-activity" 2>/dev/null || echo "$now") ))
@@ -373,8 +387,14 @@ $_owed" "$REVIEW_NEEDLE" \
     fi
   fi
 
+  # And never into a worker that still owes an answer to what it was last given. A screen that
+  # accepts no typing and a transcript with an open question are the same frozen process; typing a
+  # parked message into it is how the prepared task was retyped three times and then written off.
+  # A worker restarted since that question was asked owes it nothing, and this is exactly the
+  # message that should reach it — the frozen-turn recovery holds its nudge back for it.
   if { [ -s "$(undelivered_file "$IDIR")" ] || [ -s "$IDIR/undelivered.jsonl" ]; } \
-     && [ ! -f "$PAUSED" ] && [ "$preparing" = 0 ] && ! _turn_running "$SESSION"; then
+     && [ ! -f "$PAUSED" ] && [ "$preparing" = 0 ] && ! _turn_running "$SESSION" \
+     && ! worker_owes_answer "$SESSION" "$IDIR"; then
     if delivery_claim "$IDIR" "watchdog-flush"; then
       if flush_undelivered "$SESSION" "$IDIR"; then
         log "delivered a parked message that a usage limit had blocked"

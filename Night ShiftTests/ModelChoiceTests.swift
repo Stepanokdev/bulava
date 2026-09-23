@@ -311,6 +311,94 @@ nonisolated final class ModelChoiceTests: XCTestCase {
         XCTAssertEqual(found.models.count, 5)
     }
 
+    /// The shape CLI 2.1.280 writes instead: one file per account, `<account>-<org>-cc.json`, with
+    /// the selector under `catalog` and none of the document's `runtime`, `offered_on` or alias
+    /// table. A cut of the real file from the day Opus 5.5 shipped.
+    private let claudeCatalogueV2 = """
+    {"version":2,"fetchedAt":3,"staleAt":4,"catalog":{"surface":"cc",
+      "config":{"id":"cc","models":[
+        {"id":"claude-opus-5-5","name":"Opus 5.5","short_name":"Opus","section":"main",
+         "description":"Most capable for ambitious work","min_claude_code_version":"2.1.280",
+         "thinking":{"type":"effort","effort_options":[{"id":"low"},
+           {"id":"medium","badge":{"message":"Default"}},{"id":"high"},{"id":"xhigh"},{"id":"max"}]}},
+        {"id":"claude-fable-5-1","name":"Fable 5.1","short_name":"Fable","section":"main",
+         "min_claude_code_version":"2.1.251",
+         "thinking":{"type":"effort","effort_options":[{"id":"low"},{"id":"medium"},
+           {"id":"high","badge":{"message":"Default"}},{"id":"xhigh"},{"id":"max"}]}},
+        {"id":"claude-sonnet-5","name":"Sonnet 5","short_name":"Sonnet","section":"main",
+         "thinking":{"type":"effort","effort_options":[{"id":"low"},{"id":"medium"},
+           {"id":"high","badge":{"message":"Default"}},{"id":"xhigh"},{"id":"max"}]}},
+        {"id":"claude-haiku-4-5-20251001","name":"Haiku 4.5","short_name":"Haiku","section":"main",
+         "thinking":{"type":"none"}},
+        {"id":"claude-opus-5","name":"Opus 5","short_name":"Opus","section":"overflow",
+         "thinking":{"type":"effort","effort_options":[{"id":"low"},{"id":"medium"},
+           {"id":"high","badge":{"message":"Default"}},{"id":"xhigh"},{"id":"max"}]}},
+        {"id":"claude-opus-4-6","name":"Opus 4.6","short_name":"Opus","section":"overflow",
+         "thinking":{"type":"effort","effort_options":[{"id":"low"},{"id":"medium"},
+           {"id":"high","badge":{"message":"Default"}},{"id":"max"}]}}
+      ],"settings_vocabulary":{}},
+      "state":{"id":"cc","model":"claude-opus-5-5","selection_source":"global_default",
+        "thinking":{"type":"effort","effort":"medium"},
+        "thinking_by_model":[{"id":"claude-opus-5-5","thinking":{"type":"effort","effort":"medium"}},
+                             {"id":"claude-opus-5","thinking":{"type":"effort","effort":"high"}}]}}}
+    """
+
+    func testTheNewPerAccountCatalogueIsRead() {
+        let found = ClaudeModelCatalog.decode(Data(claudeCatalogueV2.utf8), cliVersion: "2.1.280")
+        XCTAssertTrue(found.loaded)
+        XCTAssertEqual(found.current.map(\.name), ["Opus 5.5", "Fable 5.1", "Sonnet 5", "Haiku 4.5"])
+        XCTAssertEqual(found.older.map(\.name), ["Opus 5", "Opus 4.6"])
+        // The alias table is gone from this shape; each family is its newest main-list model.
+        XCTAssertEqual(found.aliases, ["opus": "claude-opus-5-5", "fable": "claude-fable-5-1",
+                                       "sonnet": "claude-sonnet-5",
+                                       "haiku": "claude-haiku-4-5-20251001"])
+        XCTAssertEqual(found.versionName(for: .opus), "Opus 5.5")
+        XCTAssertEqual(found.resolved(.auto)?.id, "claude-opus-5-5")
+    }
+
+    /// Levels come from each model's own `effort_options` and its default from the one badged
+    /// "Default" — Opus 5.5 defaults to medium where Opus 5 defaulted to high.
+    func testTheNewCataloguesDepthsAreTheModelsOwn() {
+        let found = ClaudeModelCatalog.decode(Data(claudeCatalogueV2.utf8), cliVersion: "2.1.280")
+        let opus55 = ClaudeModelChoice(rawValue: "claude-opus-5-5")
+        XCTAssertEqual(found.model(id: "claude-opus-5-5")?.levels, ["low", "medium", "high", "xhigh", "max"])
+        XCTAssertEqual(found.automaticLevel(for: opus55), .medium)
+        XCTAssertEqual(found.automaticLevel(for: ClaudeModelChoice(rawValue: "claude-opus-5")), .high)
+        XCTAssertFalse(found.levels(for: ClaudeModelChoice(rawValue: "claude-opus-4-6")).contains(.xhigh))
+        XCTAssertFalse(found.thinks(.haiku), "Haiku takes no depth in this shape either")
+        XCTAssertEqual(found.effortFlag(.high, for: .haiku), ClaudeModelCatalog.noDepth)
+    }
+
+    /// A CLI older than Opus 5.5 cannot run it, so it is not offered — and "Opus" then means the
+    /// newest Opus that CLI can actually start.
+    func testTheNewCatalogueStillHonoursTheInstalledCLI() {
+        let found = ClaudeModelCatalog.decode(Data(claudeCatalogueV2.utf8), cliVersion: "2.1.279")
+        XCTAssertNil(found.model(id: "claude-opus-5-5"))
+        XCTAssertEqual(found.aliases["opus"], "claude-opus-5")
+    }
+
+    /// Both shapes on one disk, as on every machine that updated the CLI: the per-account file is
+    /// the fresher one and has to win, or the menu stays on the models of the last old-style fetch.
+    func testTheFresherShapeWinsOnDisk() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("claude-catalogue-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let stale = Data(claudeCatalogue.utf8).base64EncodedString()
+        try Data(#"{"fetchedAt":2,"documentBytes":"\#(stale)"}"#.utf8)
+            .write(to: dir.appendingPathComponent("published-old.json"))
+        try Data(#"{"version":1,"sources":{}}"#.utf8)
+            .write(to: dir.appendingPathComponent("published-floor.json"))
+        try Data(claudeCatalogueV2.utf8)
+            .write(to: dir.appendingPathComponent("c168d696-3266-4138-9221-e4862307975a-5d254977d2bf-cc.json"))
+
+        let found = ClaudeModelCatalog.read(cliVersion: "2.1.280", from: dir,
+                                            settings: dir.appendingPathComponent("absent.json"))
+        XCTAssertEqual(found.resolved(.opus)?.name, "Opus 5.5")
+        XCTAssertNotNil(found.model(id: "claude-opus-5-5"))
+    }
+
     func testNoCatalogueOnDiskIsNotAnError() {
         let missing = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("no-such-catalogue-\(UUID().uuidString)")

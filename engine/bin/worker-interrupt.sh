@@ -19,6 +19,11 @@ inst_rid="$(tr -d '[:space:]' < "$idir/run-id" 2>/dev/null || true)"
   || { echo "жива сесія належить іншому рану"; exit 4; }
 tmux has-session -t "$session" 2>/dev/null || { echo "сесія вже закрита"; exit 3; }
 
+# Stop is his decision, and it outlives the Escape that carries it. The frozen-turn recovery must
+# not read a turn he stopped as a turn that hung and start it again; the next message he sends
+# clears this.
+: > "$idir/director-stopped" 2>/dev/null || true
+
 # What Stop means depends on what is happening, and the order here is the order the app's own
 # header uses: a running turn first, then preparation.
 #

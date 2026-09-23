@@ -5993,6 +5993,40 @@
         }
       }
     },
+    "Claude froze and restarting did not help — send a message to try again": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude завис, и перезапуск не помог — отправь сообщение, чтобы попробовать ещё раз"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude завис, і перезапуск не допоміг — надішли повідомлення, щоб спробувати ще раз"
+          }
+        }
+      }
+    },
+    "Claude froze — Bulava is restarting it": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude завис — Bulava перезапускает его"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude завис — Bulava перезапускає його"
+          }
+        }
+      }
+    },
     "Claude is built for a different Mac": {
       "extractionState": "manual",
       "localizations": {
@@ -18061,6 +18095,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Движок ще не встановлено"
+          }
+        }
+      }
+    },
+    "The worker froze and restarting did not help. Send a message to try again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Исполнитель завис, и перезапуск не помог. Отправь сообщение, чтобы попробовать ещё раз."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Виконавець завис, і перезапуск не допоміг. Надішли повідомлення, щоб спробувати ще раз."
+          }
+        }
+      }
+    },
+    "The worker froze — Bulava is restarting it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Исполнитель завис — Bulava перезапускает его."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Виконавець завис — Bulava перезапускає його."
           }
         }
       }

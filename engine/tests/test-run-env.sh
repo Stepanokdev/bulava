@@ -92,8 +92,15 @@ echo "===== the worker's own flags still carry its effort and model ====="
 grep -q 'EFFORT_FLAG="$(claude_effort_launch_flag)"' "$BIN_DIR/night-shift.sh" \
   && ok "--effort is built by the one helper that knows when to omit it" \
   || bad "the worker lost its --effort flag"
-grep -q 'claude ${EFFORT_FLAG}' "$BIN_DIR/night-shift.sh" \
-  && ok "and the launch line still carries it" || bad "EFFORT_FLAG never reaches the launch line"
+# The flags are gathered once per launch path, because the same set also goes into the line that
+# restarts a frozen worker in place (`relaunch-template`) — so both the launch and the restart
+# carry the effort, and the check follows the variable rather than one spelling of the line.
+grep -q 'CLAUDE_FLAGS="${EFFORT_FLAG}' "$BIN_DIR/night-shift.sh" \
+  && grep -q 'RAW_LAUNCH="claude ${CLAUDE_FLAGS}' "$BIN_DIR/night-shift.sh" \
+  && grep -q 'RAW_LAUNCH="claude --resume $(shq "$RESUME_SID") ${CLAUDE_FLAGS}' "$BIN_DIR/night-shift.sh" \
+  && grep -q 'claude --resume @CLAUDE_SESSION@ ${CLAUDE_FLAGS}' "$BIN_DIR/night-shift.sh" \
+  && ok "and the launch line — and the restart line — still carry it" \
+  || bad "EFFORT_FLAG never reaches the launch line"
 grep -q 'MODEL_FLAG="--model' "$BIN_DIR/night-shift.sh" \
   && ok "--model too" || bad "the worker lost its --model flag"
 

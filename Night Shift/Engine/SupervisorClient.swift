@@ -169,6 +169,7 @@ actor SupervisorClient {
 
             let (workerOutcome, outcomeSummary) = readOutcome(dir.appendingPathComponent("outcome.json"))
             let stalled = fm.fileExists(atPath: dir.appendingPathComponent("stalled.json").path)
+            let frozen = readFrozenRecovery(dir)
 
             let offlineURL = dir.appendingPathComponent("offline.json")
             let offline = fm.fileExists(atPath: offlineURL.path)
@@ -279,6 +280,7 @@ actor SupervisorClient {
                 outcome: workerOutcome,
                 outcomeSummary: outcomeSummary,
                 stalled: stalled,
+                frozenRecovery: frozen,
                 offline: offline,
                 offlineSince: offlineSince,
                 injectFailure: injected?.reason,
@@ -288,6 +290,18 @@ actor SupervisorClient {
             result.append(inst)
         }
         return result.sorted { ($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast) }
+    }
+
+    /// A frozen turn the watchdog is restarting (`hung-recovery.json`, still open), or one it gave
+    /// up on (`stalled.json` carrying `recovery: "hung"`).
+    private func readFrozenRecovery(_ dir: URL) -> FrozenRecovery? {
+        if readJSONString(dir.appendingPathComponent("stalled.json"), key: "recovery") == "hung" {
+            return .gaveUp
+        }
+        let episode = dir.appendingPathComponent("hung-recovery.json")
+        guard let data = try? Data(contentsOf: episode),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return (object["exhausted"] as? Bool) == true ? nil : .restarting
     }
 
     private func readWorkerStatus(session: String) -> String? {

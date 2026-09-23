@@ -398,6 +398,8 @@ case "$cmd" in
     # The same choices the launch line below carries, written where a later process can read them.
     # A preflight or a consultation started by the app is not a child of this tmux session.
     run_env_save "$IDIR"
+    GEN="$(new_worker_generation "$IDIR")"
+    LAUNCH_ENV="$(subscription_env_prefix) ORCHESTRATOR_RUN_ID=$(shq "$RUN_ID") $(run_env_stamp)"
     if [ -n "${SUPERVISOR_CLAUDE_CMD:-}" ]; then
       RAW_LAUNCH="$SUPERVISOR_CLAUDE_CMD"
     else
@@ -405,9 +407,12 @@ case "$cmd" in
       MODEL_FLAG=""; [ -n "${SUPERVISOR_CLAUDE_MODEL:-}" ] && MODEL_FLAG="--model $(shq "$SUPERVISOR_CLAUDE_MODEL") "
       SETTINGS_FLAG=""; WORKER_SETTINGS="$SUP_STATE/worker-settings.json"; [ -f "$WORKER_SETTINGS" ] && SETTINGS_FLAG="--settings $(shq "$WORKER_SETTINGS") "
       EXTRA_ADD_FLAGS="$(extra_add_dir_flags)"
-      RAW_LAUNCH="claude ${EFFORT_FLAG}${MODEL_FLAG}${SETTINGS_FLAG}--permission-mode $(shq "${SUPERVISOR_PERMISSION_MODE:-auto}") --add-dir $(shq "$IDIR") ${EXTRA_ADD_FLAGS}--append-system-prompt-file $(shq "$IDIR/standards.md"); $(shq "$BIN_DIR/night-shift.sh") stop $(shq "$PROJECT_DIR")"
+      CLAUDE_FLAGS="${EFFORT_FLAG}${MODEL_FLAG}${SETTINGS_FLAG}--permission-mode $(shq "${SUPERVISOR_PERMISSION_MODE:-auto}") --add-dir $(shq "$IDIR") ${EXTRA_ADD_FLAGS}--append-system-prompt-file $(shq "$IDIR/standards.md")"
+      STOP_TAIL="$(shq "$BIN_DIR/night-shift.sh") stop --generation"
+      RAW_LAUNCH="claude ${CLAUDE_FLAGS}; ${STOP_TAIL} $(shq "$GEN") $(shq "$PROJECT_DIR")"
+      save_relaunch_template "$IDIR" "$LAUNCH_ENV claude --resume @CLAUDE_SESSION@ ${CLAUDE_FLAGS}; ${STOP_TAIL} @GENERATION@ $(shq "$PROJECT_DIR")"
     fi
-    LAUNCH="$(subscription_env_prefix) ORCHESTRATOR_RUN_ID=$(shq "$RUN_ID") $(run_env_stamp) $RAW_LAUNCH"
+    LAUNCH="$LAUNCH_ENV $RAW_LAUNCH"
     if [ -z "${SUPERVISOR_TMUX_FAIL:-}" ]; then
       tmux new-session -d -s "$SESSION" -c "$PROJECT_DIR" "$LAUNCH"
     fi
@@ -611,8 +616,13 @@ case "$cmd" in
     MODEL_FLAG=""; [ -n "${SUPERVISOR_CLAUDE_MODEL:-}" ] && MODEL_FLAG="--model $(shq "$SUPERVISOR_CLAUDE_MODEL") "
     SETTINGS_FLAG=""; WORKER_SETTINGS="$SUP_STATE/worker-settings.json"; [ -f "$WORKER_SETTINGS" ] && SETTINGS_FLAG="--settings $(shq "$WORKER_SETTINGS") "
     EXTRA_ADD_FLAGS="$(extra_add_dir_flags)"
-    RAW_LAUNCH="claude --resume $(shq "$RESUME_SID") ${EFFORT_FLAG}${MODEL_FLAG}${SETTINGS_FLAG}--permission-mode $(shq "${SUPERVISOR_PERMISSION_MODE:-auto}") --add-dir $(shq "$IDIR") ${EXTRA_ADD_FLAGS}--append-system-prompt-file $(shq "$IDIR/standards.md"); $(shq "$BIN_DIR/night-shift.sh") stop $(shq "$PROJECT_DIR")"
-    LAUNCH="$(subscription_env_prefix) ORCHESTRATOR_RUN_ID=$(shq "$RUN_ID") $(run_env_stamp) $RAW_LAUNCH"
+    GEN="$(new_worker_generation "$IDIR")"
+    LAUNCH_ENV="$(subscription_env_prefix) ORCHESTRATOR_RUN_ID=$(shq "$RUN_ID") $(run_env_stamp)"
+    CLAUDE_FLAGS="${EFFORT_FLAG}${MODEL_FLAG}${SETTINGS_FLAG}--permission-mode $(shq "${SUPERVISOR_PERMISSION_MODE:-auto}") --add-dir $(shq "$IDIR") ${EXTRA_ADD_FLAGS}--append-system-prompt-file $(shq "$IDIR/standards.md")"
+    STOP_TAIL="$(shq "$BIN_DIR/night-shift.sh") stop --generation"
+    RAW_LAUNCH="claude --resume $(shq "$RESUME_SID") ${CLAUDE_FLAGS}; ${STOP_TAIL} $(shq "$GEN") $(shq "$PROJECT_DIR")"
+    save_relaunch_template "$IDIR" "$LAUNCH_ENV claude --resume @CLAUDE_SESSION@ ${CLAUDE_FLAGS}; ${STOP_TAIL} @GENERATION@ $(shq "$PROJECT_DIR")"
+    LAUNCH="$LAUNCH_ENV $RAW_LAUNCH"
     tmux new-session -d -s "$SESSION" -c "$PROJECT_DIR" "$LAUNCH"
     if ! tmux has-session -t "$SESSION" 2>/dev/null; then
       echo "❌ resume: tmux-сесію не створено" >&2; rm -rf "$IDIR"; exit 1
@@ -642,6 +652,18 @@ case "$cmd" in
     ;;
 
   stop)
+    # A worker's own launch line ends in `stop --generation <g>`. When that worker has been
+    # replaced in place (`worker_relaunch`), its tail still runs as it dies — and must not take
+    # down the instance its successor is now working in.
+    STOP_GEN=""
+    if [ "${1:-}" = "--generation" ]; then STOP_GEN="${2:-}"; shift 2 || shift $#; fi
+    if [ "${1:-}" != "--all" ]; then
+      _sidir="$(instance_dir "$(slug_for "$(canon_path "${1:-$PWD}")")")"
+      if worker_tail_is_stale "$_sidir" "$STOP_GEN"; then
+        echo "$(date '+%F %T') [night-shift] a replaced worker exited — its stop is not its successor's ($(basename "$_sidir"))" >> "$SUP_STATE/supervisor.log"
+        exit 0
+      fi
+    fi
     if [ "${1:-}" = "--all" ]; then
       if [ -d "$SUP_INSTANCES" ]; then for dd in "$SUP_INSTANCES"/*/; do [ -d "$dd" ] && stop_instance "$(basename "$dd")"; done; fi
       _legacy_present && stop_legacy
