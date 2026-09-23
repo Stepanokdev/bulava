@@ -938,6 +938,21 @@ transcript_tools_outstanding() {   # $1=transcript
         | ($asked - $answered | length) > 0' >/dev/null 2>&1
 }
 
+# Which message the director most recently sent that has not reached the worker: the newest line of
+# the parked queue (by its id, or its text when it has none — `tries` changes as it is retried, the
+# message does not) and the newest envelope still waiting to be prepared. Empty when nothing waits.
+queued_message_fingerprint() {   # $1=idir
+  local idir="${1:-}" u="" p="" last f
+  last="$(grep . "$(undelivered_file "$idir")" 2>/dev/null | tail -1)"
+  if [ -n "$last" ]; then
+    u="$(printf '%s' "$last" | jq -r '.id // empty' 2>/dev/null)"
+    [ -n "$u" ] || u="sha:$(printf '%s' "$last" | jq -r '.message // ""' 2>/dev/null | shasum -a 1 | cut -c1-16)"
+  fi
+  for f in "$(pending_dir "$idir")"/[0-9]*.json; do [ -f "$f" ] && p="$(basename "$f")"; done
+  [ -n "$u$p" ] || return 0
+  printf 'u:%s|p:%s' "$u" "$p"
+}
+
 hung_turn_kind() {   # $1=transcript → "unanswered <uuid> <epoch>" | "api-error <uuid> <epoch>", or fails
   local word kind uuid status at
   word="$(transcript_last_word "${1:-}")" || return 1
@@ -1152,13 +1167,22 @@ _hung_due() {   # $1=idir $2=session $3=stillness $4=transcript $5=now
     return 1
   fi
   if [ "$(jq -r '.exhausted // false' "$f" 2>/dev/null)" = true ]; then
-    # Parked — until the director writes again. A message waiting to reach this worker is the
+    # Parked — until the director writes again. A NEW message waiting to reach this worker is the
     # "try again" a parked run was waiting for, and without one more restart it could never be
     # delivered: the frozen pane takes no typing and nothing else would ever replace it.
-    { [ "$(pending_count "$idir")" != 0 ] || [ -s "$(undelivered_file "$idir")" ]; } || return 1
-    _hung_write "$idir" ".exhausted = false | .retry_now = true | .attempts = ($max - 1)"
+    #
+    # New, and only once. The message that bought the extra restart is remembered in the episode,
+    # so a restart that fails leaves the run parked however often the queue is read again or the
+    # watchdog is restarted — the same undelivered message cannot buy a second one, and the budget
+    # stays a budget. The next thing the director writes is a different message, and gets its own.
+    local asking
+    asking="$(queued_message_fingerprint "$idir")"
+    [ -n "$asking" ] || return 1
+    [ "$asking" != "$(jq -r '.retry_for // empty' "$f" 2>/dev/null)" ] || return 1
+    _hung_write "$idir" ".exhausted = false | .retry_now = true | .attempts = ($max - 1)
+                         | .retry_for = $(jq -Rn --arg v "$asking" '$v')"
     [ "$(jq -r '.recovery // empty' "$idir/stalled.json" 2>/dev/null)" = hung ] && rm -f "$idir/stalled.json"
-    _hlog "the director wrote to a parked frozen worker — one more restart, now"
+    _hlog "the director wrote to a parked frozen worker — one more restart, now (for $asking)"
   fi
   for x in done ask-user.json review-active director-stopped paused-for-limit.json; do
     [ -e "$idir/$x" ] && return 1

@@ -248,6 +248,41 @@ SUPERVISOR_HUNG_TURN_SECS=600 hung_turn_check "$IDIR" "$SESSION" 0 RUN-1 \
   || bad "stalled.json stayed up during the retry"
 rm -f "$(undelivered_file "$IDIR")"
 
+echo "===== a restart that always fails, and the same message waiting: it stays parked ====="
+# The extra restart a message buys is bought once. Here the restart can never succeed — there is no
+# launch line to start the worker again with — and the director's message sits undelivered. Read the
+# queue as often as the watchdog likes: one extra attempt, then parked and visible, until he writes
+# something genuinely new.
+new_instance; start_worker freeze
+INJECT_IDIR="$IDIR" inject_task "$SESSION" "Працюй за стандартами. Задача без виходу." >/dev/null
+rm -f "$IDIR/relaunch-template"
+jq -nc --argjson m "$(_transcript_size "$TX")" '{kind:"unanswered", entry:"x", mark:$m, attempts:3, exhausted:true}' \
+  > "$(hung_file "$IDIR")"
+jq -nc '{reason:"the worker froze", recovery:"hung"}' > "$IDIR/stalled.json"
+WDLOG="$SUPERVISOR_STATE_DIR/watchdog.log"; : > "$WDLOG"
+park_undelivered "$IDIR" "Продовжуй" "MSG-A" >/dev/null 2>&1
+for i in 1 2 3 4 5 6 7 8; do
+  make_still
+  SUPERVISOR_HUNG_TURN_SECS=1 hung_turn_check "$IDIR" "$SESSION" 99999 RUN-1 >/dev/null
+done
+[ "$(grep -c 'one more restart' "$WDLOG")" = 1 ] \
+  && ok "eight looks at the same undelivered message bought exactly one extra restart" \
+  || bad "the same message bought $(grep -c 'one more restart' "$WDLOG") extra restarts"
+[ "$(jq -r '.exhausted' "$(hung_file "$IDIR")" 2>/dev/null)" = true ] \
+  && [ "$(jq -r '.recovery // empty' "$IDIR/stalled.json" 2>/dev/null)" = hung ] \
+  && ok "and the run is parked again, with the reason where the app shows it" \
+  || bad "not parked after the extra attempt failed: $(cat "$(hung_file "$IDIR")" 2>/dev/null)"
+# A watchdog that starts over reads the same files: nothing in memory to lose, nothing to reset.
+make_still; SUPERVISOR_HUNG_TURN_SECS=1 bash -c '. "$1/supervisor-lib.sh"; hung_turn_check "$2" "$3" 99999 RUN-1' _ \
+  "$BIN_DIR" "$IDIR" "$SESSION" >/dev/null
+[ "$(grep -c 'one more restart' "$WDLOG")" = 1 ] && ok "a fresh process reading the same queue buys nothing either" \
+  || bad "a restarted watchdog renewed the budget from the same message"
+park_undelivered "$IDIR" "Ні, спробуй ще раз" "MSG-B" >/dev/null 2>&1
+make_still; SUPERVISOR_HUNG_TURN_SECS=1 hung_turn_check "$IDIR" "$SESSION" 99999 RUN-1 >/dev/null
+[ "$(grep -c 'one more restart' "$WDLOG")" = 2 ] && ok "a genuinely new message gets its own extra restart" \
+  || bad "a new message from the director was ignored by a parked run"
+rm -f "$(undelivered_file "$IDIR")"
+
 echo "===== through the real watchdog: parked, past the idle deadline, then 'continue' ====="
 # The night's ending, replayed against watchdog.sh itself rather than against the function: the
 # restarts have run out, the idle deadline passes — and the instance, with its task, must still be
