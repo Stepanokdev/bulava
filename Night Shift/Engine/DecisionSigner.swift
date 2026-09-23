@@ -72,7 +72,24 @@ nonisolated enum DecisionSigner {
 
     // MARK: - The key itself
 
+    /// Under XCTest the key never touches the login keychain.
+    ///
+    /// The item there was created by the signed app, and the keychain answers another binary's
+    /// request for it with a prompt. A test build is exactly that: ad-hoc signed, under its own
+    /// identifier, a different code identity on every build — so the first test to sign a decision
+    /// raised a dialog nobody unattended could answer, and the whole suite sat on
+    /// `CodexDecisionTests` until the verifier's ten-minute ceiling killed it. A key made once per
+    /// test process signs, publishes and verifies exactly as the stored one does; what the tests
+    /// prove is the signing, and the keychain was never the thing under test.
+    private static let testProcessKey: P256.Signing.PrivateKey? = {
+        let env = ProcessInfo.processInfo.environment
+        guard env["XCTestConfigurationFilePath"] != nil || env["XCTestSessionIdentifier"] != nil
+                || env["XCTestBundlePath"] != nil else { return nil }
+        return P256.Signing.PrivateKey()
+    }()
+
     private static func loadOrCreateKey() -> P256.Signing.PrivateKey? {
+        if let testProcessKey { return testProcessKey }
         if let raw = read(), let key = try? P256.Signing.PrivateKey(rawRepresentation: raw) {
             return key
         }

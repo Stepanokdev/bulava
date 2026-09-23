@@ -190,6 +190,25 @@ flush_undelivered "$SESSION" "$IDIR"; rc=$?
 hung_turn_check "$IDIR" "$SESSION" 0 RUN-1
 [ ! -e "$(hung_file "$IDIR")" ] && ok "and its answer closes the episode" || bad "the episode outlived the answer"
 
+echo "===== a composer somebody else holds costs nothing ====="
+new_instance; start_worker freeze
+INJECT_IDIR="$IDIR" inject_task "$SESSION" "Працюй за стандартами. Задача під чужим замком." >/dev/null
+save_relaunch_template "$IDIR" "python3 '$TMP/fake-claude.py' answer '$TX' '$TMP/bytes.log' '$IDIR' handshake; '$BIN_DIR/night-shift.sh' stop --generation @GENERATION@ '$PROJ'"
+frozen_pid="$(pgrep -f "fake-claude.py freeze" | head -1)"
+mkdir -p "$IDIR/delivery.lock"; sleep 300 & holder=$!; printf '%s\n' "$holder" > "$IDIR/delivery.lock/pid"
+make_still
+for i in 1 2 3 4 5; do SUPERVISOR_HUNG_TURN_SECS=1 hung_turn_check "$IDIR" "$SESSION" 99999 RUN-1; done
+[ "$(jq -r '.attempts // 0' "$(hung_file "$IDIR")" 2>/dev/null || echo 0)" = 0 ] \
+  && ok "five looks under somebody else's claim charged nothing" \
+  || bad "the budget was spent while another process held the composer: $(cat "$(hung_file "$IDIR")" 2>/dev/null)"
+kill -0 "$frozen_pid" 2>/dev/null && ok "and restarted nothing" || bad "the worker was restarted without the claim"
+kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+make_still
+SUPERVISOR_HUNG_TURN_SECS=1 hung_turn_check "$IDIR" "$SESSION" 99999 RUN-1
+[ "$(jq -r '.attempts // 0' "$(hung_file "$IDIR")" 2>/dev/null)" = 1 ] && ! kill -0 "$frozen_pid" 2>/dev/null \
+  && ok "once the composer is free, the one attempt is made and charged" \
+  || bad "after the claim was released: $(cat "$(hung_file "$IDIR")" 2>/dev/null)"
+
 echo "===== the budget holds, and ends visibly ====="
 new_instance; start_worker answer
 entry_err() {
@@ -228,6 +247,46 @@ SUPERVISOR_HUNG_TURN_SECS=600 hung_turn_check "$IDIR" "$SESSION" 0 RUN-1 \
 [ ! -e "$IDIR/stalled.json" ] && ok "the parked verdict is lifted while it tries" \
   || bad "stalled.json stayed up during the retry"
 rm -f "$(undelivered_file "$IDIR")"
+
+echo "===== through the real watchdog: parked, past the idle deadline, then 'continue' ====="
+# The night's ending, replayed against watchdog.sh itself rather than against the function: the
+# restarts have run out, the idle deadline passes — and the instance, with its task, must still be
+# there when the director writes again. His message then gets one more restart and reaches the new
+# worker; only once the worker is producing again may an idle pane be tidied away as before.
+new_instance; start_worker freeze
+INJECT_IDIR="$IDIR" inject_task "$SESSION" "Працюй за стандартами. Нічна задача." >/dev/null
+save_relaunch_template "$IDIR" "python3 '$TMP/fake-claude.py' answer '$TX' '$TMP/bytes.log' '$IDIR' handshake; '$BIN_DIR/night-shift.sh' stop --generation @GENERATION@ '$PROJ'"
+jq -nc --argjson m "$(_transcript_size "$TX")" '{kind:"unanswered", entry:"night", mark:$m, attempts:3, exhausted:true}' \
+  > "$(hung_file "$IDIR")"
+jq -nc '{reason:"the worker froze", recovery:"hung"}' > "$IDIR/stalled.json"
+printf 'objective survives\n' > "$IDIR/objective-marker"
+WDLOG="$SUPERVISOR_STATE_DIR/watchdog.log"; : > "$WDLOG"
+SUPERVISOR_WATCHDOG_POLL=1 SUPERVISOR_IDLE_KILL_SECS=3 SUPERVISOR_STALL_PARK_SECS=0 \
+  SUPERVISOR_HUNG_TURN_SECS=1 bash "$BIN_DIR/watchdog.sh" "$SLUG" >/dev/null 2>&1 &
+WD=$!
+sleep 9
+[ -f "$IDIR/objective-marker" ] && tmux has-session -t "$SESSION" 2>/dev/null \
+  && ok "past the idle deadline the parked instance and its session are still there" \
+  || bad "the idle teardown deleted a parked frozen run and its task"
+grep -q "full teardown" "$WDLOG" && bad "the watchdog logged a teardown of a parked run" \
+  || ok "and the watchdog did not try to tear it down"
+park_undelivered "$IDIR" "Продовжуй" "MSG-C" >/dev/null 2>&1
+for i in $(seq 1 60); do
+  jq -e 'select(.type == "user") | .message.content == "Продовжуй"' "$TX" >/dev/null 2>&1 && break
+  sleep 1
+done
+jq -e 'select(.type == "user") | .message.content == "Продовжуй"' "$TX" >/dev/null 2>&1 \
+  && ok "the director's 'continue' reached the restarted worker, through the watchdog" \
+  || bad "'continue' never reached a worker (log: $(tail -3 "$WDLOG" | tr '\n' ' '))"
+grep -q "one more restart" "$WDLOG" && ok "his message is what got it one more restart" \
+  || bad "no restart was made for his message"
+for i in $(seq 1 30); do grep -q "episode closed" "$WDLOG" && break; sleep 1; done
+grep -q "episode closed" "$WDLOG" && ok "the answer closed the episode" || bad "the episode stayed open after the answer"
+for i in $(seq 1 30); do [ -d "$IDIR" ] || break; sleep 1; done
+[ ! -d "$IDIR" ] && awk '/episode closed/ {c=NR} /full teardown/ {t=NR} END {exit !(c && t && t > c)}' "$WDLOG" \
+  && ok "the control: once nothing is kept, an idle pane is torn down exactly as before" \
+  || bad "the ordinary idle teardown no longer happens (or happened before the episode closed)"
+kill "$WD" 2>/dev/null; wait "$WD" 2>/dev/null
 
 echo "===== a question older than the worker binds nobody ====="
 new_instance; start_worker answer

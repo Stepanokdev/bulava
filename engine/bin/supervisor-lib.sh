@@ -919,6 +919,12 @@ hung_recovery_open() {   # $1=idir
   [ -s "$f" ] && [ "$(jq -r '.exhausted // false' "$f" 2>/dev/null)" != true ]
 }
 
+# Any episode at all, being tried or parked: a run holding an unfinished task that only this
+# directory remembers. Nothing that tidies idle instances away may delete one of these.
+hung_recovery_kept() {   # $1=idir
+  [ -s "$(hung_file "${1:-}")" ]
+}
+
 # A tool the model called whose result is not in yet — a subagent, a long build, a permission
 # question. A turn waiting on one of those is waiting, not frozen.
 transcript_tools_outstanding() {   # $1=transcript
@@ -1044,57 +1050,37 @@ _hung_write() {   # $1=idir $2=jq filter applied to the current record
 
 # One look, once per watchdog poll. 0 means it acted (or is holding the pane) and the rest of the
 # poll should wait for the next one.
+#
+# The order matters, and it is: decide whether anything is owed, take the composer, look AGAIN,
+# and only then charge the attempt. Charging first let a claim held by somebody else — a message
+# being handed over, a resume — spend the whole budget on attempts that were never made.
 hung_turn_check() {   # $1=idir $2=session $3=seconds the pane has been still $4=this watchdog's run id
   local idir="${1:-}" session="${2:-}" still="${3:-0}" wd_run="${4:-}" plog="$SUP_STATE/watchdog.log"
-  local f tx now attempts need tx_age found kind entry mark owed pane_before rc
-  local max="${SUPERVISOR_HUNG_RECOVERIES:-3}" base="${SUPERVISOR_HUNG_TURN_SECS:-600}"
+  local f tx now found kind entry rc pane_before attempts mark
   f="$(hung_file "$idir")"
   tx="$(worker_transcript "$session" "$idir" 2>/dev/null)" || return 1
   now="$(date +%s)"
   _hlog() { echo "$(date '+%F %T') [$(basename "$idir")] $*" >> "$plog"; }
 
-  # The only thing that closes an episode: the model saying something again.
-  if [ -s "$f" ] && transcript_progress_since "$tx" "$(jq -r '.mark // 0' "$f" 2>/dev/null)"; then
-    rm -f "$f" 2>/dev/null
-    [ "$(jq -r '.recovery // empty' "$idir/stalled.json" 2>/dev/null)" = hung ] && rm -f "$idir/stalled.json"
-    _hlog "the worker is producing again — frozen-turn episode closed"
-    return 1
-  fi
+  _hung_due "$idir" "$session" "$still" "$tx" "$now" || return 1
+  kind="$HUNG_DUE_KIND"
 
-  if [ "$(jq -r '.exhausted // false' "$f" 2>/dev/null)" = true ]; then
-    # Parked — until the director writes again. A message waiting to reach this worker is the
-    # "try again" a parked run was waiting for, and without one more restart it could never be
-    # delivered: the frozen pane takes no typing and nothing else would ever replace it.
-    { [ "$(pending_count "$idir")" != 0 ] || [ -s "$(undelivered_file "$idir")" ]; } || return 1
-    _hung_write "$idir" ".exhausted = false | .retry_now = true | .attempts = ($max - 1)"
-    [ "$(jq -r '.recovery // empty' "$idir/stalled.json" 2>/dev/null)" = hung ] && rm -f "$idir/stalled.json"
-    _hlog "the director wrote to a parked frozen worker — one more restart, now"
+  if ! delivery_claim "$idir" "watchdog-recover"; then
+    _hlog "frozen-turn recovery deferred — another process is at the composer (nothing charged)"
+    return 0
   fi
-  for found in done ask-user.json review-active director-stopped paused-for-limit.json; do
-    [ -e "$idir/$found" ] && return 1
-  done
-
-  attempts="$(jq -r '.attempts // 0' "$f" 2>/dev/null)"; case "$attempts" in ''|*[!0-9]*) attempts=0 ;; esac
-  owed="$(jq -r '.nudge_owed // false' "$f" 2>/dev/null)"
-  if [ "$owed" = true ]; then
-    # The restart went through and the nudge did not: that nudge is still owed, soon, and the
-    # screen being still is not evidence of anything on a worker that has just started.
-    [ $(( now - $(jq -r '.last_at // 0' "$f" 2>/dev/null) )) -ge "${SUPERVISOR_HUNG_NUDGE_RETRY:-120}" ] || return 1
-    _turn_running "$session" && return 1
-    kind="nudge"; entry="$(jq -r '.entry // "-"' "$f" 2>/dev/null)"
-  else
-    need=$(( base << (attempts > 2 ? 2 : attempts) ))
-    [ "$(jq -r '.retry_now // false' "$f" 2>/dev/null)" = true ] && need=0
-    [ "$still" -ge "$need" ] || return 1
-    tx_age=$(( now - $(stat -f %m "$tx" 2>/dev/null || echo "$now") ))
-    [ "$tx_age" -ge "$need" ] || return 1
-    found="$(hung_turn_kind "$tx")" || return 1
-    read -r kind entry _ <<< "$found"
+  # Past the claim, and therefore past any wait it involved: everything that decided this is asked
+  # again, because the worker may have answered, the director may have stopped it, or the run may
+  # have been replaced while the claim was being taken.
+  if [ -n "$wd_run" ] && [ "$(tr -d '[:space:]' < "$idir/run-id" 2>/dev/null)" != "$wd_run" ]; then
+    delivery_release "$idir"; return 0
   fi
-  claude_reachable || return 1                 # offline: the offline state owns this
-  provider_exhausted claude && return 1        # a limit: the pause machinery owns this
+  if ! _hung_due "$idir" "$session" "$still" "$tx" "$(date +%s)" || [ "$HUNG_DUE_KIND" != "$kind" ]; then
+    delivery_release "$idir"; return 1
+  fi
+  entry="$HUNG_DUE_ENTRY"; attempts="$HUNG_DUE_ATTEMPTS"
 
-  if [ "$attempts" -ge "$max" ]; then
+  if [ "$attempts" -ge "${SUPERVISOR_HUNG_RECOVERIES:-3}" ]; then
     _hung_write "$idir" '.exhausted = true'
     jq -n --arg since "$(date '+%F %T')" --argjson tries "$attempts" --arg kind "$kind" \
       '{reason:"the worker froze after taking the task and did not come back after restarts",
@@ -1102,27 +1088,22 @@ hung_turn_check() {   # $1=idir $2=session $3=seconds the pane has been still $4
         needs:"a person to look at the session; the next message starts it again"}' \
       > "$idir/stalled.json" 2>/dev/null || true
     _hlog "FROZEN TURN — $attempts recoveries did not bring the worker back; parked (stalled.json)"
-    return 1
+    delivery_release "$idir"; return 1
   fi
 
-  mark="$(jq -r '.mark // empty' "$f" 2>/dev/null)"
+  # Charged now, before anything destructive: a restart that dies halfway still counts. The mark —
+  # where the transcript ended when the episode began — is kept from the first attempt, so progress
+  # is measured from the freeze and not from the latest nudge.
+  mark="$(jq -r '.mark // empty' "$f" 2>/dev/null || true)"
   [ -n "$mark" ] || mark="$(_transcript_size "$tx")"
   _hung_write "$idir" ". + $(jq -nc --arg k "$kind" --arg e "$entry" --argjson m "$mark" \
       --argjson a "$((attempts + 1))" --argjson t "$now" \
       '{kind:(if $k == "nudge" then null else $k end), entry:$e, mark:$m, attempts:$a, last_at:$t,
         retry_now:false} | with_entries(select(.value != null))')"
-
-  if ! delivery_claim "$idir" "watchdog-recover"; then
-    _hlog "frozen-turn recovery deferred — another process is at the composer"
-    return 0
-  fi
   pane_before="$(tmux display-message -p -t "$session" '#{pane_id}' 2>/dev/null || true)"
-  if [ -n "$wd_run" ] && [ "$(tr -d '[:space:]' < "$idir/run-id" 2>/dev/null)" != "$wd_run" ]; then
-    delivery_release "$idir"; return 0
-  fi
 
   if [ "$kind" = unanswered ]; then
-    _hlog "FROZEN TURN — pane and transcript still for ${still}s with a question unanswered (entry $entry); restarting the worker (attempt $((attempts + 1))/$max)"
+    _hlog "FROZEN TURN — pane and transcript still for ${still}s with a question unanswered (entry $entry); restarting the worker (attempt $((attempts + 1))/${SUPERVISOR_HUNG_RECOVERIES:-3})"
     worker_relaunch "$idir" "$session"; rc=$?
     if [ "$rc" != 0 ]; then
       [ "$rc" = 3 ] && _hlog "cannot restart this worker (no launch template or session id) — left for the stall watch"
@@ -1149,6 +1130,60 @@ hung_turn_check() {   # $1=idir $2=session $3=seconds the pane has been still $4
     _hlog "the nudge did not go in — it stays owed"
   fi
   delivery_release "$idir"
+  return 0
+}
+
+# Is a recovery owed right now? Pure as far as the pane goes — it types nothing and takes nothing —
+# so it can be asked before the composer is claimed and asked again after. Sets HUNG_DUE_KIND
+# (unanswered | api-error | nudge), HUNG_DUE_ENTRY and HUNG_DUE_ATTEMPTS. Closing an episode the
+# model has answered, and re-opening a parked one the director has written to, happen here too:
+# both are facts about the transcript and the queue, not actions at the pane.
+_hung_due() {   # $1=idir $2=session $3=stillness $4=transcript $5=now
+  local idir="$1" session="$2" still="$3" tx="$4" now="$5" f attempts owed need tx_age found x
+  local max="${SUPERVISOR_HUNG_RECOVERIES:-3}" base="${SUPERVISOR_HUNG_TURN_SECS:-600}"
+  f="$(hung_file "$idir")"
+  HUNG_DUE_KIND=""; HUNG_DUE_ENTRY="-"; HUNG_DUE_ATTEMPTS=0
+
+  # The only thing that closes an episode: the model saying something again.
+  if [ -s "$f" ] && transcript_progress_since "$tx" "$(jq -r '.mark // 0' "$f" 2>/dev/null)"; then
+    rm -f "$f" 2>/dev/null
+    [ "$(jq -r '.recovery // empty' "$idir/stalled.json" 2>/dev/null)" = hung ] && rm -f "$idir/stalled.json"
+    _hlog "the worker is producing again — frozen-turn episode closed"
+    return 1
+  fi
+  if [ "$(jq -r '.exhausted // false' "$f" 2>/dev/null)" = true ]; then
+    # Parked — until the director writes again. A message waiting to reach this worker is the
+    # "try again" a parked run was waiting for, and without one more restart it could never be
+    # delivered: the frozen pane takes no typing and nothing else would ever replace it.
+    { [ "$(pending_count "$idir")" != 0 ] || [ -s "$(undelivered_file "$idir")" ]; } || return 1
+    _hung_write "$idir" ".exhausted = false | .retry_now = true | .attempts = ($max - 1)"
+    [ "$(jq -r '.recovery // empty' "$idir/stalled.json" 2>/dev/null)" = hung ] && rm -f "$idir/stalled.json"
+    _hlog "the director wrote to a parked frozen worker — one more restart, now"
+  fi
+  for x in done ask-user.json review-active director-stopped paused-for-limit.json; do
+    [ -e "$idir/$x" ] && return 1
+  done
+
+  attempts="$(jq -r '.attempts // 0' "$f" 2>/dev/null)"; case "$attempts" in ''|*[!0-9]*) attempts=0 ;; esac
+  owed="$(jq -r '.nudge_owed // false' "$f" 2>/dev/null)"
+  if [ "$owed" = true ]; then
+    # The restart went through and the nudge did not: that nudge is still owed, soon, and the
+    # screen being still is not evidence of anything on a worker that has just started.
+    [ $(( now - $(jq -r '.last_at // 0' "$f" 2>/dev/null) )) -ge "${SUPERVISOR_HUNG_NUDGE_RETRY:-120}" ] || return 1
+    _turn_running "$session" && return 1
+    HUNG_DUE_KIND="nudge"; HUNG_DUE_ENTRY="$(jq -r '.entry // "-"' "$f" 2>/dev/null)"
+  else
+    need=$(( base << (attempts > 2 ? 2 : attempts) ))
+    [ "$(jq -r '.retry_now // false' "$f" 2>/dev/null)" = true ] && need=0
+    [ "$still" -ge "$need" ] || return 1
+    tx_age=$(( now - $(stat -f %m "$tx" 2>/dev/null || echo "$now") ))
+    [ "$tx_age" -ge "$need" ] || return 1
+    found="$(hung_turn_kind "$tx")" || return 1
+    read -r HUNG_DUE_KIND HUNG_DUE_ENTRY _ <<< "$found"
+  fi
+  claude_reachable || return 1                 # offline: the offline state owns this
+  provider_exhausted claude && return 1        # a limit: the pause machinery owns this
+  HUNG_DUE_ATTEMPTS="$attempts"
   return 0
 }
 
