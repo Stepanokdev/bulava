@@ -71,7 +71,7 @@ fi
 if [ -n "${SUPERVISOR_INJECT_CMD:-}" ]; then
   INJECT_PHASE_FILE="$PHASE" "$SUPERVISOR_INJECT_CMD" "$SESSION" "$ART/composed.txt"; rc=$?
 else
-  INJECT_PHASE_FILE="$PHASE" inject_task "$SESSION" "$PROMPT"; rc=$?
+  INJECT_PHASE_FILE="$PHASE" INJECT_IDIR="$IDIR" inject_task "$SESSION" "$PROMPT"; rc=$?
 fi
 echo "$(date '+%F %T') [pipeline] inject rc=$rc → $SESSION" >> "$LOG"
 case "$rc" in
@@ -81,7 +81,7 @@ case "$rc" in
     [ -n "$MSG_ID" ] && { mark_delivered "$IDIR" "$MSG_ID"; thread_delivered "$IDIR" "$MSG_ID"; }
     # The director's own words just continued the work. A generic "carry on" behind them would
     # arrive as a second message about nothing.
-    rm -f "$IDIR/resume-pending" 2>/dev/null || true
+    rm -f "$IDIR/resume-pending" "$IDIR/director-stopped" 2>/dev/null || true
     cleanup_handoff
     [ -n "$MSG_ID" ] && reset_review_budget "$IDIR"
     journal_event "$IDIR" dispatch-delivered "$(printf '%s' "$TASK" | clip_utf8 160)" \
@@ -104,7 +104,7 @@ case "$rc" in
     cleanup_handoff
     park_undelivered "$IDIR" "$PROMPT" "$MSG_ID"
     jq -nc --arg at "$(date '+%F %T')" --argjson rc "$rc" --arg s "$SESSION" --arg d "${PIPE_DISPATCH_ID:-}" \
-      '{reason:(if $rc == 2 then "воркер прийняв задачу, але не почав — найімовірніше ліміт" else "задача не дійшла до воркера" end), rc:$rc, session:$s, dispatch:$d, at:$at}' \
+      '{reason:(if $rc == 2 then "задачу надруковано, але воркер її не прийняв — у його журналі її немає" else "задача не дійшла до воркера" end), rc:$rc, session:$s, dispatch:$d, at:$at}' \
       > "$IDIR/inject-failed" 2>/dev/null || true
     journal_event "$IDIR" inject-failed "rc=$rc" '{"source":"pipeline"}'
     echo "$(date '+%F %T') [pipeline] parked the COMPOSED prompt for retry (rc=$rc)" >> "$LOG"

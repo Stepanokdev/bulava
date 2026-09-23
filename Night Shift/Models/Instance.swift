@@ -292,6 +292,11 @@ nonisolated struct SupervisorInstance: Sendable, Identifiable, Equatable {
     var outcomeSummary: String?
     var stalled: Bool = false
 
+    /// The engine found this worker frozen on a turn it had been given, and is restarting it — or
+    /// restarted it and it still did not answer. Read from `hung-recovery.json` and the `recovery`
+    /// the watchdog writes into `stalled.json`.
+    var frozenRecovery: FrozenRecovery?
+
     var offline: Bool = false
 
     var offlineSince: Date?
@@ -483,4 +488,12 @@ nonisolated struct ReviewVerdict: Sendable, Equatable {
     }
 
     var identity: String { "\(at)|\(round)|\(verdict)|\(disposition)" }
+}
+
+/// Where the engine's recovery of a frozen turn stands.
+nonisolated enum FrozenRecovery: String, Sendable, Equatable {
+    /// Restarted in place and nudged; waiting to see it produce again.
+    case restarting
+    /// Its attempts ran out. The next message from the director gets one more restart.
+    case gaveUp
 }

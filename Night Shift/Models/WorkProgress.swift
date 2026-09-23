@@ -225,6 +225,14 @@ nonisolated enum WorkProgress {
                 return NowLine(key: "Holding for your decision.", until: wait.until)
             }
         }
+        switch instance?.frozenRecovery {
+        case .restarting?:
+            return NowLine(key: "The worker froze — Bulava is restarting it.", detail: nil)
+        case .gaveUp?:
+            return NowLine(key: "The worker froze and restarting did not help. Send a message to try again.",
+                           detail: nil)
+        case nil: break
+        }
         if instance?.stalled == true {
             return NowLine(key: "The worker went quiet — Bulava is checking on it.", detail: nil)
         }

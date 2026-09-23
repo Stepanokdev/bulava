@@ -30,7 +30,9 @@ actor ShellEnvironment {
 
     func path() -> String {
         if let cached { return cached }
-        let resolved = Self.probe()
+        // The login shell's PATH decides every tool but one: with two Codex installs, the newest
+        // answers rather than whichever directory the profile happened to list first.
+        let resolved = CodexInstalls.preferNewest(in: Self.probe())
         cached = resolved
         return resolved
     }

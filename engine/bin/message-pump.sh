@@ -63,6 +63,8 @@ worker_free() {
   # nothing has been typed at it yet. Claiming a message now would only mean blocking on the
   # runner's lock with a message already taken off the queue.
   pipeline_lock_held "$IDIR" && return 1
+  # A frozen worker being restarted in place: the pane is between two processes.
+  [ -e "$IDIR/recovering" ] && return 1
   _turn_running "$SESSION" && return 1
   return 0
 }
@@ -75,6 +77,7 @@ wait_reason() {
   _blocked="$(prep_blocked_reason "$IDIR" "$PREP_NEEDS_CODEX" || true)"
   [ -n "$_blocked" ] && { printf '%s' "$_blocked"; return 0; }
   pipeline_lock_held "$IDIR" && { printf 'another-message'; return 0; }
+  [ -e "$IDIR/recovering" ] && { printf 'turn'; return 0; }
   _turn_running "$SESSION" && { printf 'turn'; return 0; }
   printf 'none'
 }

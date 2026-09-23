@@ -350,7 +350,15 @@ final class AppModel {
 
     private var testDrive: TestDrive?
 
+    /// Whether `start()` has run. It is called from the main window's `.task`, and a window is not
+    /// the app: closing the window and opening it again, or a second one appearing, ran the whole
+    /// start again — a second poll loop beside the first, a second capture service and control
+    /// socket, the readiness screen re-opened. Starting is something the app does once.
+    private var started = false
+
     func start() {
+        guard !started else { return }
+        started = true
         settings.appearance.apply()
 
         // A state directory that no longer exists was corrected on load; this is where the
@@ -420,6 +428,7 @@ final class AppModel {
                 guard let self, !Task.isCancelled else { break }
                 self.tick += 1
                 await self.refresh(codex: self.tick % 12 == 0)
+                await self.refreshModelCataloguesIfStale()
             }
         }
     }
@@ -505,8 +514,20 @@ final class AppModel {
     var codexModels = CodexModelCatalog.empty
 
     func loadCodexModels() async {
-        let found = await Task.detached(priority: .utility) { CodexModelCatalog.read() }.value
-        if found.loaded { codexModels = found }
+        let found = await CodexModelCatalog.load()
+        if found.loaded, found != codexModels { codexModels = found }
+    }
+
+    /// When the model lists were last read. Both CLIs refresh their catalogues from the service as
+    /// they run, so a model released while Bulava is open reaches the menus on the next reading
+    /// rather than at the next launch.
+    private var modelCataloguesReadAt = Date()
+
+    func refreshModelCataloguesIfStale() async {
+        guard Date().timeIntervalSince(modelCataloguesReadAt) >= 600 else { return }
+        modelCataloguesReadAt = Date()
+        await loadCodexModels()
+        await loadClaudeModels()
     }
 
     /// Which Claude models exist, as the CLI's own catalogue reports them — today's Opus and the
@@ -528,7 +549,7 @@ final class AppModel {
         let found = await Task.detached(priority: .utility) {
             ClaudeModelCatalog.read(cliVersion: version)
         }.value
-        guard found.loaded else { return }
+        guard found.loaded, found != claudeModels else { return }
         claudeModels = found
         // The catalogue arrives after the settings do, and the pair they make may be impossible —
         // a depth saved against one model, read now against another that does not take it. The

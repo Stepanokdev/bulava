@@ -70,6 +70,24 @@ nonisolated struct CodexModelCatalog: Equatable, Sendable {
         return decode(data)
     }
 
+    /// The catalogue as the CLI Bulava actually runs sees it.
+    ///
+    /// The cache file is shared by every Codex on the machine, and each one rewrites it with what
+    /// the service offers ITS version — so with two installs the file flips between two lists
+    /// depending on which ran last, and the Codex desktop app writes to it as well. `codex debug
+    /// models` prints the catalogue for the binary that answers, which is the one every chat and
+    /// run will start: what the menu offers is then what that CLI can take. It reads the same
+    /// cache when it is fresh for its version and costs a tenth of a second; the file itself is
+    /// the fallback for a CLI that has no such command.
+    @MainActor static func load() async -> CodexModelCatalog {
+        let probe = await Shell.run("codex debug models 2>/dev/null", timeout: 20)
+        if probe.ok {
+            let found = decode(Data(probe.stdout.utf8))
+            if found.loaded, !found.models.isEmpty { return found }
+        }
+        return read()
+    }
+
     static func decode(_ data: Data) -> CodexModelCatalog {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let rows = root["models"] as? [[String: Any]] else { return .empty }

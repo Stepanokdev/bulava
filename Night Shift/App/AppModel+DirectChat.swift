@@ -68,6 +68,11 @@ nonisolated enum DirectChatPhase: Equatable, Sendable {
     /// promise that nothing finishes without Codex is not in the file that has to keep it. Nothing
     /// is prepared against that: it is a reinstall, not a wait.
     case engineMismatch
+    /// The worker froze on the turn it was given — no answer, no error, a screen that stopped
+    /// drawing — and the engine is restarting it on the same conversation.
+    case restartingFrozen
+    /// Restarted and still silent. The next message gets one more restart.
+    case frozen
     case working
     case verifying
     case reviewing
@@ -102,6 +107,8 @@ nonisolated enum DirectChatPhase: Equatable, Sendable {
             }
         case .engineMismatch:
             String(localized: "The installed engine is older than this app — reinstall it in Settings")
+        case .restartingFrozen: String(localized: "Claude froze — Bulava is restarting it")
+        case .frozen: String(localized: "Claude froze and restarting did not help — send a message to try again")
         case .working: String(localized: "Night Shift is working")
         case .verifying: String(localized: "Checking…")
         case .reviewing: String(localized: "Codex is reviewing the result.")
@@ -123,6 +130,8 @@ nonisolated enum DirectChatPhase: Equatable, Sendable {
         case .waitingForLimit: "hourglass"
         case .waitingForCodex: "pause.circle"
         case .engineMismatch: "exclamationmark.arrow.triangle.2.circlepath"
+        case .restartingFrozen: "arrow.clockwise.circle"
+        case .frozen: "exclamationmark.arrow.circlepath"
         case .working: "circle.dotted"
         case .verifying: "checkmark.circle.dotted"
         case .reviewing: "sparkles"
@@ -141,13 +150,14 @@ nonisolated enum DirectChatPhase: Equatable, Sendable {
     }
 
     var wantsAttention: Bool {
-        self == .needsAttention || self == .needsReview || self == .engineMismatch || isFailure
+        self == .needsAttention || self == .needsReview || self == .engineMismatch || self == .frozen
+            || isFailure
     }
 
     var isActive: Bool {
         switch self {
-        case .starting, .preparing, .queued, .waitingForLimit, .waitingForCodex, .working,
-             .verifying, .reviewing, .auditing: true
+        case .starting, .preparing, .queued, .waitingForLimit, .waitingForCodex, .restartingFrozen,
+             .working, .verifying, .reviewing, .auditing: true
         default: false
         }
     }
@@ -165,6 +175,13 @@ nonisolated enum DirectChatPhase: Equatable, Sendable {
         // header must describe what the worker is doing rather than what is next in line. Only
         // when the pane is genuinely idle does preparation explain the silence — nothing has been
         // typed at the worker, so every other signal here says nothing is going on.
+        // Before "busy": a frozen Claude's status can say busy for hours, and that is exactly the
+        // state the header must not call working.
+        switch instance.frozenRecovery {
+        case .restarting?: return .restartingFrozen
+        case .gaveUp?: return .frozen
+        case nil: break
+        }
         if instance.workerStatus == "busy" { return .working }
         // Actually running, not merely next in line. These were one case until a message sat
         // behind a Codex usage window for an hour under a header that said both engines were
