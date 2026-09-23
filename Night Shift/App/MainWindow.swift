@@ -18,8 +18,9 @@ extension NSApplication: MainWindowHost {
 /// The app's main window, found among whatever AppKit has.
 @MainActor enum MainWindow {
 
-    /// SwiftUI names the windows of `WindowGroup(id: "main")` `main-AppWindow-1`, `-2`, … — the
-    /// same name the saved frame is filed under (`SavedSplitLayout.mainWindowFrameKey`).
+    /// The main window is the `Window(id: "main")` scene, whose window SwiftUI names `main` — the
+    /// same name its frame is filed under (`SavedSplitLayout.mainWindowFrameKey`). `main-…` is
+    /// how the same window was named while it was a `WindowGroup`, and is still recognised.
     static func isMain(_ window: NSWindow) -> Bool {
         guard let id = window.identifier?.rawValue else { return false }
         return id == "main" || id.hasPrefix("main-")
@@ -42,8 +43,10 @@ extension NSApplication: MainWindowHost {
     /// What "Open Bulava" does: bring back the window that is there — unhiding the app,
     /// un-minimising it, fetching it from another Space — and open one only when there is none.
     ///
-    /// `openWindow(id:)` on a `WindowGroup` does not mean "show the main window", it means "make
-    /// another one"; calling it on every press is how one Bulava came to look like several.
+    /// While the main window was a `WindowGroup`, `openWindow(id:)` meant "make another one", and
+    /// calling it on every press is how one Bulava came to look like several. It is a `Window` scene
+    /// now, which cannot have two; this still brings back the one that is there without asking
+    /// SwiftUI for anything, and asks only when there is none.
     static func reveal(open: () -> Void) { reveal(in: NSApp, open: open) }
 
     static func reveal(in app: MainWindowHost, open: () -> Void) {

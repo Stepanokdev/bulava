@@ -9,6 +9,9 @@ struct NightShiftApp: App {
 
     init() {
         Log.lifecycle.notice("Bulava launch pid=\(ProcessInfo.processInfo.processIdentifier, privacy: .public) debugger=\(LanguageBundle.isDebuggerAttached, privacy: .public)")
+        if SavedSplitLayout.migrateFromWindowGroup() {
+            Log.lifecycle.notice("carried the main window's saved frame over to its single-window scene")
+        }
         if SavedSplitLayout.repairIfNeeded() {
             Log.lifecycle.notice("discarded a split-view layout wider than its saved window")
         }
@@ -21,7 +24,12 @@ struct NightShiftApp: App {
     }
 
     var body: some Scene {
-        WindowGroup(id: "main") {
+        // One main window, by construction. A `WindowGroup` makes a new window whenever it is asked
+        // to open, and it keeps a closed one alive under the same scene name — so "Open Bulava"
+        // could add windows, and a closed window could come back beside the reopened one. A
+        // `Window` scene is the single-window app Bulava is: opening it shows the window that is
+        // there, or reopens it if it was closed.
+        Window("Bulava", id: "main") {
             RootView()
                 .environment(model)
                 .frame(minWidth: Metrics.minimumWindowWidth,
