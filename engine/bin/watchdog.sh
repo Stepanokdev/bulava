@@ -157,8 +157,13 @@ while [ -d "$IDIR" ]; do
 
   # A run parked on a usage window is waiting, not dead. While the pause was one long `sleep` this
   # loop never reached here during one; now that it does, the teardown has to say so itself.
+  #
+  # And so is a worker parked after a frozen turn — while restarts are still being tried, and after
+  # they ran out. Its task is in this directory and nowhere else, and the director's next message is
+  # exactly what gets it one more restart (`_hung_due`). Deleting it at the idle deadline is how a
+  # task given at three in the morning came back as "continue", a brand-new task with no history.
   if [ "$STALE_SECS" -gt 0 ] && [ "$awaiting_active" = 0 ] && [ "$preparing" = 0 ] \
-     && [ "$paused_now" = 0 ] && ! hung_recovery_open "$IDIR"; then
+     && [ "$paused_now" = 0 ] && ! hung_recovery_kept "$IDIR"; then
     idle=$(( now - $(stat -f %m "$IDIR/last-activity" 2>/dev/null || echo "$now") ))
     if [ "$idle" -ge "$STALE_SECS" ]; then
       log "IDLE ${idle}s ≥ ${STALE_SECS}s (screen unchanged) — full teardown: killing claude+tmux, supervision off"

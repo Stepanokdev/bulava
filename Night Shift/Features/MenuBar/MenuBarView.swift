@@ -231,20 +231,10 @@ struct MenuBarView: View {
         model.open(product: product.id)
     }
 
-    /// Bring back the window that is already there; open one only when there is none.
-    ///
-    /// `openWindow(id:)` on a `WindowGroup` does not mean "show the main window" — it means "make
-    /// another one". Every press of "Open Bulava" added a window, and every window started its
-    /// own copy of the app's machinery, which from the outside looks exactly like several Bulavas
-    /// running at once.
+    /// Bring back the window that is already there; open one only when there is none. Every press
+    /// of "Open Bulava" used to add a window, and every window started its own copy of the app's
+    /// machinery — which from the outside looks exactly like several Bulavas running at once.
     private func openMainWindow() {
-        if NSApp.isHidden { NSApp.unhide(nil) }
-        NSApp.activate(ignoringOtherApps: true)
-        guard let window = MainWindow.existing() else {
-            openWindow(id: "main")
-            return
-        }
-        if window.isMiniaturized { window.deminiaturize(nil) }
-        window.makeKeyAndOrderFront(nil)
+        MainWindow.reveal { openWindow(id: "main") }
     }
 }

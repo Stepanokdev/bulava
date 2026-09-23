@@ -26,6 +26,9 @@ age_h() { local f="$1" m; m=$(stat -f %m "$f" 2>/dev/null || echo "$now"); echo 
 if [ -d "$SUP_INSTANCES" ]; then
   for d in "$SUP_INSTANCES"/*/; do
     [ -f "$d/started-at" ] || continue
+    # A worker parked on a frozen turn is holding an unfinished task, not abandoned — the same
+    # exemption the watchdog's own idle teardown makes (`hung_recovery_kept`).
+    hung_recovery_kept "${d%/}" && continue
     marker="$d/last-activity"; [ -f "$marker" ] || marker="$d/started-at"
     if [ "$(age_h "$marker")" -ge "$STALE_HOURS" ]; then
       [ -f "$d/watchdog.pid" ] && kill "$(cat "$d/watchdog.pid")" 2>/dev/null
