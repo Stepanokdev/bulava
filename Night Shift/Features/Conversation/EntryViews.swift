@@ -23,6 +23,7 @@ struct EntryView: View {
 private struct MessageEntry: View {
     @Environment(AppModel.self) private var model
     @Environment(\.findMark) private var findMark
+    @Environment(\.chatReadOnly) private var readOnly
     let entry: ConversationEntry
     let isUser: Bool
     @State private var copied = false
@@ -102,7 +103,7 @@ private struct MessageEntry: View {
                         // beside an older one would promise a rewind the agent's session cannot
                         // do.
                         .overlay(alignment: .topTrailing) {
-                            if hovering, !replaced, model.canTakeBack(entryID: entry.id) {
+                            if hovering, !replaced, !readOnly, model.canTakeBack(entryID: entry.id) {
                                 takeBackButton
                                     .padding(.top, 4)
                                     .padding(.trailing, 4)
@@ -145,6 +146,7 @@ private struct MessageEntry: View {
                             Label("Send again", systemImage: "arrow.clockwise")
                         }
                         .buttonStyle(DeliveryActionStyle())
+                        .disabled(readOnly)
                         .help(Text("Send again"))
                         Button { copyText() } label: {
                             Label(copied ? "Copied" : "Copy",
@@ -162,6 +164,7 @@ private struct MessageEntry: View {
             if isUser, entry.delivery == .failed,
                let chatID = entry.chatID, let folder = model.trustBlocked[chatID] {
                 trustRow(folder: folder, chatID: chatID)
+                    .disabled(readOnly)
                     .padding(.leading, 37)
                     .padding(.top, 4)
             }
@@ -169,6 +172,7 @@ private struct MessageEntry: View {
             if isUser, entry.delivery == .failed,
                let chatID = entry.chatID, let folder = model.gitConsentBlocked[chatID] {
                 gitConsentRow(folder: folder, chatID: chatID)
+                    .disabled(readOnly)
                     .padding(.leading, 37)
                     .padding(.top, 4)
             }
@@ -176,6 +180,7 @@ private struct MessageEntry: View {
             if isUser, entry.delivery == .failed,
                let chatID = entry.chatID, let plan = model.handoffBlocked[chatID] {
                 handoffRow(plan: plan, chatID: chatID)
+                    .disabled(readOnly)
                     .padding(.leading, 37)
                     .padding(.top, 4)
             }
@@ -183,6 +188,7 @@ private struct MessageEntry: View {
             if isUser, entry.delivery == .failed,
                let chatID = entry.chatID, let wall = entry.codexWall {
                 codexOutRow(wall: wall, chatID: chatID)
+                    .disabled(readOnly)
                     .padding(.leading, 37)
                     .padding(.top, 4)
             }
@@ -198,6 +204,7 @@ private struct MessageEntry: View {
 
             if let proposal = pending {
                 confirmRow(proposal)
+                    .disabled(readOnly)
                     .padding(.top, 2)
             }
 
@@ -522,6 +529,7 @@ private struct DecisionEntry: View {
 struct QuestionEntry: View {
     @Environment(AppModel.self) private var model
     @Environment(\.findMark) private var findMark
+    @Environment(\.chatReadOnly) private var readOnly
     let entry: ConversationEntry
 
     @State private var answer = ""
@@ -636,6 +644,7 @@ struct QuestionEntry: View {
         // the app draws, so Find marks it whole.
         .findHighlight(findMark.state(entry: entry.id,
                                       text: ConversationFind.questionText(entry)))
+        .disabled(readOnly)
         .padding(.leading, 25)
     }
 
@@ -764,6 +773,7 @@ struct ReportEntry: View {
 
 struct ReportCard: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.chatReadOnly) private var readOnly
     let task: BacklogTask
 
     @State private var hovering = false
@@ -819,6 +829,7 @@ struct ReportCard: View {
                                 .labelStyle(.titleAndIcon)
                         }
                         .buttonStyle(.bulava(action.emphasis == .primary ? .primary : .quiet))
+                        .disabled(readOnly)
                         .padding(.vertical, 9)
                         .padding(.horizontal, 4)
                     }

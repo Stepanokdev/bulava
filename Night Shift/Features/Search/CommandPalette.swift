@@ -145,8 +145,7 @@ struct CommandPalette: View {
             return
         }
         if let chatID = result.chatID, let chat = model.conversations.chat(id: chatID) {
-            if chat.archived { model.conversations.setArchived(chat.id, false) }
-            if let restored = model.conversations.chat(id: chatID) { model.openChat(restored) }
+            if chat.archived { model.viewArchivedChat(chat) } else { model.openChat(chat) }
             return
         }
         model.open(product: result.productID)
