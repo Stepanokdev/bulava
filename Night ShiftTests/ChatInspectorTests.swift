@@ -55,8 +55,8 @@ nonisolated final class InspectorNoiseTests: XCTestCase {
 
     func testANestedRepositoryIsItsOwnRepositorysNews() {
         let changes = SupervisorClient.parsePorcelain(porcelain([
-            " M MVP/presale-copilot", " M edx_ai", " M src/App.swift",
-        ]), nested: ["MVP/presale-copilot", "edx_ai"])
+            " M MVP/orbit-console", " M edx_ai", " M src/App.swift",
+        ]), nested: ["MVP/orbit-console", "edx_ai"])
         XCTAssertEqual(changes.map(\.path), ["src/App.swift"],
                        "another repo's moved HEAD is not a change in this one")
     }
@@ -83,9 +83,9 @@ nonisolated final class InspectorNoiseTests: XCTestCase {
         @@BRANCH@@
         main
         @@STATUS@@
-        \u{0} M MVP/presale-copilot\u{0} M src/App.swift\u{0}
+        \u{0} M MVP/orbit-console\u{0} M src/App.swift\u{0}
         @@GITLINKS@@
-        160000 abc123 0\tMVP/presale-copilot
+        160000 abc123 0\tMVP/orbit-console
         @@NUMSTAT@@
         1\t1\tsrc/App.swift
         """

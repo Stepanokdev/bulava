@@ -590,6 +590,10 @@ extension AppModel {
     func refreshReadiness(force: Bool = false,
                           depth: PreflightRunner.Depth = .full) async {
         if !force, let checked = readinessCheckedAt, Date().timeIntervalSince(checked) < 1200 { return }
+        // The unit tests run inside this very application. Their launch, and their twenty-minute
+        // loop, must not turn into paid calls — that was ~105 test runs a week, each buying a
+        // Claude turn and a Codex turn. A test that wants the real check asks for `.full`.
+        if depth == .free, PreflightRunner.isTestHost { readinessCheckedAt = Date(); return }
         readinessChecking = true
         await readiness.run(model: self, depth: depth)
         await refreshEngineBlocker()

@@ -1,34 +1,68 @@
 {
   "name": "adaptive-peer",
-  "description": "Two independent positions, compared, then Claude implements with an open line to Codex.",
+  "description": "Two independent positions, compared, then Claude implements with an open line to Codex. A follow-up to an open task skips the positions: the worker already has the context, and consults Codex itself when it judges it needs to.",
   "stages": [
-    { "id": "context",
+    {
+      "id": "context",
       "title": "neutral context",
-      "run": ["preflight.sh", "--stage", "context"] },
-
-    { "id": "peer-claude",
+      "run": [
+        "preflight.sh",
+        "--stage",
+        "context"
+      ]
+    },
+    {
+      "id": "peer-claude",
       "title": "Claude's independent position",
       "group": "peers",
       "optional": true,
-      "run": ["preflight.sh", "--stage", "peer", "--engine", "claude"] },
-
-    { "id": "peer-codex",
+      "run": [
+        "preflight.sh",
+        "--stage",
+        "peer",
+        "--engine",
+        "claude"
+      ],
+      "skip_when_followup": true
+    },
+    {
+      "id": "peer-codex",
       "title": "Codex's independent position",
       "group": "peers",
       "optional": true,
-      "run": ["preflight.sh", "--stage", "peer", "--engine", "codex"] },
-
-    { "id": "align",
+      "run": [
+        "preflight.sh",
+        "--stage",
+        "peer",
+        "--engine",
+        "codex"
+      ],
+      "skip_when_followup": true
+    },
+    {
+      "id": "align",
       "title": "material deltas and acceptance checks",
       "optional": true,
-      "run": ["preflight.sh", "--stage", "align"] },
-
-    { "id": "compose",
+      "run": [
+        "preflight.sh",
+        "--stage",
+        "align"
+      ],
+      "skip_when_followup": true
+    },
+    {
+      "id": "compose",
       "title": "the prompt the worker receives",
-      "run": ["pipeline-compose.sh"] },
-
-    { "id": "deliver",
+      "run": [
+        "pipeline-compose.sh"
+      ]
+    },
+    {
+      "id": "deliver",
       "title": "hand it to the worker",
-      "run": ["pipeline-deliver.sh"] }
+      "run": [
+        "pipeline-deliver.sh"
+      ]
+    }
   ]
 }

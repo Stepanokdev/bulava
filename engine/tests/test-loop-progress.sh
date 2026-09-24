@@ -54,7 +54,7 @@ src="$(cat "$HOOK")"
 case "$src" in *'note_progress review "$next" "$MAX_ROUNDS"'*)
   ok "the progressive review loop reports each round" ;;
   *) bad "the review loop no longer reports" ;; esac
-case "$src" in *'note_progress nudge "$((rounds + 1))" "$MAX_ROUNDS"'*)
+case "$src" in *'note_progress nudge "$handoffs" "$MAX_ROUNDS"'*)
   ok "the night nudge reports" ;;
   *) bad "the night nudge went silent again" ;; esac
 case "$src" in *'note_progress remediation'*)

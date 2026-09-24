@@ -15,7 +15,7 @@ nonisolated final class ProjectPlacementTests: XCTestCase {
     // MARK: - Scoped
 
     func testOneWritableResourceIsTheAnswerHoweverTheRequestSounds() {
-        let mine = project("presale-copilot")
+        let mine = project("orbit-console")
         let scope = ProjectPlacement.Scope(writable: [mine])
 
         let out = ProjectPlacement.resolve(ref: "Meetings Recorder", scope: scope,
@@ -24,15 +24,15 @@ nonisolated final class ProjectPlacementTests: XCTestCase {
     }
 
     func testANamedResourceInsideTheProductWins() {
-        let api = project("presale-api")
-        let web = project("presale-web")
+        let api = project("orbit-api")
+        let web = project("orbit-web")
         let scope = ProjectPlacement.Scope(writable: [api, web])
-        XCTAssertEqual(ProjectPlacement.resolve(ref: "presale-api", scope: scope, global: elsewhere)?.id,
+        XCTAssertEqual(ProjectPlacement.resolve(ref: "orbit-api", scope: scope, global: elsewhere)?.id,
                        api.id)
     }
 
     func testSeveralResourcesAndNoMatchResolvesToNothing() {
-        let scope = ProjectPlacement.Scope(writable: [project("presale-api"), project("presale-web")])
+        let scope = ProjectPlacement.Scope(writable: [project("orbit-api"), project("orbit-web")])
         XCTAssertNil(ProjectPlacement.resolve(ref: "Meetings Recorder", scope: scope, global: elsewhere))
     }
 
@@ -64,8 +64,8 @@ nonisolated final class ProjectPlacementTests: XCTestCase {
     }
 
     func testAnAmbiguousHintResolvesToNothing() {
-        let scope = ProjectPlacement.Scope(writable: [project("presale-api"), project("presale-web")])
-        XCTAssertNil(ProjectPlacement.resolve(ref: "presale", scope: scope, global: elsewhere))
+        let scope = ProjectPlacement.Scope(writable: [project("orbit-api"), project("orbit-web")])
+        XCTAssertNil(ProjectPlacement.resolve(ref: "orbit", scope: scope, global: elsewhere))
     }
 
     // MARK: - Unscoped
@@ -82,7 +82,7 @@ nonisolated final class ProjectPlacementTests: XCTestCase {
     // MARK: - The host for unplaced steps
 
     func testTheHostMustBeInsideTheScope() {
-        let mine = project("presale-copilot")
+        let mine = project("orbit-console")
         let scope = ProjectPlacement.Scope(writable: [mine])
         XCTAssertEqual(ProjectPlacement.host(preferring: elsewhere[0], scope: scope)?.id, mine.id,
                        "a host resolved outside the product would place every unplaced step there")
@@ -103,7 +103,7 @@ nonisolated final class ProjectPlacementTests: XCTestCase {
 
 nonisolated final class ProjectPlacementIntentTests: XCTestCase {
 
-    private let workspace = Project(name: "presale-copilot", path: "/tmp/pc", kind: .unknown, stacks: [])
+    private let workspace = Project(name: "orbit-console", path: "/tmp/pc", kind: .unknown, stacks: [])
     private let source = Project(name: "openedx-platform", path: "/tmp/ox", kind: .unknown, stacks: [])
 
     private var scope: ProjectPlacement.Scope {
@@ -118,7 +118,7 @@ nonisolated final class ProjectPlacementIntentTests: XCTestCase {
     }
 
     func testNamingTheWorkspaceForAReadStillFindsTheWorkspace() {
-        XCTAssertEqual(ProjectPlacement.resolve(ref: "presale-copilot", scope: scope,
+        XCTAssertEqual(ProjectPlacement.resolve(ref: "orbit-console", scope: scope,
                                                 global: [], intent: .read)?.id, workspace.id)
     }
 

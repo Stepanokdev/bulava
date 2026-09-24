@@ -226,7 +226,7 @@ nonisolated final class StaleBindingTests: XCTestCase {
         let product = UUID(), project = UUID()
         s.appendUser("Зроби аналіз", productID: product)
         let chat = s.currentChat(for: product)
-        s.bindSession(ChatSessionBinding(primaryProjectID: project, projectPath: "/tmp/presale",
+        s.bindSession(ChatSessionBinding(primaryProjectID: project, projectPath: "/tmp/orbit",
                                          claudeSessionID: nil, activeRunID: "DEAD-RUN"),
                       to: chat.id)
 

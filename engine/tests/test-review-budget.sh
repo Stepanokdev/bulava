@@ -51,7 +51,7 @@ mv "$TMP/run-id.bak" "$IDIR/run-id"
 
 echo "===== the run's wall clock restarts with his request ====="
 # The gate parks a run that is still returning to review after SUPERVISOR_MAX_RUN_SECONDS. In a
-# durable chat that ceiling became an expiry date on the whole conversation: his presale chat hit it
+# durable chat that ceiling became an expiry date on the whole conversation: his client chat hit it
 # while the reviewer was still making progress, and every later message would have parked at its
 # first Stop. The clock measures one request's patience, so his next request starts it over.
 seed

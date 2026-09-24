@@ -115,6 +115,20 @@ struct RootView: View {
                                      set: { if $0 == nil { model.renamingChatID = nil } })) { chat in
                     RenameChatSheet(chat: chat)
                 }
+                .confirmationDialog(
+                    Text("There is no git here, so a run would have no way back and nothing to show a review."),
+                    isPresented: Binding(get: { model.gitConsentAsk != nil },
+                                         set: { if !$0 { model.gitConsentAsk = nil } }),
+                    titleVisibility: .visible,
+                    presenting: model.gitConsentAsk
+                ) { ask in
+                    Button {
+                        model.allowGitAndDispatch(ask)
+                    } label: { Text("Create git and start the task") }
+                    Button(role: .cancel) { model.gitConsentAsk = nil } label: { Text("Not now") }
+                } message: { ask in
+                    Text(verbatim: ask.folder)
+                }
         }
     }
 

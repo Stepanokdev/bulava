@@ -384,7 +384,7 @@ nonisolated final class WorkerTrailTests: XCTestCase {
         let s = try makeSessions()
         defer { try? FileManager.default.removeItem(at: s.dir) }
         let chosen = WorkerTrail.transcript(for: task(dispatched: s.started, project: s.root,
-                                                     session: "night-presale-copilot-0ae8"))
+                                                     session: "night-orbit-console-0ae8"))
         XCTAssertEqual(chosen?.lastPathComponent, s.mine.lastPathComponent)
     }
 

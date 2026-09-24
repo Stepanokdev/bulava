@@ -420,7 +420,7 @@ nonisolated final class WithdrawLostNoticeTests: XCTestCase {
         var e = ConversationEntry(productID: product, kind: .user, text: "продовжуй")
         e.chatID = s.currentChat(for: product).id
         s.append(e)
-        s.postEvent("«presale-copilot» зупинився", productID: product, tone: .problem)
+        s.postEvent("«orbit-console» зупинився", productID: product, tone: .problem)
         s.postEventOnce(lostNotice(for: "інше повідомлення"), productID: product,
                         chatID: e.chatID!, tone: .problem)
 

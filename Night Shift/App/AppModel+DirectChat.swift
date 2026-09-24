@@ -1064,7 +1064,9 @@ extension AppModel {
 
     func syncDirectChats() {
         var desired: Set<UUID> = []
-        let visibleChatID = selectedProductID.flatMap { conversations.currentChatID(for: $0) }
+        // What the screen shows, not where the app writes: an archived chat opened to read is the
+        // visible one, and its transcript must catch up like any other on screen.
+        let visibleChatID = selectedProductID.flatMap { conversations.displayedChatID(for: $0) }
 
         for chat in conversations.chats {
             guard let binding = chat.session else { continue }

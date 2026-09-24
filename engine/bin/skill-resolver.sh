@@ -70,7 +70,7 @@ case "$cmd" in
 <<UNTRUSTED_SKILL_DATA>>
 $(find "$SKILLDIR" -type f -not -path '*/.git/*' 2>/dev/null | while read -r f; do echo "----- $f -----"; clip_utf8 4000 < "$f"; echo; done)
 <<END>>"
-      b_out="$(perl -e 'alarm shift; exec @ARGV' "$SCHEMA_TO" codex exec $(codex_effort_flags) --sandbox read-only --skip-git-repo-check "$prompt" 2>>"$CODEX_LOG")"
+      b_out="$(perl -e 'alarm shift; exec @ARGV' "$SCHEMA_TO" codex exec $(codex_effort_flags) --sandbox read-only --skip-git-repo-check "$prompt" 2>>"$CODEX_LOG" </dev/null)"
       b_verdict="$(printf '%s' "$b_out" | grep -m1 -oiE 'VERDICT: *(PASS|PROPOSE|REJECT)' | grep -oiE 'PASS|PROPOSE|REJECT' | tr a-z A-Z || echo INCONCLUSIVE)"
     fi
     [ "$b_verdict" = "REJECT" ] && { echo "🚫 $NAME rejected by Codex agent review — quarantined." >&2; printf 'REJECT\n' > "$Q/verdict"; exit 1; }

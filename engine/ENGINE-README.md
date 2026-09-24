@@ -303,8 +303,15 @@ result rather than stopping the pipeline.
 ```
 plain           compose → deliver
 adaptive-peer   context → (peer-claude ∥ peer-codex) → align → compose → deliver
+                a FOLLOW-UP to the open task: context → compose → deliver
 dispatch        the same, but the dispatch record belongs to the night dispatcher
 ```
+
+A stage marked `skip_when_followup` in the definition is left out when the context stage has
+recognised the message as the next step of an open task. Every director message used to buy both
+positions and the comparison — sixty times in one week, for lines like «продовжуй» — while the
+worker already held the context and had `consult-codex` for the moment it wanted a second opinion.
+`SUPERVISOR_FOLLOWUP_PEERS=1` restores the old behaviour.
 
 One executor (`bin/pipeline.sh`) serves both the night dispatch and Bulava's direct chat, so there
 are not two different truths about what the worker receives. Each message's artefacts sit apart
@@ -333,6 +340,10 @@ position counts only on a zero exit code and non-empty output: a fragment cut of
 not an opinion. Codex reconciles material disagreements and acceptance checks only; it is not a
 grand plan and not an order to the implementer. Claude takes the final decisions quickly and
 implements the task.
+
+The positions are formed for the FIRST message of a task. A follow-up in the same thread goes to
+the worker with its context only; whether Codex is worth asking about it is the worker's call,
+made through the consultation channel below.
 
 While working, Claude has a `consult-codex` command. It is for when new facts have opened a hard
 architectural fork, a lifecycle/concurrency/reachability risk or ambiguous behaviour. There is no

@@ -1,7 +1,7 @@
 #!/bin/bash
 # His words survive a launch that never became a supervised run.
 #
-# 25 Aug, Presale Copilot: the launcher brought a session up, the hooks never confirmed the run-id,
+# 25 Aug, on a client product: the launcher brought a session up, the hooks never confirmed the run-id,
 # the injection did not land, the message was parked — and then the run's folder was cleaned by a
 # restart, taking the queue with it. He was left reading «Queued · waiting behind other
 # work» about a message that no longer existed anywhere, while nothing was running at all.
