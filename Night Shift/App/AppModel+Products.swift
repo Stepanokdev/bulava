@@ -26,13 +26,33 @@ extension AppModel {
 
     func beginRenamingChat(_ chat: Chat) { renamingChatID = chat.id }
 
+    /// Asked by the sidebar only after the reader confirmed. The chat is looked up again by id: the
+    /// dialog may have stayed open while it was archived some other way, and a stale copy must
+    /// not move anything.
     func archiveChat(_ chat: Chat) {
-        conversations.setArchived(chat.id, true)
-        if conversations.currentChat(for: chat.productID).id == chat.id {
-            conversations.open(conversations.chats(for: chat.productID).first?.id
-                               ?? conversations.newChat(for: chat.productID).id,
-                               for: chat.productID)
+        guard let live = conversations.chat(id: chat.id), !live.archived else { return }
+        // Read before the flag flips — afterwards the store no longer counts it as open and
+        // answers with some other chat.
+        let wasOpen = conversations.currentChatID(for: live.productID) == live.id
+        conversations.setArchived(live.id, true)
+        if wasOpen {
+            conversations.open(conversations.chats(for: live.productID).first?.id
+                               ?? conversations.newChat(for: live.productID).id,
+                               for: live.productID)
         }
+    }
+
+    /// Opens an archived chat to read. It stays in Archives, and the screen shows it without a
+    /// composer until the reader unarchives it; the live chat stays where the app writes.
+    func viewArchivedChat(_ chat: Chat) {
+        conversations.viewArchived(chat.id, for: chat.productID)
+        if route != .product(chat.productID) { navigate(to: .product(chat.productID)) }
+    }
+
+    /// Back to the chat list, and opened, with the composer ready.
+    func unarchiveChat(_ chat: Chat) {
+        conversations.setArchived(chat.id, false)
+        if let restored = conversations.chat(id: chat.id) { openChat(restored) }
     }
     func openProducts() { navigate(to: .products) }
     func openPreflight() { navigate(to: .preflight) }
