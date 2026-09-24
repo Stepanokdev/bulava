@@ -80,6 +80,88 @@ nonisolated struct PreflightCheck: Identifiable, Sendable {
     var unmet: Bool { status == .missing || status == .unknown }
 }
 
+/// What the paid readiness probes last said, and when — the part of the readiness check that has
+/// to survive a relaunch, because it is the part that costs money.
+///
+/// Pure and small on purpose: the decision «ask, or repeat what we know» is made here from dates
+/// alone, so it can be tested without a CLI, a shell or a running app.
+nonisolated struct ProbeMemory: Codable, Sendable, Equatable {
+    /// A `ready` verdict, with what the row said, so it can be drawn again without asking.
+    struct Verdict: Codable, Sendable, Equatable {
+        var id: String
+        var titleKey: String
+        var detailKey: String
+        var evidence: String?
+        var at: Date
+
+        var check: PreflightCheck {
+            PreflightCheck(id: id, titleKey: titleKey, detailKey: detailKey, status: .ready, evidence: evidence)
+        }
+    }
+
+    enum Answer: Equatable, Sendable {
+        /// Draw this verdict; do not ask.
+        case remembered(Verdict)
+        /// The last ask failed recently; do not ask again yet.
+        case holdOff(until: Date)
+        /// Ask for real.
+        case ask
+    }
+
+    /// How long a failed probe is left alone before the free refresh asks again.
+    static let failureBackoff: TimeInterval = 60 * 60
+    static let defaultsKey = "readiness.probeMemory"
+
+    var verdicts: [String: Verdict] = [:]
+    var failedAt: [String: Date] = [:]
+
+    /// The clock `paidProbesAreDue` reads: the oldest of the remembered verdicts, or nothing at all
+    /// when any of the probes has no verdict to remember.
+    func provenAt(ids: [String]) -> Date? {
+        var oldest: Date?
+        for id in ids {
+            guard let v = verdicts[id] else { return nil }
+            if oldest == nil || v.at < oldest! { oldest = v.at }
+        }
+        return oldest
+    }
+
+    func answer(for id: String, probe: Bool, now: Date) -> Answer {
+        if probe { return .ask }
+        if let v = verdicts[id], now.timeIntervalSince(v.at) < PreflightRunner.paidProbeTTL {
+            return .remembered(v)
+        }
+        if let failed = failedAt[id] {
+            let until = failed.addingTimeInterval(Self.failureBackoff)
+            if now < until { return .holdOff(until: until) }
+        }
+        return .ask
+    }
+
+    mutating func recordReady(_ check: PreflightCheck, now: Date) {
+        verdicts[check.id] = Verdict(id: check.id, titleKey: check.titleKey, detailKey: check.detailKey,
+                                     evidence: check.evidence, at: now)
+        failedAt[check.id] = nil
+    }
+
+    mutating func recordFailure(id: String, now: Date) {
+        verdicts[id] = nil
+        failedAt[id] = now
+    }
+
+    // MARK: persistence
+
+    static func load(from defaults: UserDefaults = .standard) -> ProbeMemory {
+        guard let data = defaults.data(forKey: defaultsKey),
+              let memory = try? JSONDecoder().decode(ProbeMemory.self, from: data) else { return ProbeMemory() }
+        return memory
+    }
+
+    func save(to defaults: UserDefaults = .standard) {
+        if let data = try? JSONEncoder().encode(self) { defaults.set(data, forKey: Self.defaultsKey) }
+    }
+}
+
 @MainActor
 @Observable
 final class PreflightRunner {
@@ -151,9 +233,30 @@ final class PreflightRunner {
 
     nonisolated static let paidProbeTTL: TimeInterval = 24 * 60 * 60
 
-    /// The last verdicts from the paid probes, and when they were proven.
-    private var provenAnswers: [String: PreflightCheck] = [:]
-    private var provenAt: Date?
+    /// The two probes this runner pays for, by row id.
+    nonisolated static let paidProbeIDs = ["claude-auth", "codex-auth"]
+
+    /// What the paid probes last said, kept across launches.
+    ///
+    /// The verdicts used to live in this object and die with the process, so every launch of the
+    /// app — and every launch of the test host, which is the same app — paid both probes again:
+    /// three hundred and eleven Claude sessions in one week that all said «ok». They are written
+    /// to UserDefaults now, per probe, with the day-long clock they always had.
+    private var memory: ProbeMemory
+    /// The failure a probe last returned, shown again while its back-off holds. In memory only:
+    /// a fresh process asks for real.
+    private var lastFailure: [String: PreflightCheck] = [:]
+
+    init(memory: ProbeMemory? = nil) {
+        self.memory = memory ?? ProbeMemory.load()
+    }
+
+    /// Whether this process is the XCTest host. The unit-test bundle runs inside the real
+    /// application, so a launch-time readiness check there is a paid probe per test run.
+    nonisolated static var isTestHost: Bool {
+        let env = ProcessInfo.processInfo.environment
+        return env["XCTestConfigurationFilePath"] != nil || env["XCTestSessionIdentifier"] != nil
+    }
 
     nonisolated static func paidProbesAreDue(provenAt: Date?, now: Date = Date(),
                                              depth: Depth) -> Bool {
@@ -167,7 +270,7 @@ final class PreflightRunner {
         running = true
         defer { running = false; lastRun = Date() }
 
-        let probe = Self.paidProbesAreDue(provenAt: provenAt, depth: depth)
+        let probe = Self.paidProbesAreDue(provenAt: memory.provenAt(ids: Self.paidProbeIDs), depth: depth)
 
         var out: [PreflightCheck] = []
         out.append(engineCheck(model: model))
@@ -209,24 +312,32 @@ final class PreflightRunner {
 
     /// Run a paid probe, or hand back the last verdict it gave.
     ///
-    /// A remembered verdict is only ever a `ready` one. A failure is not cached: if Codex did not
-    /// answer, the next refresh has to ask again — that is the case where the reader is waiting
-    /// for the state to change.
+    /// A remembered verdict is only ever a `ready` one, and it is remembered per probe: Codex
+    /// failing does not make Claude's day-old «ok» stale. A failure is not remembered as a verdict,
+    /// but it is not asked again every twenty minutes either — while Codex is out of its window
+    /// the background refresh used to buy a Claude turn and a Codex attempt on every cycle, all
+    /// night. The failed row is shown again for an hour, then the question is asked once more.
+    /// Someone waiting on the answer (`depth: .full`) always gets a fresh one.
     private func answersCheck(id: String, probe: Bool,
                               run: () async -> PreflightCheck) async -> PreflightCheck {
-        if !probe, let remembered = provenAnswers[id] {
-            return remembered
+        let now = Date()
+        switch memory.answer(for: id, probe: probe, now: now) {
+        case .remembered(let verdict):
+            return verdict.check
+        case .holdOff:
+            if let failed = lastFailure[id] { return failed }
+        case .ask:
+            break
         }
         let fresh = await run()
         if fresh.status == .ready {
-            provenAnswers[id] = fresh
-            // Both probes stamp the same clock, so one of them failing keeps the other honest
-            // about its age too.
-            provenAt = Date()
+            memory.recordReady(fresh, now: now)
+            lastFailure[id] = nil
         } else {
-            provenAnswers[id] = nil
-            provenAt = nil
+            memory.recordFailure(id: id, now: now)
+            lastFailure[id] = fresh
         }
+        memory.save()
         return fresh
     }
 

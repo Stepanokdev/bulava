@@ -394,7 +394,7 @@ final class AppModel {
             Task { [weak self] in
                 guard let self else { return }
                 _ = await self.installEngine(quietly: true)
-                await self.refreshReadiness()
+                await self.refreshReadiness(depth: .free)
                 switch EngineInstaller.state() {
                 case .ready, .development: break
                 case .notInstalled, .stale, .unavailable: self.openPreflight()
@@ -409,7 +409,10 @@ final class AppModel {
         Task { await client.writeAskUserConfig(enabled: askEnabled, waitSeconds: askWait) }
 
         Task { _ = await client.reapAbandonedTemporarySessions() }
-        Task { await refreshReadiness() }
+        // The free depth: the paid probes are re-proven from what the last launch remembered, and
+        // asked for real only when that memory is a day old or empty. Every launch used to pay
+        // both — including every launch of the test host.
+        Task { await refreshReadiness(depth: .free) }
         Task { await loadCodexModels() }
 
         Task {
@@ -625,6 +628,18 @@ final class AppModel {
     /// Connecting a folder is not consent to change it. The engine no longer runs `git init`
     /// silently; instead of silence it leaves a wall, and that wall has a door rather than advice
     var gitConsentBlocked: [UUID: String] = [:]
+
+    /// The same question, asked by a task card rather than a chat message: the folder has no git,
+    /// and the engine stopped to ask before creating one. The chat shows a row with a button; a
+    /// card has no row to show it in, so it is a dialog — and never a command to type.
+    var gitConsentAsk: GitConsentAsk?
+
+    struct GitConsentAsk: Identifiable, Equatable {
+        let id = UUID()
+        let task: BacklogTask
+        let folder: String
+        static func == (a: GitConsentAsk, b: GitConsentAsk) -> Bool { a.id == b.id }
+    }
 
     /// A send that met a live run belonging to another chat, and what it would take to proceed.
     ///

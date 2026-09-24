@@ -1014,6 +1014,11 @@ worker_relaunch() {   # $1=idir $2=session → 0 when a fresh worker has shaken 
   gen="$(uuidgen 2>/dev/null || printf 'g-%s-%s' "$(date +%s)" "$$")"
 
   : > "$idir/recovering" 2>/dev/null || true
+  # A message the OLD process would not take gets its full set of tries against the new one.
+  _uf="$(undelivered_file "$idir")"
+  if [ -s "$_uf" ]; then
+    jq -c '.tries = 0' "$_uf" > "$_uf.tmp" 2>/dev/null && mv -f "$_uf.tmp" "$_uf" 2>/dev/null || rm -f "$_uf.tmp" 2>/dev/null
+  fi
   date +%s > "$idir/relaunching" 2>/dev/null || true
   printf '%s\n' "$gen" > "$idir/worker-generation" 2>/dev/null || true
   tmux set-option -w -t "$pane" remain-on-exit on 2>/dev/null || true
@@ -1056,6 +1061,17 @@ worker_relaunch() {   # $1=idir $2=session → 0 when a fresh worker has shaken 
   fi
   echo "$(date '+%F %T') [recover] restarted the worker on $session (claude --resume $sid)" >> "$plog"
   return 0
+}
+
+# Whether the frozen-turn recovery could still restart this worker: a launch template and a session
+# id to restart as, and attempts left in its budget.
+hung_recovery_possible() {   # $1=idir
+  local idir="${1:-}" attempts
+  [ -s "$idir/relaunch-template" ] && [ -s "$idir/claude-session-id" ] || return 1
+  [ -e "$idir/director-stopped" ] && return 1
+  attempts="$(jq -r '.attempts // 0' "$(hung_file "$idir")" 2>/dev/null || echo 0)"
+  case "$attempts" in ''|*[!0-9]*) attempts=0 ;; esac
+  [ "$attempts" -lt "${SUPERVISOR_HUNG_RECOVERIES:-3}" ]
 }
 
 _hung_write() {   # $1=idir $2=jq filter applied to the current record
@@ -1567,6 +1583,43 @@ pending_count() {  # $1=instance dir
   printf '%s' "$n"
 }
 
+# Is a message pump up for this run? Its own lock says so — `pump.lock/pid` is written by the pump
+# that holds the queue and removed when it exits. The pipeline marker is a different fact: it says
+# a message is being PREPARED, and a pump that is waiting for the worker to become free writes no
+# such marker for the whole of that wait.
+#
+# The watchdog used to read the pipeline marker as "is anybody pumping", and every poll it found
+# no marker and a non-empty queue it started another pump — 391 times in one afternoon, each exiting
+# at this lock a moment later — while counting the "restart" as activity, which is what kept a
+# frozen worker with a queued message from ever being seen as frozen.
+pump_alive() {  # $1=instance dir
+  local pid
+  pid="$(cat "${1:-}/pump.lock/pid" 2>/dev/null || true)"
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  kill -0 "$pid" 2>/dev/null
+}
+
+# Why the pump is waiting, as it published it (`queue-wait.json`); empty when it is not waiting.
+pump_wait_reason() {  # $1=instance dir
+  jq -r '.reason // empty' "${1:-}/queue-wait.json" 2>/dev/null || true
+}
+
+# What a non-empty queue means for THIS poll of the watchdog.
+#   restart   nobody is pumping — the pump died or the app quit mid-send; start one
+#   external  a pump is waiting on something that is not the worker (Codex out, a usage limit,
+#             an engine mismatch) — the pane has nothing to do, so this is not the worker's silence
+#   worker    a pump is waiting for the worker itself to be free — waiting is not work, and the
+#             pane's stillness has to count exactly as it would with an empty queue
+pending_queue_state() {  # $1=instance dir
+  local idir="${1:-}"
+  pump_alive "$idir" || { printf 'restart'; return 0; }
+  case "$(pump_wait_reason "$idir")" in
+    codex|limit|engine-mismatch) printf 'external' ;;
+    *) printf 'worker' ;;
+  esac
+  return 0
+}
+
 # Stop a stage tree. A brief that is still thinking is a read-only process with its own alarm, so
 # it would end by itself — but it would also keep spending the director's window on an answer
 # nobody is waiting for any more.
@@ -1759,7 +1812,8 @@ reset_review_budget() {  # $1=instance dir
   fi
   [ -n "$key" ] || return 0
   rm -f "$SUP_STATE/remediations-$key" "$SUP_STATE/rounds-$key" \
-        "$SUP_STATE/rounds-meta-$key" "$SUP_STATE/harness-$key" 2>/dev/null || true
+        "$SUP_STATE/rounds-meta-$key" "$SUP_STATE/harness-$key" \
+        "$SUP_STATE/handoffs-$key" "$SUP_STATE/misdeclared-$key" 2>/dev/null || true
   : > "$idir/started-at" 2>/dev/null || true
   printf '%s [review-budget] новий запит директора — бюджет виправлень і годинник прогону обнулено (%s)\n' \
     "$(date '+%F %T')" "$key" >> "$SUP_STATE/supervisor.log" 2>/dev/null || true
@@ -1807,9 +1861,21 @@ flush_undelivered() {  # $1=session  $2=instance dir
 
   tries=$((tries + 1))
   if [ "$tries" -ge "$SUPERVISOR_UNDELIVERED_MAX_TRIES" ]; then
+    # Three typings into a pane that does not react is the pane's problem, not the message's. If
+    # the frozen-turn recovery can still restart this worker, the message stays queued for the
+    # fresh process (the restart resets its tries); only when nothing can restart it is it parked
+    # as stuck — and that is said in the journal, where the app reads, not only in a finding.
+    if hung_recovery_possible "$idir"; then
+      printf '%s [undelivered] %s tries did not reach the composer — the message stays queued for the worker restart\n' \
+        "$(date '+%F %T')" "$tries" >> "${INJECT_LOG:-$SUP_STATE/supervisor.log}" 2>/dev/null || true
+      { printf '%s\n' "$(printf '%s' "$line" | jq -c --argjson n "$tries" '.tries = $n' 2>/dev/null)"
+        tail -n +2 "$f"; } > "$f.tmp" 2>/dev/null && mv -f "$f.tmp" "$f"
+      return 1
+    fi
     printf '%s\n' "$line" >> "$(undelivered_stuck_file "$idir")"
     jq -nc --arg t "Правку не вдалось передати воркеру ($SUPERVISOR_UNDELIVERED_MAX_TRIES спроби, сесія не приймає ввід): $msg" \
       '{kind:"blocker", text:$t}' >> "$idir/findings.jsonl" 2>/dev/null || true
+    journal_event "$idir" undelivered-stuck "$(printf '%s' "$msg" | head -c 120)" '{"source":"watchdog"}' 2>/dev/null || true
     _drop_first_undelivered
     return 1
   fi
@@ -3684,9 +3750,16 @@ run_bounded() {   # $1=seconds $2=stdout file $3=stderr file, rest=command → 0
   local pid=$! waited=0 rc=0
   while kill -0 "$pid" 2>/dev/null; do
     if [ "$waited" -ge "$((budget * 10))" ]; then
-      pkill -P "$pid" 2>/dev/null || true
-      kill -TERM "$pid" 2>/dev/null || true
-      wait "$pid" 2>/dev/null || true
+      # TERM the tree, give it a moment, then KILL what ignored it. `wait` on a child that stays
+      # stuck in the kernel (a network mount that went away) would otherwise hold this shell for
+      # ever — the one clock the caller thought it was holding, gone.
+      kill_tree "$pid" TERM
+      local grace=0
+      while kill -0 "$pid" 2>/dev/null && [ "$grace" -lt 20 ]; do sleep 0.1; grace=$((grace + 1)); done
+      kill -0 "$pid" 2>/dev/null && kill_tree "$pid" KILL
+      grace=0
+      while kill -0 "$pid" 2>/dev/null && [ "$grace" -lt 20 ]; do sleep 0.1; grace=$((grace + 1)); done
+      kill -0 "$pid" 2>/dev/null || wait "$pid" 2>/dev/null || true
       return 3
     fi
     sleep 0.1; waited=$((waited + 1))
@@ -3768,7 +3841,7 @@ nested_repos_in() {   # $1=dir
   local -a prune=()
   for line in $SUPERVISOR_HEAVY_DIRS; do prune+=( -name "$line" -o ); done
   run_bounded "$budget" "$out" "$err" \
-    find -P "$d" -mindepth 1 -maxdepth "$((depth + 1))" \( ${prune[@]+"${prune[@]}"} -false \) -prune \
+    find -P "$d" -xdev -mindepth 1 -maxdepth "$((depth + 1))" \( ${prune[@]+"${prune[@]}"} -false \) -prune \
       -o -name .git -print -prune \
       -o \( -type f -name HEAD \) -print \
       -o \( -type d -depth "$((depth + 1))" \) -print

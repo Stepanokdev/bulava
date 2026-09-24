@@ -109,6 +109,17 @@ withdrawn() {
 # consult-codex asks Codex about an empty task and the review gate has no dispatch to name.
 record_dispatch() {
   local rk chat=false
+  # Checks a worker registered were checks for the PREVIOUS task. Left in place, the verifier ran
+  # `tests/check_form.py` for a dispatch that had been asked to delete the very site the form was
+  # on — and overrode the reviewer's PASS with the file-not-found. A follow-up keeps its checks; a
+  # new task starts with none, and the old ones stay on disk under the dispatch they belonged to.
+  if [ "${RELATION:-}" != continue ] && [ -s "$IDIR/checks.jsonl" ]; then
+    _prev_did="$(jq -r '.id // empty' "$IDIR/dispatch.json" 2>/dev/null || true)"
+    mkdir -p "$IDIR/dispatches" 2>/dev/null || true
+    mv -f "$IDIR/checks.jsonl" "$IDIR/dispatches/${_prev_did:-previous}.checks.jsonl" 2>/dev/null \
+      || rm -f "$IDIR/checks.jsonl" 2>/dev/null || true
+    plog "registered checks of the previous task set aside (dispatches/${_prev_did:-previous}.checks.jsonl)"
+  fi
   rk="$(printf '%s' "$DISPATCH_ID" | tr 'A-Z' 'a-z' | tr -cd 'a-f0-9' | cut -c1-8)"
   # A turn of a conversation, not a task somebody filed. The backlog adopts finished dispatches
   # into cards, and a chat that filed a card for every message the director typed would be its own
@@ -173,6 +184,22 @@ stage_argv() {   # $1 = index ; fills the global RUN_ARGV
   while IFS= read -r a; do RUN_ARGV+=("$a"); done < <(jq -r ".stages[$1].run[]" "$DEF")
 }
 
+# A follow-up to the open task does not get the two independent positions again.
+#
+# Every message the director typed ran the whole ceremony: Claude's position (Opus in plan mode, five
+# to fifteen minutes), Codex's position, the comparison — sixty times in one week, for messages like
+# «продовжуй» and «backdrop не перемикається». The worker already holds the context those positions
+# were meant to give it, and it has `consult-codex` for the moment it actually wants a second opinion.
+# So the stages that say so in the definition are skipped when the context stage has marked the
+# message a follow-up. The first message of a task keeps the full flow.
+followup_now() {
+  [ "${SUPERVISOR_FOLLOWUP_PEERS:-0}" = 1 ] && return 1
+  [ "$(cat "$ART/.scale" 2>/dev/null)" = followup ]
+}
+stage_skipped() {   # $1 = index → 0 when this stage is to be skipped for this message
+  [ "$(jq -r ".stages[$1].skip_when_followup // false" "$DEF")" = true ] && followup_now
+}
+
 total="$(jq '.stages | length' "$DEF")"
 i=0
 while [ "$i" -lt "$total" ]; do
@@ -181,6 +208,11 @@ while [ "$i" -lt "$total" ]; do
     id="$(jq -r ".stages[$i].id" "$DEF")"
     opt="$(jq -r ".stages[$i].optional // false" "$DEF")"
     withdrawn && exit 7
+    if stage_skipped "$i"; then
+      plog "stage $id skipped — follow-up to the open task; the worker consults Codex itself when it needs to"
+      i=$((i + 1))
+      continue
+    fi
     mark_stage "$id" running
     stage_argv "$i"
     # Captured, not read out of `$?` after a `!` — the negation would have overwritten it.
@@ -203,15 +235,18 @@ while [ "$i" -lt "$total" ]; do
   fi
 
   withdrawn && exit 7
-  mark_stage "$grp" running
-  pids=""; ids=""
+  pids=""; ids=""; skipped_ids=""
   while [ "$i" -lt "$total" ] && [ "$(jq -r ".stages[$i].group // empty" "$DEF")" = "$grp" ]; do
     id="$(jq -r ".stages[$i].id" "$DEF")"
+    if stage_skipped "$i"; then skipped_ids="$skipped_ids $id"; i=$((i + 1)); continue; fi
+    [ -n "$pids" ] || mark_stage "$grp" running
     stage_argv "$i"
     run_stage "$id" "${RUN_ARGV[@]}" &
     pids="$pids $!"; ids="$ids $id"
     i=$((i + 1))
   done
+  [ -z "$skipped_ids" ] || plog "group $grp: skipped$skipped_ids — follow-up to the open task; the worker consults Codex itself when it needs to"
+  [ -n "$pids" ] || continue
   plog "group $grp: started$ids side by side"
   grp_rc=0
   for pid in $pids; do wait "$pid" 2>/dev/null || grp_rc=1; done

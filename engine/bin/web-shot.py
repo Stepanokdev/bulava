@@ -23,13 +23,13 @@ import subprocess
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 # The websocket client, Chrome discovery and the port dance are already written and tested; importing
 # them keeps one implementation of the protocol rather than a second one that drifts.
 import importlib.util as _ilu
 
 _spec = _ilu.spec_from_file_location(
-    "ns_web_video", os.path.join(os.path.dirname(os.path.abspath(__file__)), "web-video.py"))
+    "ns_web_video", os.path.join(os.path.dirname(os.path.realpath(__file__)), "web-video.py"))
 _wv = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(_wv)
 WS, find_chrome, free_port, page_socket, die = _wv.WS, _wv.find_chrome, _wv.free_port, _wv.page_socket, _wv.die

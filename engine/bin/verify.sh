@@ -209,67 +209,209 @@ if echo " $STACKS " | grep -q ' backend-python '; then
   command -v pytest >/dev/null 2>&1 && run_step "pytest passes" "$STEP_TO" pytest -q
 fi
 
+# ------------------------------------------------------------------------- the shell suites
+#
+# Two things changed here, and both came out of one afternoon in the log: six review rounds, each
+# FAILED by this step, for a change that touched none of the tests that were red.
+#
+# 1. Only the tests that can see the change run. A test that sources nothing the diff touched
+#    cannot fail because of it, and a suite of eighty-odd scripts takes a quarter of an hour that
+#    the round then pays for nothing. The selection is by reference: a test is picked when its text
+#    names a changed script, a changed function of the shared library, or is itself changed. When
+#    the library changed in a way no function name can be read off the diff, or a changed script is
+#    named by no test at all, the whole suite runs — a guess that skips a real regression is worse
+#    than fifteen minutes.
+# 2. A test that is red at the BASE commit is not this change's failure. Every red test is run once
+#    more in a throwaway worktree of the base; those red there too are listed and excluded, and the
+#    step passes when nothing else is red. That is what "pre-existing" is allowed to mean here —
+#    the base showing it — not the worker's word for it.
+_shell_changed=""      # files changed since base (tracked + untracked), or "?" when unknown
+if [ -n "$BASE_SHA" ] && git -C "$PROJ" cat-file -e "$BASE_SHA" 2>/dev/null; then
+  _shell_changed="$( { git -C "$PROJ" diff "$BASE_SHA" --name-only 2>/dev/null;
+                       git -C "$PROJ" ls-files --others --exclude-standard 2>/dev/null; } | sort -u)"
+else
+  _shell_changed="?"
+fi
+_BASE_WT=""
+# Sets _BASE_WT to a detached worktree at BASE_SHA, made once and removed when the verifier exits.
+# Called in THIS shell, never in a $(...) — a subshell's EXIT trap would remove the tree the moment
+# the path was returned.
+base_worktree() {
+  [ -n "$_BASE_WT" ] && return 0
+  [ -n "$BASE_SHA" ] && git -C "$PROJ" cat-file -e "$BASE_SHA" 2>/dev/null || return 1
+  _BASE_WT="$(mktemp -d "${TMPDIR:-/tmp}/ns-verify-base-XXXXXX")/base"
+  if git -C "$PROJ" worktree add --detach "$_BASE_WT" "$BASE_SHA" >/dev/null 2>&1; then
+    trap 'git -C "$PROJ" worktree remove --force "$_BASE_WT" >/dev/null 2>&1; rm -rf "$(dirname "$_BASE_WT")" 2>/dev/null' EXIT
+    return 0
+  fi
+  rm -rf "$(dirname "$_BASE_WT")" 2>/dev/null; _BASE_WT=""; return 1
+}
+# Names of functions the diff of a shared library touched, read off git's hunk headers. Empty when
+# the diff has hunks whose nearest heading is not a function — then nothing can be said about who
+# is affected, and the caller runs everything.
+changed_functions() {   # $1 = repo-relative file
+  local hunks fns
+  hunks="$(git -C "$PROJ" diff -U0 "$BASE_SHA" -- "$1" 2>/dev/null | grep '^@@' || true)"
+  [ -n "$hunks" ] || { printf ''; return 0; }
+  # A changed line at column zero is outside every function body — a top-level statement, an export,
+  # a new definition — and git's hunk heading would still name whatever function came before it.
+  if git -C "$PROJ" diff -U0 "$BASE_SHA" -- "$1" 2>/dev/null | grep -E '^[-+][^-+ #}]' | grep -qvE '^[-+][A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(\)[[:space:]]*\{?[[:space:]]*$'; then
+    printf ''; return 0
+  fi
+  fns="$(printf '%s\n' "$hunks" | sed -E 's/^@@[^@]*@@ *//' | grep -oE '^[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(\)' | tr -d ' ()' | sort -u)"
+  # Every hunk must have named a function, or the selection is not safe.
+  [ "$(printf '%s\n' "$hunks" | grep -c .)" -eq "$(printf '%s\n' "$hunks" | sed -E 's/^@@[^@]*@@ *//' | grep -cE '^[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(\)')" ] || { printf ''; return 0; }
+  printf '%s' "$fns"
+}
+select_shell_tests() {   # $1 = tests dir (repo-relative)  $2 = code root the tests cover ; prints test paths, one per line
+  local tdir="$1" root="$2" all t f base fn hits sel="" why=""
+  all="$(ls "$PROJ/$tdir"/test-*.sh 2>/dev/null)"
+  [ -n "$all" ] || return 0
+  if [ "${SUPERVISOR_TEST_SELECT:-1}" != 1 ] || [ "$_shell_changed" = "?" ]; then
+    printf '%s' "all tests (selection off or no base)" > "$SHELL_SELECT_NOTE_FILE"; printf '%s\n' "$all"; return 0
+  fi
+  # Anything in the code root that is not a test: scripts the tests exercise.
+  local code; code="$(printf '%s\n' "$_shell_changed" | grep -E "^${root}" | grep -vE "^${tdir}/" || true)"
+  local changed_tests; changed_tests="$(printf '%s\n' "$_shell_changed" | grep -E "^${tdir}/test-.*\.sh$" || true)"
+  if [ -z "$code" ] && [ -z "$changed_tests" ]; then
+    printf '%s' "nothing under $root changed" > "$SHELL_SELECT_NOTE_FILE"; return 0
+  fi
+  while IFS= read -r t; do [ -n "$t" ] && sel="$sel
+$PROJ/$t"; done <<EOF_CT
+$changed_tests
+EOF_CT
+  # The suite's own plumbing changed: everything runs.
+  if printf '%s\n' "$code" | grep -qE "^${tdir}/(run-all|lib-[^/]*)\.sh$|^${root}supervisor/config\.sh$"; then
+    printf '%s' "all tests (test plumbing or config changed)" > "$SHELL_SELECT_NOTE_FILE"; printf '%s\n' "$all"; return 0
+  fi
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    case "$f" in "${tdir}"/*) continue ;; esac
+    base="$(basename "$f")"
+    case "$base" in
+      supervisor-lib.sh|*-lib.sh)
+        fn="$(changed_functions "$f")"
+        if [ -z "$fn" ]; then printf '%s' "all tests ($base changed outside named functions)" > "$SHELL_SELECT_NOTE_FILE"; printf '%s\n' "$all"; return 0; fi
+        # Tests that name the function — and tests that name a script which calls it, because a
+        # test rarely calls a library function by name; it runs the script that does.
+        hits=""
+        while IFS= read -r n; do
+          [ -n "$n" ] || continue
+          hits="$hits
+$(grep -lF -- "$n" $all 2>/dev/null)"
+          for caller in $(grep -lF -- "$n" "$PROJ/${root}bin"/*.sh "$PROJ/${root}hooks"/*.sh 2>/dev/null); do
+            [ "$(basename "$caller")" = "$base" ] && continue
+            hits="$hits
+$(grep -lF -- "$(basename "$caller")" $all 2>/dev/null)"
+          done
+        done <<EOF_FN
+$fn
+EOF_FN
+        why="$why $base{$(printf '%s' "$fn" | tr '\n' ',')}" ;;
+      *.sh|*.py|*.json|*.md)
+        hits="$(grep -lF -- "$base" $all 2>/dev/null || true)"
+        # A script no test names is a script whose regressions the suite cannot catch selectively.
+        case "$f" in
+          *bin/*.sh|*hooks/*.sh) [ -n "$hits" ] || { printf '%s' "all tests (no test names $base)" > "$SHELL_SELECT_NOTE_FILE"; printf '%s\n' "$all"; return 0; } ;;
+        esac
+        why="$why $base" ;;
+      *) hits="" ;;
+    esac
+    sel="$sel
+$hits"
+  done <<EOF_CODE
+$code
+EOF_CODE
+  sel="$(printf '%s\n' "$sel" | grep . | sort -u)"
+  if [ -z "$sel" ]; then printf '%s' "no test references the change (${why# })" > "$SHELL_SELECT_NOTE_FILE"; return 0; fi
+  printf '%s' "$(printf '%s\n' "$sel" | grep -c .) of $(printf '%s\n' "$all" | grep -c .) selected by reference to:${why}" > "$SHELL_SELECT_NOTE_FILE"
+  printf '%s\n' "$sel"
+}
+. "$BIN_DIR/verify-suite-lib.sh"
+
 for _tdir in tests engine/tests; do
   ls "$PROJ/$_tdir"/test-*.sh >/dev/null 2>&1 || continue
-  if ! should_build '\.sh$|\.bash$|tests/'; then
-    skip_build "shell suite ($_tdir)" "bash tests"
+  case "$_tdir" in engine/tests) _root="engine/" ;; *) _root="" ;; esac
+  if ! budget_left; then
+    add_criterion "shell suite ($_tdir)" "bash tests" 0 "" inconclusive "skipped — total verify budget exceeded"; continue
+  fi
+  SHELL_SELECT_NOTE_FILE="$EVIDENCE_DIR/.select-note"; : > "$SHELL_SELECT_NOTE_FILE"
+  _sel="$(select_shell_tests "$_tdir" "$_root" | sed "s#^$PROJ/##")"
+  SHELL_SELECT_NOTE="$(cat "$SHELL_SELECT_NOTE_FILE" 2>/dev/null)"
+  if [ -z "$_sel" ]; then
+    add_criterion "shell suite ($_tdir)" "bash tests" 0 "" skipped "${SHELL_SELECT_NOTE:-no buildable change since base}"
     continue
   fi
   ran_any=1
-  # The suite gets whatever is left of the WHOLE verifier's budget, not the per-step ceiling.
-  # For a shell project the suite IS the verification, and capping it at one step's worth while
-  # 25 minutes of total budget sits unused is how a fifteen-minute suite came back as
-  # `exit_code: 142, inconclusive` round after round — a result that says nothing about the code.
-  # Same reasoning as `project verify.sh` below, which has taken the remaining budget all along.
+  # The suite gets whatever is left of the WHOLE verifier's budget, not the per-step ceiling: for a
+  # shell project the suite IS the verification, and a suite that cannot finish inside its ceiling
+  # is a suite whose result nobody ever collects.
   SH_TO="$STEP_TO"; _sh_left=$(( TOTAL_TO - ( $(date +%s) - START_TS ) - 10 ))
   [ "$_sh_left" -gt "$SH_TO" ] && SH_TO="$_sh_left"
-  # Side by side, because a suite that cannot finish inside its ceiling is a suite whose result
-  # nobody ever collects. A shell test that needs the machine to itself is already broken in CI,
-  # so this assumes what the engine's own suite guarantees — each test builds its own state
-  # directory. SUPERVISOR_TEST_JOBS=1 puts it back in order when a failure needs reading in
-  # sequence.
-  # One suite is left out of THIS run, by name: `test-export-suite.sh` publishes the tree and runs
-  # the whole suite again inside the copy, which doubles a fifteen-minute set and is the single
-  # reason no budget was ever enough. What it proves — that the shipped tree passes its own tests —
-  # is proved outside a review round, by `tests/run-all.sh` and by the publishing check, where an
-  # extra quarter of an hour costs nothing. A review round is not the place to pay it twice.
-  run_step "shell suite passes ($_tdir)" "$SH_TO" env SUPERVISOR_TEST_SKIP="test-export-suite.sh" bash -c '
-    dir='"$_tdir"'
-    jobs="${SUPERVISOR_TEST_JOBS:-}"
-    if [ -z "$jobs" ]; then
-      jobs="$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)"
-      [ "$jobs" -gt 8 ] 2>/dev/null && jobs=8
+  # `test-export-suite.sh` publishes the tree and runs the whole suite again inside the copy; what
+  # it proves is proved outside a review round, by tests/run-all.sh and the publishing check.
+  _rcdir="$EVIDENCE_DIR/shell-rc-$(printf '%s' "$_tdir" | tr '/' '-')"
+  _log="$EVIDENCE_DIR/$(slugify "shell suite ($_tdir)").log"
+  ( export SUPERVISOR_TEST_SKIP="${SUPERVISOR_TEST_SKIP:-} test-export-suite.sh"
+    printf '%s\n' "$_sel" | perl -e 'alarm shift; exec @ARGV' "$SH_TO" bash -c '
+      . "$0"; run_shell_suite "$1" "$2" "$3"' "$BIN_DIR/verify-suite-lib.sh" "$PROJ" "$_tdir" "$_rcdir" ) </dev/null >"$_log.driver" 2>&1; _ec=$?
+  _failed=""; _absent=""
+  for _rc in "$_rcdir"/*.rc; do
+    [ -f "$_rc" ] || continue
+    _tn="$(basename "$_rc" .rc)"
+    case "$(cat "$_rc" 2>/dev/null)" in
+      0) ;;
+      absent) _absent="$_absent $_tn" ;;
+      *) _failed="$_failed $_tn" ;;
+    esac
+  done
+  _selected_n="$(printf '%s\n' "$_sel" | grep -c .)"
+  _ran_n="$(ls "$_rcdir"/*.rc 2>/dev/null | wc -l | tr -d ' ')"
+  { echo "selection: ${SHELL_SELECT_NOTE:-all}"; echo "ran: $_ran_n of $_selected_n selected"
+    for _tn in $_failed; do echo "FAILED: $_tdir/$_tn"; echo "----- $_tn -----"; tail -n 60 "$_rcdir/$_tn.log" 2>/dev/null; done
+    [ "$_ec" = 142 ] && echo "TIMED OUT after ${SH_TO}s — results above are those that finished"
+  } > "$_log" 2>/dev/null
+  redact "$_log"
+  _note="${SHELL_SELECT_NOTE:-all tests}"
+  if [ "$_ec" = 142 ] && [ "$_ran_n" -lt "$_selected_n" ]; then
+    add_criterion "shell suite ($_tdir)" "bash tests" 142 "$_log" inconclusive "timed out after ${SH_TO}s; $_note"
+    continue
+  fi
+  if [ -z "$_failed" ]; then
+    add_criterion "shell suite passes ($_tdir)" "bash tests" 0 "$_log" pass "$_note"
+    continue
+  fi
+  # Red. Which of these were red before this change?
+  _pre=""; _new=""
+  if [ "${SUPERVISOR_VERIFY_BASELINE:-1}" = 1 ] && budget_left && base_worktree; then
+    _wt="$_BASE_WT"
+    _suite_key="$(printf '%s' "$_tdir" | tr '/' '-')"
+    _cache="$IDIR/verify-baseline/$BASE_SHA/$_suite_key"; mkdir -p "$_cache" 2>/dev/null || _cache="$EVIDENCE_DIR/baseline-$_suite_key"
+    mkdir -p "$_cache"
+    _todo=""
+    for _tn in $_failed; do [ -f "$_cache/$_tn.rc" ] || _todo="$_todo
+$_tdir/$_tn"; done
+    if [ -n "$(printf '%s' "$_todo" | grep .)" ]; then
+      _bl_to=$(( TOTAL_TO - ( $(date +%s) - START_TS ) - 10 )); [ "$_bl_to" -lt 60 ] && _bl_to=60
+      ( export SUPERVISOR_TEST_SKIP="${SUPERVISOR_TEST_SKIP:-} test-export-suite.sh"
+        printf '%s\n' "$_todo" | perl -e 'alarm shift; exec @ARGV' "$_bl_to" bash -c '
+          . "$0"; run_shell_suite "$1" "$2" "$3"' "$BIN_DIR/verify-suite-lib.sh" "$_wt" "$_tdir" "$_cache" ) </dev/null >>"$_log.driver" 2>&1 || true
     fi
-    case "$jobs" in ""|*[!0-9]*) jobs=4 ;; esac
-    [ "$jobs" -lt 1 ] && jobs=1
-    out="$(mktemp -d)"; trap "rm -rf "$out"" EXIT
-    # The verifier runs inside the run it is verifying, and the worker environment carries that
-    # run identity plus the application tuning. A test that inherits either stops measuring the
-    # code and starts measuring the machine — which is how this step reported failures that the
-    # same commit passes on a clean shell. Same scrub as tests/run-all.sh.
-    scrub=()
-    for _name in $(env | sed "s/=.*//" | sort -u); do
-      case "$_name" in
-        SUPERVISOR_TEST_JOBS|SUPERVISOR_TEST_SKIP) ;;
-        SUPERVISOR_*|ORCHESTRATOR_*|IDIR|BULAVA_*)
-          scrub=(${scrub[@]+"${scrub[@]}"} -u "$_name") ;;
+    for _tn in $_failed; do
+      case "$(cat "$_cache/$_tn.rc" 2>/dev/null)" in
+        ""|0|absent) _new="$_new $_tn" ;;   # green at base, not there at base, or never measured: this change's
+        *) _pre="$_pre $_tn" ;;             # red at base too
       esac
     done
-    pids=()
-    for t in "$dir"/test-*.sh; do
-      case " ${SUPERVISOR_TEST_SKIP:-} " in *" $(basename "$t") "*) continue ;; esac
-      ( env ${scrub[@]+"${scrub[@]}"} bash "$t" >/dev/null 2>&1; echo $? > "$out/$(basename "$t").rc" ) &
-      pids=(${pids[@]+"${pids[@]}"} "$!")
-      if [ "${#pids[@]}" -ge "$jobs" ]; then wait "${pids[0]}" 2>/dev/null; pids=(${pids[@]:1}); fi
-    done
-    wait
-    rc=0
-    for t in "$dir"/test-*.sh; do
-      case " ${SUPERVISOR_TEST_SKIP:-} " in *" $(basename "$t") "*) continue ;; esac
-      [ "$(cat "$out/$(basename "$t").rc" 2>/dev/null || echo 1)" = 0 ] \
-        || { echo "FAILED: $t"; rc=1; }
-    done
-    exit $rc'
+  else
+    _new="$_failed"
+  fi
+  { echo; echo "baseline ($BASE_SHA): red at base too →${_pre:- none}; new →${_new:- none}"; } >> "$_log"
+  if [ -n "$_new" ]; then
+    add_criterion "shell suite passes ($_tdir)" "bash tests" 1 "$_log" fail "new failures:${_new}${_pre:+; red at base too (not counted):$_pre}; $_note"
+  else
+    add_criterion "shell suite: no new failures vs base ($_tdir)" "bash tests" 0 "$_log" pass "red at base too, excluded:${_pre}; $_note"
+  fi
 done
 
 if [ "$ran_any" = 0 ]; then

@@ -35,7 +35,12 @@ if ! supervised_session_live "$slug"; then
   if [ "$start_rc" != 0 ]; then
     reason="$(printf '%s\n' "$start_out" | grep -E '^(❌|⚠️|fatal:|error:)' | tail -2 | tr '\n' ' ')"
     [ -n "$reason" ] || reason="$(printf '%s\n' "$start_out" | grep -v '^$' | tail -1)"
-    echo "❌ ${reason:-night-shift start не вдалося} ($PROJ)" >&2; exit 1
+    echo "❌ ${reason:-night-shift start не вдалося} ($PROJ)" >&2
+    # 76 is not a failure, it is a question — this folder has no git and the engine will not create
+    # one without being told to. Folded into 1 it reached the app as text with a terminal command in
+    # it; kept, the app can answer it with a button, exactly as the chat does.
+    [ "$start_rc" = 76 ] && exit 76
+    exit 1
   fi
 fi
 

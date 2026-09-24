@@ -157,6 +157,31 @@ nonisolated final class ChatArchiveTests: XCTestCase {
         XCTAssertNil(model.conversations.viewedArchivedChat(for: product))
     }
 
+    @MainActor func testAnArchivedChatOnScreenFollowsItsTranscript() throws {
+        let model = model()
+        let product = UUID()
+        let archived = model.conversations.newChat(for: product)
+        let live = model.conversations.newChat(for: product)
+        model.openChat(live)
+        let root = "/tmp/bulava-archive-trail-\(UUID().uuidString)"
+        let session = "33333333-3333-4333-8333-333333333333"
+        let dir = WorkerTrail.directory(for: root)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try "".write(to: dir.appendingPathComponent("\(session).jsonl"), atomically: true, encoding: .utf8)
+        model.conversations.bindSession(ChatSessionBinding(primaryProjectID: nil, projectPath: root,
+                                                           claudeSessionID: session),
+                                        to: archived.id)
+        model.archiveChat(archived)
+        model.viewArchivedChat(archived)
+
+        model.syncDirectChats()
+        defer { model.chatFeeds.values.forEach { $0.stop() } }
+
+        XCTAssertNotNil(model.chatFeeds[archived.id],
+                        "the chat being read is the one on screen, so its transcript must be read up to date")
+    }
+
     // MARK: - Coming back
 
     @MainActor func testUnarchiveReturnsTheViewedChatAndItsComposer() {

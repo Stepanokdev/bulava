@@ -48,6 +48,11 @@ unset SUPERVISOR_RUN_ENV_FROM_APP \
 export HOME="$TMP/home"; mkdir -p "$HOME/.claude/sessions"
 export SUPERVISOR_STATE_DIR="$TMP/state"; mkdir -p "$SUPERVISOR_STATE_DIR"
 export SUPERVISOR_DESIGN_RESEARCH=0
+# Most scenarios below drive the peer stages through a SECOND message of an open task, because that
+# is the cheapest way to get a second envelope. Since a follow-up no longer gets peer positions by
+# default (the worker consults Codex itself), the mechanics are exercised with the switch on; the
+# default is asserted once, in the end-to-end scenario near the bottom.
+export SUPERVISOR_FOLLOWUP_PEERS=1
 export SUPERVISOR_PLAN_TIMEOUT=60
 export SUPERVISOR_TURN_PROBE_GAP=0
 export SUPERVISOR_PUMP_POLL=1
@@ -877,6 +882,8 @@ first_art="$(dirname "$first_art" 2>/dev/null)"
 
 codex_calls_before="$(ls "$REC" 2>/dev/null | grep -c '^codex-brief-.*\.prompt$')"
 started="$(date +%s)"
+# The default, not the switch the rest of this suite runs with: a follow-up gets no peer positions.
+export SUPERVISOR_FOLLOWUP_PEERS=0
 out="$(STUB_SLEEP=0 send "закоміть, померджай і випусти версію" \
         "22222222-2222-2222-2222-222222222222")"
 case "$out" in *"TIER=preparing"*) ok "the follow-up is accepted the same way" ;; *) bad "follow-up: $out" ;; esac
@@ -893,12 +900,27 @@ done
 [ "$(tr -d '[:space:]' < "$follow_art/.scale" 2>/dev/null)" = followup ] \
   && ok "so it skips classification, research and design precedent" \
   || bad "the follow-up paid for the full opening stage again"
-[ -s "$follow_art/peer-claude.md" ] && [ -s "$follow_art/peer-codex.md" ] \
-  && ok "and both engines still formed a position on it" \
-  || bad "the follow-up lost one of the two readings"
+if [ -s "$follow_art/peer-claude.md" ] || [ -s "$follow_art/peer-codex.md" ] || [ -s "$follow_art/peer-alignment.md" ]; then
+  bad "the follow-up still bought two independent positions and a comparison"
+else
+  ok "and nobody formed a position on it — the worker already has the context"
+fi
+codex_calls_after="$(ls "$REC" 2>/dev/null | grep -c '^codex-brief-.*\.prompt$')"
+[ "${codex_calls_after:-0}" = "${codex_calls_before:-0}" ] \
+  && ok "no Codex call was spent on the follow-up before the worker saw it" \
+  || bad "Codex was called $((codex_calls_after - codex_calls_before)) time(s) to prepare a one-line follow-up"
+grep -q "skipped.*follow-up" "$SUPERVISOR_STATE_DIR/supervisor.log" 2>/dev/null \
+  && ok "and the log says the stages were skipped, and why" || bad "the skip left no trace in the log"
 grep -q "ПРОДОВЖЕННЯ" "$follow_art/composed.txt" 2>/dev/null \
   && ok "the worker is told plainly that this continues the task" \
   || bad "the worker was handed the follow-up as if the task were starting"
+grep -q "СПІЛЬНЕ ОСМИСЛЕННЯ" "$follow_art/composed.txt" 2>/dev/null \
+  && bad "the prompt still points at peer files that were never written" \
+  || ok "the prompt does not point at positions that do not exist"
+grep -q "КОНСУЛЬТАЦІЇ З CODEX" "$follow_art/composed.txt" 2>/dev/null \
+  && ok "and still hands the worker the consultation channel — Codex on demand" \
+  || bad "the worker was not told how to call Codex itself"
+export SUPERVISOR_FOLLOWUP_PEERS=1
 grep -q "закоміть, померджай" "$REC/injected.txt" 2>/dev/null \
   && ok "and it actually reached the worker" || bad "the follow-up never arrived"
 [ "$elapsed" -lt 90 ] && ok "the whole follow-up took ${elapsed}s" \

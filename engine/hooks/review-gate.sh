@@ -51,6 +51,25 @@ fi
 
 RUN_KEY="$session_id"
 if [ -n "${IDIR_SCOPE:-}" ]; then _rk="$(cat "$IDIR_SCOPE/run-id" 2>/dev/null || true)"; [ -n "$_rk" ] && RUN_KEY="$_rk"; fi
+
+# A verdict already stands, and nothing has moved since.
+#
+# The worker stops again without a new message from the director and without touching the tree:
+# a stale "Monitor expired" notification woke it, it said one sentence, it stopped. That used to be
+# a whole new review — verifier and Codex both — of exactly the work that was accepted minutes
+# earlier; three "debts" in one night came from two such wake-ups. The `done` marker is removed by
+# every new message (worker-send), so its presence means: same request, same tree, same answer.
+if [ -n "${IDIR_SCOPE:-}" ] && [ -s "$DONE_FILE" ] && [ -s "$IDIR_SCOPE/done-digest" ] \
+   && [ "${SUPERVISOR_REVIEW_REPEAT_UNCHANGED:-0}" != 1 ]; then
+  _prev_disp="$(tr -d '[:space:]' < "$DONE_FILE" 2>/dev/null)"
+  _now_digest="$(work_tree_digest "$cwd" 2>/dev/null || true)"
+  if [ -n "$_now_digest" ] && [ "$_now_digest" = "$(tr -d '[:space:]' < "$IDIR_SCOPE/done-digest" 2>/dev/null)" ]; then
+    # `log` is defined further down; this exit happens before it.
+    printf '%s [review-gate] [%s] nothing changed since the last verdict (%s): same tree, no new message — not reviewing again\n' \
+      "$(date '+%F %T')" "$(basename "$IDIR_SCOPE")" "$_prev_disp" >> "$STATE_DIR/supervisor.log" 2>/dev/null || true
+    exit 0
+  fi
+fi
 if [ -n "${IDIR_SCOPE:-}" ]; then
   # With an OWNER in it. The marker used to be an empty file, so a Codex that died mid-review left
   # behind something with no timeout and nothing anywhere that cleared it: every later message in
@@ -122,6 +141,26 @@ questions you were asked and never answered:
 $_owed_qs}
 Judge the work on its merits; where the gap plausibly explains a decision, say so rather than
 counting it against the worker.
+"
+fi
+
+# What the worker reported along the way, said to the reviewer.
+#
+# The worker's findings went into the receipt the director reads and nowhere else. So a worker that
+# wrote twice, with proof, that two suites were red on the clean tree before it started, was judged
+# by a reviewer who never saw the sentence — and the verifier's red-at-base rule is now the machine's
+# side of that same fact. Both go in: the claim as a claim, the evidence as evidence.
+FINDINGS_BLOCK=""
+if [ -n "${IDIR_SCOPE:-}" ]; then
+  _wf="$(findings_json "$IDIR_SCOPE" "$(cat "$IDIR_SCOPE/run-id" 2>/dev/null || true)" 2>/dev/null \
+        | jq -r '.[] | select(.kind != "blocker_resolved") | "- [\(.kind)] \(.text)"' 2>/dev/null | head -c 3000)"
+  [ -n "$_wf" ] && FINDINGS_BLOCK="
+WHAT THE WORKER REPORTED ALONG THE WAY (its own findings — claims to weigh, not verdicts):
+$_wf
+A [preexisting_failure] is the worker saying a test or build was already red at the BASE commit. The
+verifier checks that itself: a test red at base too is listed as 'red at base too, excluded' in the
+evidence and does not fail the step. Where the evidence agrees with the worker, do not count those
+against the work; where it does not, they count.
 "
 fi
 
@@ -202,6 +241,9 @@ mark_done() {
   local disposition="${1:-passed}"
   clear_progress
   [ -n "${DONE_FILE:-}" ] && printf '%s\n' "$disposition" > "$DONE_FILE"
+  # What the tree looked like when this was decided, so an identical stop later is not a new review.
+  [ -n "${IDIR_SCOPE:-}" ] && { work_tree_digest "$cwd" 2>/dev/null || true; } > "$IDIR_SCOPE/done-digest" 2>/dev/null
+  rm -f "$STATE_DIR/misdeclared-$RUN_KEY" "$STATE_DIR/handoffs-$RUN_KEY" 2>/dev/null || true
   journal_event "${IDIR_SCOPE:--}" terminal "$disposition" "$(jq -nc --arg d "$disposition" '{disposition:$d, source:"gate"}')"
   if [ -n "${IDIR_SCOPE:-}" ] && [ -f "$IDIR_SCOPE/dispatch.json" ]; then
     _did="$(jq -r '.id // empty' "$IDIR_SCOPE/dispatch.json" 2>/dev/null || true)"
@@ -271,6 +313,31 @@ if [ "${SUPERVISOR_OUTCOME_PROTOCOL:-1}" = 1 ] && [ -n "${IDIR_SCOPE:-}" ] && [ 
            && oc_unt="$(git -C "$cwd" ls-files --others --exclude-standard 2>/dev/null)"; then
           oc_changed="$oc_diff$oc_unt"
           if [ -n "$oc_changed" ]; then
+            # Counted per DECLARATION, not per stop: the record's own timestamp says whether the
+            # worker declared again or merely stopped again with the old file in place.
+            oc_ts="$(jq -r '.ts // ""' "$IDIR_SCOPE/outcome.json" 2>/dev/null)"
+            mis_file="$STATE_DIR/misdeclared-$RUN_KEY"
+            mis_n="$(cut -d'|' -f1 "$mis_file" 2>/dev/null)"; case "$mis_n" in ''|*[!0-9]*) mis_n=0 ;; esac
+            mis_ts="$(cut -d'|' -f2- "$mis_file" 2>/dev/null)"
+            if [ "$mis_ts" != "$oc_ts" ]; then
+              mis_n=$((mis_n + 1)); printf '%s|%s\n' "$mis_n" "$oc_ts" > "$mis_file"
+            fi
+            if [ "$mis_n" -ge "${SUPERVISOR_MISDECLARE_PARK:-3}" ]; then
+              # Three times the same answer to the same question. Six rounds of this in one night is
+              # what this stops: the worker is not going to say anything different, and a person has
+              # to look at what it actually did.
+              emit_review_json COMPLETE FAIL needs-user "declared '$oc_result' $mis_n times while the diff against base is non-empty — the declaration and the tree disagree, and repeating it is not progress"
+              mark_done needs-user
+              log "declared $oc_result $mis_n times with a NON-empty diff — repeated identical outcome, parked as needs-user"
+              exit 0
+            elif [ "$mis_n" -ge 2 ]; then
+              # The second time is the moment to say plainly what the first review round left
+              # implicit — and to say it without spending another verifier run and Codex round on it.
+              log "declared $oc_result again ($mis_n) with a NON-empty diff — no progress, blocking without a review round"
+              jq -n --arg reason "🌙 Ти знову оголосив результат «${oc_result}», але diff проти базового коміту непорожній — це вже $mis_n-й раз, і повторення того самого не є прогресом. Або зміни в дереві є частиною роботи — тоді результат $IDIR_SCOPE/report-outcome succeeded_changes \"підсумок\" і вони підуть на рев'ю; або вони випадкові — тоді прибери їх (git checkout / видали зайве) і оголоси ще раз. Третє однакове оголошення зупинить прогін і покличе людину." \
+                '{decision: "block", reason: $reason}'
+              exit 0
+            fi
             log "declared $oc_result but diff is NON-empty — NOT honoring, routing to normal review"
           elif [ "$oc_mode" = broad ]; then
             emit_review_json COMPLETE PASS debt "Declared '$oc_result' with an empty diff — no machine verification of a no-change/research claim is possible; needs human review."
@@ -290,9 +357,21 @@ fi
 
 if [ -n "${IDIR_SCOPE:-}" ] && [ -s "$IDIR_SCOPE/findings.jsonl" ]; then
   _crid="$(cat "$IDIR_SCOPE/run-id" 2>/dev/null || true)"
-  _last="$(jq -rc --arg rid "$_crid" 'select((.class=="blocker" or .class=="blocker_resolved") and (.run_id // "")==$rid) | [.class, .text] | @tsv' "$IDIR_SCOPE/findings.jsonl" 2>/dev/null | tail -1)"
+  _last="$(jq -rc --arg rid "$_crid" 'select((.class=="blocker" or .class=="blocker_resolved") and (.run_id // "")==$rid) | [.class, .text, (.ts // "")] | @tsv' "$IDIR_SCOPE/findings.jsonl" 2>/dev/null | tail -1)"
   _blk=""
-  case "$_last" in blocker$'\t'*) _blk="${_last#*$'\t'}" ;; esac
+  case "$_last" in blocker$'\t'*) _blk="$(printf '%s' "${_last#*$'\t'}" | cut -f1)"; _blk_ts="$(printf '%s' "${_last#*$'\t'}" | cut -f2)" ;; esac
+  # Filed for THIS dispatch, not carried over from the last one. A blocker the worker raised at ten
+  # in the morning parked the next two dispatches of the day as well — each declared done, none of
+  # them mentioning the blocker — because "fresh" was measured against the run, and the run is the
+  # whole conversation.
+  if [ -n "${_blk:-}" ] && [ -f "$IDIR_SCOPE/dispatch.json" ] && [ -n "${_blk_ts:-}" ]; then
+    _d_at="$(stat -f %m "$IDIR_SCOPE/dispatch.json" 2>/dev/null || stat -c %Y "$IDIR_SCOPE/dispatch.json" 2>/dev/null || echo 0)"
+    _b_at="$(date -j -f '%Y-%m-%d %H:%M:%S' "$_blk_ts" +%s 2>/dev/null || date -d "$_blk_ts" +%s 2>/dev/null || echo 0)"
+    if [ "${_b_at:-0}" -gt 0 ] && [ "${_d_at:-0}" -gt 0 ] && [ "$_b_at" -lt $(( _d_at - 60 )) ]; then
+      log "worker 'blocker' finding predates this dispatch ($_blk_ts) — not fresh, reviewing normally"
+      _blk=""
+    fi
+  fi
   if [ -n "${_blk:-}" ] && [ -n "$_crid" ]; then
     emit_review_json BLOCKED N/A needs-user "worker blocker finding: $_blk"
     mark_done needs-user
@@ -698,7 +777,7 @@ ${CONTRACT_TEXT:-(no acceptance contract recorded for this run)}
 
 AGREED PLAN (pre-flight notes, if any — context, not the contract):
 ${PLAN_TEXT:-(no plan)}
-${OWED_BLOCK}${CHALLENGE_BLOCK}
+${OWED_BLOCK}${FINDINGS_BLOCK}${CHALLENGE_BLOCK}
 
 VERIFIER EVIDENCE (machine-collected by running real build/test/lint — this OUTRANKS any
 claim in the report; opinion is not evidence):
@@ -948,8 +1027,13 @@ if [ "$state" = "BLOCKED" ]; then
 fi
 
 if [ "$state" = "HANDOFF" ]; then
-  echo $((rounds + 1)) > "$rounds_file"
-  if [ $((rounds + 1)) -ge "$MAX_ROUNDS" ]; then
+  # Handoffs are counted on their own. They shared the FAIL counter, so the FIRST time a worker
+  # handed the turn back after two failed rounds it was already "repeated handoff" and the run was
+  # parked; and the same stop half an hour later parked it again.
+  handoff_file="$STATE_DIR/handoffs-$RUN_KEY"
+  handoffs="$(cat "$handoff_file" 2>/dev/null || echo 0)"; case "$handoffs" in ''|*[!0-9]*) handoffs=0 ;; esac
+  handoffs=$((handoffs + 1)); echo "$handoffs" > "$handoff_file"
+  if [ "$handoffs" -ge "$MAX_ROUNDS" ]; then
     { echo ""; echo "## $(date '+%F %T') — session $session_id — repeated handoff"; \
       echo "Claude неодноразово передавав хід користувачу вночі — припиняю підштовхувати, потрібна людина."; \
       echo "$review"; } | legacy_note "$BLOCKED_OUT" BLOCKED.md
@@ -958,9 +1042,9 @@ if [ "$state" = "HANDOFF" ]; then
     mark_done needs-user
     exit 0
   fi
-  journal_event "${IDIR_SCOPE:--}" nudge "handoff → keep working (round $((rounds + 1))/$MAX_ROUNDS)" '{"source":"gate"}'
-  note_progress nudge "$((rounds + 1))" "$MAX_ROUNDS"
-  jq -n --arg reason "🌙 Вночі користувача нема — не передавай хід. Працюй автономно за стандартним правилом: обери найповніший шлях до завершеного результату без заглушок; якщо потрібне рішення — прийми розумне й занотуй у $IDIR/decisions.md; продовжуй, поки задача реально не готова (спроба $((rounds + 1))/$MAX_ROUNDS)." \
+  journal_event "${IDIR_SCOPE:--}" nudge "handoff → keep working (handoff $handoffs/$MAX_ROUNDS)" '{"source":"gate"}'
+  note_progress nudge "$handoffs" "$MAX_ROUNDS"
+  jq -n --arg reason "🌙 Вночі користувача нема — не передавай хід. Працюй автономно за стандартним правилом: обери найповніший шлях до завершеного результату без заглушок; якщо потрібне рішення — прийми розумне й занотуй у ${IDIR_SCOPE:-$PWD}/decisions.md; продовжуй, поки задача реально не готова (передача ходу $handoffs/$MAX_ROUNDS)." \
     '{decision: "block", reason: $reason}'
   exit 0
 fi
@@ -1099,6 +1183,24 @@ if [ "$verdict" != "PASS" ]; then
   exit 0
 fi
 
+# An inconclusive verifier is two different things. "The build timed out" is a gap in the evidence
+# and the PASS above it is on credit — that is debt. "There is nothing here a build or a test could
+# say anything about" — a site of static pages, a report, a proposal — is not a gap; it is the shape
+# of the deliverable, and the reviewer's PASS is the whole of the evidence there is. Ten "debts" in
+# a week said the latter and meant nothing anybody could act on.
+nothing_to_verify() {
+  [ -n "${verify_json:-}" ] || return 1
+  printf '%s' "$verify_json" | jq -e '
+    ([.criteria[]? | select(.status == "pass" or .status == "fail")] | length) == 0
+    and ([.criteria[]? | select(.status == "inconclusive")
+          | select((.note // "") | test("no automated verification available|profile=none|nothing under|no buildable change") | not)] | length) == 0' \
+    >/dev/null 2>&1
+}
+if [ "${verify_status:-}" = inconclusive ] && nothing_to_verify; then
+  log "verifier inconclusive because there is nothing to build or test for this deliverable — the reviewer's PASS stands"
+  verify_status="unverifiable"
+fi
+
 if [ "$BOUNDED" = 1 ]; then
   if [ "${verify_status:-}" = inconclusive ]; then
     emit_review_json COMPLETE FAIL debt "$review"
@@ -1113,7 +1215,7 @@ if [ "$BOUNDED" = 1 ]; then
   exit 0
 fi
 
-rm -f "$rounds_file" "$STATE_DIR/rounds-meta-$RUN_KEY" "$remed_file" "$harness_file"
+rm -f "$rounds_file" "$STATE_DIR/rounds-meta-$RUN_KEY" "$remed_file" "$harness_file" "$STATE_DIR/handoffs-$RUN_KEY"
 log "targeted review PASS (state=COMPLETE); verify=$verify_status"
 if [ "${verify_status:-}" = inconclusive ]; then
   emit_review_json COMPLETE FAIL debt "$review"

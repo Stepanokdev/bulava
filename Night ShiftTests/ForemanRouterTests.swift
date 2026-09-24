@@ -153,9 +153,9 @@ nonisolated final class PlacementScopeTests: XCTestCase {
     }
 
     func testTheAskNamesOnlyTheProductsOwnResources() {
-        let ask = AppModel.askWhichResource([project("bid-desk"), project("presale-api")])
-        XCTAssertTrue(ask.contains("bid-desk"))
-        XCTAssertTrue(ask.contains("presale-api"))
+        let ask = AppModel.askWhichResource([project("orbit-console"), project("orbit-api")])
+        XCTAssertTrue(ask.contains("orbit-console"))
+        XCTAssertTrue(ask.contains("orbit-api"))
         XCTAssertFalse(ask.contains("Meetings Recorder"))
     }
 
@@ -171,8 +171,8 @@ nonisolated final class PlacementScopeTests: XCTestCase {
     }
 
     func testASingleResourceIsNamedRatherThanListed() {
-        let ask = AppModel.askWhichResource([project("bid-desk")])
-        XCTAssertTrue(ask.contains("bid-desk"))
+        let ask = AppModel.askWhichResource([project("orbit-console")])
+        XCTAssertTrue(ask.contains("orbit-console"))
         XCTAssertFalse(ask.contains("•"), "a list of one is not a list")
     }
 

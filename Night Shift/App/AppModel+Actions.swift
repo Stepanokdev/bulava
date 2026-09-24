@@ -229,6 +229,19 @@ extension AppModel {
                 backlog.undoDispatch(task.id)
                 launchFailures[task.id] = Date()
 
+                // 76 — the engine did not refuse, it asked: no git in this folder, and it will not
+                // create one unheard. The chat answers that with a button beside the message; a
+                // card has no message, so the question is a dialog. Not a foreman note with a
+                // terminal command in it.
+                if result.launched, result.exitCode == 76 {
+                    gitConsentAsk = GitConsentAsk(task: task, folder: path)
+                    note(.taskStateChanged, .info, "Потрібна згода на git: «\(task.title)»",
+                         detail: "Тека \(path) без git. Bulava чекає на відповідь у діалозі.",
+                         projectPath: path, taskID: task.id, link: .task(task.id))
+                    await refresh()
+                    return
+                }
+
                 let raw = result.combined.trimmingCharacters(in: .whitespacesAndNewlines)
                 let reason: String
                 if !result.launched {
@@ -248,6 +261,24 @@ extension AppModel {
                 toast = ToastMessage(text: reason, kind: .error)
             }
             await refresh()
+        }
+    }
+
+    /// The director's answer to the git question a card raised: record the consent the same way the
+    /// chat does, then dispatch the task it was holding.
+    func allowGitAndDispatch(_ ask: GitConsentAsk) {
+        gitConsentAsk = nil
+        Task {
+            let r = await client.allowGit(projectPath: ask.folder)
+            guard r.ok else {
+                let why = r.combined.split(whereSeparator: \.isNewline).first.map(String.init)
+                toast = ToastMessage(text: why ?? String(localized: "Could not record the answer."), kind: .error)
+                return
+            }
+            launchFailures[ask.task.id] = nil
+            toast = ToastMessage(text: String(format: String(localized: "Git will be created in “%@” when work starts there."),
+                                              (ask.folder as NSString).lastPathComponent), kind: .success)
+            if let fresh = backlog.task(id: ask.task.id) { dispatch(task: fresh) } else { dispatch(task: ask.task) }
         }
     }
 

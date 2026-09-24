@@ -123,11 +123,25 @@ while [ -d "$IDIR" ]; do
     preparing=1
     note_activity
   elif [ "$(pending_count "$IDIR")" != 0 ] && tmux has-session -t "$SESSION" 2>/dev/null; then
-    # Envelopes with nobody to open them: the pump was killed, or the app was quit mid-send.
-    nohup "${SUPERVISOR_PUMP_CMD:-$BIN_DIR/message-pump.sh}" "$SLUG" >/dev/null 2>&1 &
-    log "restarted the message pump — $(pending_count "$IDIR") message(s) waiting to be prepared"
-    preparing=1
-    note_activity
+    case "$(pending_queue_state "$IDIR")" in
+      restart)
+        # Envelopes with nobody to open them: the pump was killed, or the app was quit mid-send.
+        nohup "${SUPERVISOR_PUMP_CMD:-$BIN_DIR/message-pump.sh}" "$SLUG" >/dev/null 2>&1 &
+        log "restarted the message pump — $(pending_count "$IDIR") message(s) waiting to be prepared"
+        preparing=1
+        note_activity ;;
+      external)
+        # The pump is up and waiting for Codex or a usage window, not for the worker. Nothing the
+        # pane could do would change that, so its stillness is not a stall and not a hang.
+        preparing=1
+        note_activity ;;
+      worker)
+        # The pump is up and waiting for the WORKER to be free. That wait is decided by the very
+        # things the checks below already read — a running turn, an open review, a pause — so
+        # nothing is marked here. Marking it was the bug: with one message queued, a worker that
+        # took its task and froze read as "preparing" on every poll, for as long as the queue held.
+        : ;;
+    esac
   fi
 
   # A consultation still in flight, judged by whether anyone is still waiting on it rather than by
