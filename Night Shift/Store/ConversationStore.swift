@@ -91,7 +91,32 @@ final class ConversationStore {
 
     private(set) var openChatID: [UUID: UUID] = [:]
 
-    func open(_ chatID: UUID, for productID: UUID) { openChatID[productID] = chatID }
+    func open(_ chatID: UUID, for productID: UUID) {
+        openChatID[productID] = chatID
+        viewingArchivedID[productID] = nil
+    }
+
+    /// An archived chat someone opened to read. Kept apart from `openChatID` on purpose: that one
+    /// is where the app writes — deliveries, events and entries with no chat of their own land in
+    /// `currentChat` — and none of that may be redirected into a chat that is in the archive.
+    /// Only what the screen shows reads this.
+    private(set) var viewingArchivedID: [UUID: UUID] = [:]
+
+    func viewArchived(_ chatID: UUID, for productID: UUID) {
+        guard let chat = chat(id: chatID), chat.archived, chat.productID == productID else { return }
+        viewingArchivedID[productID] = chatID
+    }
+
+    /// The archived chat on screen for this product, if the reader is looking at one.
+    func viewedArchivedChat(for productID: UUID) -> Chat? {
+        guard let id = viewingArchivedID[productID], let chat = chat(id: id), chat.archived else { return nil }
+        return chat
+    }
+
+    /// What the conversation screen shows: an archived chat being read, otherwise the live one.
+    func displayedChatID(for productID: UUID) -> UUID? {
+        viewedArchivedChat(for: productID)?.id ?? currentChatID(for: productID)
+    }
 
     func currentChatID(for productID: UUID) -> UUID? {
         if let id = openChatID[productID], let chat = chat(id: id), !chat.archived { return id }
@@ -113,6 +138,7 @@ final class ConversationStore {
         let chat = Chat(productID: productID, title: String(localized: "New chat"))
         chats.append(chat)
         openChatID[productID] = chat.id
+        viewingArchivedID[productID] = nil
         return chat
     }
 
@@ -133,6 +159,9 @@ final class ConversationStore {
     func setArchived(_ chatID: UUID, _ archived: Bool) {
         guard let i = chats.firstIndex(where: { $0.id == chatID }) else { return }
         chats[i].archived = archived
+        if !archived, viewingArchivedID[chats[i].productID] == chatID {
+            viewingArchivedID[chats[i].productID] = nil
+        }
         persistChats()
     }
 

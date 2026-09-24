@@ -1014,12 +1014,6 @@
         "ru": {
           "variations": {
             "plural": {
-              "one": {
-                "stringUnit": {
-                  "state": "translated",
-                  "value": "%lld упоминание"
-                }
-              },
               "few": {
                 "stringUnit": {
                   "state": "translated",
@@ -1030,6 +1024,12 @@
                 "stringUnit": {
                   "state": "translated",
                   "value": "%lld упоминаний"
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld упоминание"
                 }
               },
               "other": {
@@ -1044,12 +1044,6 @@
         "uk": {
           "variations": {
             "plural": {
-              "one": {
-                "stringUnit": {
-                  "state": "translated",
-                  "value": "%lld згадка"
-                }
-              },
               "few": {
                 "stringUnit": {
                   "state": "translated",
@@ -1060,6 +1054,12 @@
                 "stringUnit": {
                   "state": "translated",
                   "value": "%lld згадок"
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld згадка"
                 }
               },
               "other": {
@@ -3966,6 +3966,42 @@
         }
       }
     },
+    "Archive chat…": {
+      "comment": "Sidebar context menu item on a chat; opens the archive confirmation.",
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Архивировать чат…"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Архівувати чат…"
+          }
+        }
+      }
+    },
+    "Archive “%@”?": {
+      "comment": "Title of the dialog confirming a chat is archived; %@ is the chat title.",
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Архивировать «%@»?"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Архівувати «%@»?"
+          }
+        }
+      }
+    },
     "Archived": {
       "extractionState": "manual",
       "localizations": {
@@ -3979,6 +4015,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "Прибрані в архів"
+          }
+        }
+      }
+    },
+    "Archives": {
+      "comment": "Sidebar section under a product that holds its archived chats.",
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Архив"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Архів"
           }
         }
       }
@@ -4487,6 +4541,7 @@
         }
       }
     },
+    "Bulava": {},
     "Bulava %@ is available": {
       "extractionState": "manual",
       "localizations": {
@@ -10016,6 +10071,24 @@
         }
       }
     },
+    "Hide this product's archived chats": {
+      "comment": "Tooltip on the expanded Archives row in the sidebar.",
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Скрыть архивные чаты этого продукта"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сховати архівні чати цього продукту"
+          }
+        }
+      }
+    },
     "High": {
       "extractionState": "manual",
       "localizations": {
@@ -14701,6 +14774,24 @@
         }
       }
     },
+    "Read “%@” — it stays in Archives": {
+      "comment": "Tooltip on an archived chat row in the sidebar; %@ is the chat title.",
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открыть «%@» для чтения — чат останется в архиве"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Відкрити «%@» для читання — чат лишиться в архіві"
+          }
+        }
+      }
+    },
     "Reading how much each one gets used…": {
       "extractionState": "manual",
       "localizations": {
@@ -15351,6 +15442,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "Продовжити"
+          }
+        }
+      }
+    },
+    "Return this chat to the list and write in it again": {
+      "comment": "Tooltip on the Unarchive button in an archived chat.",
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вернуть чат в список и снова писать в нём"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Повернути чат до списку й знову писати в ньому"
           }
         }
       }
@@ -16203,6 +16312,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "Показати ліміти"
+          }
+        }
+      }
+    },
+    "Show this product's archived chats": {
+      "comment": "Tooltip on the collapsed Archives row in the sidebar.",
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показать архивные чаты этого продукта"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показати архівні чати цього продукту"
           }
         }
       }
@@ -17420,6 +17547,24 @@
         }
       }
     },
+    "The chat moves to Archives in this product. Nothing is deleted: you can read it there and unarchive it at any time.": {
+      "comment": "Body of the archive confirmation dialog.",
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Чат переместится в «Архив» этого продукта. Ничего не удаляется: его можно читать там и в любой момент вернуть из архива."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Чат переміститься в «Архів» цього продукту. Нічого не видаляється: його можна читати там і будь-коли повернути з архіву."
+          }
+        }
+      }
+    },
     "The deepest Codex goes. Expensive — keep it for the hard ones.": {
       "extractionState": "manual",
       "localizations": {
@@ -18099,6 +18244,24 @@
         }
       }
     },
+    "The work in it keeps running.": {
+      "comment": "Added to the archive confirmation when a worker is running in that chat.",
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Работа в нём продолжится."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Робота в ньому триватиме далі."
+          }
+        }
+      }
+    },
     "The worker froze and restarting did not help. Send a message to try again.": {
       "extractionState": "manual",
       "localizations": {
@@ -18417,6 +18580,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "Цей діалог уже запущено — нову модель Claude візьме з наступної сесії тут."
+          }
+        }
+      }
+    },
+    "This chat is archived": {
+      "comment": "Heading of the bar that replaces the composer in an archived chat.",
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Этот чат в архиве"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Цей чат в архіві"
           }
         }
       }
@@ -18957,6 +19138,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ultra"
+          }
+        }
+      }
+    },
+    "Unarchive": {
+      "comment": "Returns an archived chat to the chat list: the context menu item on an archived chat and the button that replaces the composer.",
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вернуть из архива"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Повернути з архіву"
           }
         }
       }
@@ -20673,6 +20872,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ти просив %1$lld — сформувалося %2$lld, вони тут. Решта не стартувала."
+          }
+        }
+      }
+    },
+    "You can read it. Unarchive it to write here again.": {
+      "comment": "Line under the heading of the archived-chat bar.",
+      "extractionState": "manual",
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Его можно читать. Чтобы снова писать здесь, верните его из архива."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Його можна читати. Щоб знову писати тут, поверніть його з архіву."
           }
         }
       }

@@ -449,6 +449,7 @@ private struct ProductGroup: View {
     @Environment(AppModel.self) private var model
     let product: Product
     @State private var expanded = false
+    @State private var archivesOpen = false
 
     private static let visible = 5
 
@@ -456,17 +457,29 @@ private struct ProductGroup: View {
         let chats = model.conversations.chats(for: product.id)
         let current = model.conversations.currentChatID(for: product.id)
 
-        let open = model.route.productID == product.id ? current : nil
+        let here = model.route.productID == product.id
+        let open = here ? current : nil
+        let reading = here ? model.conversations.viewedArchivedChat(for: product.id)?.id : nil
         let shown = shownChats(chats, current: current)
         let shownIDs = Set(shown.map(\.id))
         let folded = chats.filter { !shownIDs.contains($0.id) }
         VStack(spacing: 1) {
             ProductRow(product: product, foldedChats: folded)
             ForEach(shown) { chat in
-                ChatRow(chat: chat, selected: chat.id == open)
+                ChatRow(chat: chat, selected: reading == nil && chat.id == open)
             }
             if !folded.isEmpty || (expanded && chats.count > Self.visible) {
                 more(folded: folded.count)
+            }
+            let archived = model.conversations.archivedChats(for: product.id)
+            if !archived.isEmpty {
+                // Held open while one of them is on screen — opened from search, say — so the
+                // highlighted row is never folded away out of sight.
+                let unfolded = archivesOpen || reading != nil
+                archivesHeader(count: archived.count, unfolded: unfolded)
+                if unfolded {
+                    ForEach(archived) { chat in ArchivedChatRow(chat: chat, selected: chat.id == reading) }
+                }
             }
         }
         .padding(.bottom, 8)
@@ -500,6 +513,30 @@ private struct ProductGroup: View {
         .help(Text(expanded
                    ? String(localized: "Fold the older threads away")
                    : String(format: String(localized: "%lld more in this product"), folded)))
+    }
+
+    private func archivesHeader(count: Int, unfolded: Bool) -> some View {
+        Button { withAnimation(Motion.standard) { archivesOpen.toggle() } } label: {
+            HStack(spacing: 6) {
+                Text("Archives")
+                Text(verbatim: "\(count)")
+                    .monospacedDigit()
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .rotationEffect(.degrees(unfolded ? 90 : 0))
+            }
+            .font(Typo.body)
+            .foregroundStyle(Palette.textFaint)
+            .padding(.leading, Rail.text)
+            .padding(.trailing, Rail.inset)
+            .frame(minHeight: 26)
+        }
+        .buttonStyle(.row())
+        .disabled(unfolded && !archivesOpen)
+        .help(Text(unfolded
+                   ? String(localized: "Hide this product's archived chats")
+                   : String(localized: "Show this product's archived chats")))
     }
 }
 
@@ -608,6 +645,9 @@ private struct ChatRow: View {
     let selected: Bool
 
     @State private var hovering = false
+    // Owned by the row, not by the hover button: that button disappears the moment the pointer
+    // heads for the dialog, and a dialog attached to it would go with it.
+    @State private var confirmingArchive = false
 
     var body: some View {
         Button { model.openChat(chat) } label: {
@@ -630,9 +670,24 @@ private struct ChatRow: View {
             Button("Rename…") { model.beginRenamingChat(chat) }
             Divider()
 
-            Button("Archive") { model.archiveChat(chat) }
+            Button("Archive chat…") { confirmingArchive = true }
         }
         .help(Text(chat.title))
+        .confirmationDialog(Text(String(format: String(localized: "Archive “%@”?"), chat.title)),
+                            isPresented: $confirmingArchive, titleVisibility: .visible) {
+            Button { model.archiveChat(chat) } label: { Text("Archive") }
+            Button(role: .cancel) { confirmingArchive = false } label: { Text("Cancel") }
+        } message: {
+            Text(archiveMessage)
+        }
+    }
+
+    private var archiveMessage: String {
+        var parts = [String(localized: "The chat moves to Archives in this product. Nothing is deleted: you can read it there and unarchive it at any time.")]
+        if model.directPhase(for: chat.id).isActive {
+            parts.append(String(localized: "The work in it keeps running."))
+        }
+        return parts.joined(separator: " ")
     }
 
     @ViewBuilder private var trailing: some View {
@@ -644,7 +699,7 @@ private struct ChatRow: View {
                 .buttonStyle(.icon(size: 22, glyph: 10,
                                    tint: chat.pinned ? Palette.accentEmphasis : Palette.textSecondary))
                 .help(Text(chat.pinned ? "Unpin" : "Pin to top"))
-                Button { model.archiveChat(chat) } label: {
+                Button { confirmingArchive = true } label: {
                     Image(systemName: "archivebox")
                 }
                 .buttonStyle(.icon(size: 22, glyph: 10, tint: Palette.textSecondary))
@@ -670,5 +725,37 @@ private struct ChatRow: View {
         } else if phase == .ready {
             StatusDot(color: Palette.accent, size: 6)
         }
+    }
+}
+
+// MARK: - Archived chat row
+
+/// A chat inside a product's Archives. Clicking it opens it to read — it stays archived, and the
+/// conversation offers Unarchive in place of the composer. Nothing to pin or archive here, so the
+/// row stays quiet on hover.
+private struct ArchivedChatRow: View {
+    @Environment(AppModel.self) private var model
+    let chat: Chat
+    let selected: Bool
+
+    var body: some View {
+        Button { model.viewArchivedChat(chat) } label: {
+            HStack(spacing: 0) {
+                Text(chat.title)
+                    .font(Typo.body)
+                    .foregroundStyle(selected ? Palette.text : Palette.textFaint)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+            }
+            .padding(.leading, Rail.text + 12)
+            .padding(.trailing, Rail.inset)
+            .frame(minHeight: 28)
+        }
+        .buttonStyle(.row(selected: selected))
+        .contextMenu {
+            Button("Open") { model.viewArchivedChat(chat) }
+            Button("Unarchive") { model.unarchiveChat(chat) }
+        }
+        .help(Text(String(format: String(localized: "Read “%@” — it stays in Archives"), chat.title)))
     }
 }

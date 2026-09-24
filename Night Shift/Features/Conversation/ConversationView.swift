@@ -24,7 +24,9 @@ struct ConversationView: View {
 
     private var product: Product? { model.products.product(id: productID) }
 
-    private var chatID: UUID? { model.conversations.currentChatID(for: productID) }
+    private var chatID: UUID? { model.conversations.displayedChatID(for: productID) }
+    /// An archived chat opened from Archives or search: shown for reading, never written to.
+    private var archived: Chat? { model.conversations.viewedArchivedChat(for: productID) }
     private var entries: [ConversationEntry] {
         guard let chatID else { return [] }
         return model.visibleEntries(inChat: chatID)
@@ -88,7 +90,11 @@ struct ConversationView: View {
                 .safeAreaInset(edge: .top, spacing: 0) { findLayer(proxy) }
 
                 .safeAreaInset(edge: .bottom, spacing: 0) {
-                    Composer(productID: productID)
+                    if let archived {
+                        ArchivedChatBar(chat: archived)
+                    } else {
+                        Composer(productID: productID)
+                    }
                 }
 
                 if dropTargeted { fileDropOverlay }
@@ -97,11 +103,17 @@ struct ConversationView: View {
             // URL at all — the shot is still a promise on its way to the desktop — so that reading
             // saw an empty drop and refused it. Taking the item providers instead lets the PNG the
             // thumbnail really is carrying through.
-            .onDrop(of: [.fileURL, .image], isTargeted: $dropTargeted) { providers in
-                model.importDrop(providers, into: productID)
+            .onDrop(of: [.fileURL, .image], isTargeted: Binding(
+                get: { dropTargeted },
+                // An archived chat takes nothing: the files would wait in the live chat's draft,
+                // out of sight, and the overlay would promise a message that cannot be sent.
+                set: { dropTargeted = $0 && archived == nil })) { providers in
+                guard archived == nil else { return false }
+                return model.importDrop(providers, into: productID)
             }
             .animation(Motion.hover, value: dropTargeted)
             .environment(\.findMark, findMark)
+            .environment(\.chatReadOnly, archived != nil)
             .task(id: chatID) {
                 closeFind(focusComposer: false)
                 follow.rejoin()
@@ -399,5 +411,75 @@ private struct SessionStatusRow: View {
                     .fill(Palette.panel.opacity(0.75))
             }
         }
+    }
+}
+
+// MARK: - An archived chat, read only
+
+/// Takes the composer's place while an archived chat is open. The thread above stays readable;
+/// the one way to write in it again is to bring it back first.
+private struct ArchivedChatBar: View {
+    @Environment(AppModel.self) private var model
+    let chat: Chat
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "archivebox")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Palette.textSecondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("This chat is archived")
+                    .font(Typo.body.weight(.semibold))
+                    .foregroundStyle(Palette.text)
+                Text("You can read it. Unarchive it to write here again.")
+                    .font(Typo.caption)
+                    .foregroundStyle(Palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Button { model.unarchiveChat(chat) } label: {
+                Label { Text("Unarchive") } icon: { Image(systemName: "arrow.uturn.backward") }
+                    .labelStyle(.titleAndIcon)
+            }
+            .buttonStyle(.bulava(.primary))
+            .help(Text("Return this chat to the list and write in it again"))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: Metrics.radiusModal, style: .continuous)
+                .fill(Palette.panel.opacity(0.92))
+                .background(.ultraThinMaterial,
+                            in: RoundedRectangle(cornerRadius: Metrics.radiusModal, style: .continuous))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Metrics.radiusModal, style: .continuous)
+                .strokeBorder(Palette.lineStrong, lineWidth: 1)
+        )
+        .floatingShadow()
+        // The composer's own frame, so the thread above ends where it always does.
+        .padding(.horizontal, 30)
+        .padding(.top, 34)
+        .padding(.bottom, 18)
+        .frame(maxWidth: Metrics.readingWidth + 60)
+        .frame(maxWidth: .infinity)
+        .background(
+            LinearGradient(colors: [Palette.content.opacity(0), Palette.content],
+                           startPoint: .top, endPoint: .bottom)
+                .allowsHitTesting(false)
+        )
+    }
+}
+
+private struct ChatReadOnlyKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// True inside an archived chat opened for reading. Controls that would write to the chat,
+    /// answer for it or act on its work read this and stand down.
+    var chatReadOnly: Bool {
+        get { self[ChatReadOnlyKey.self] }
+        set { self[ChatReadOnlyKey.self] = newValue }
     }
 }

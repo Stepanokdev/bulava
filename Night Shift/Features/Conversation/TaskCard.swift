@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TaskCard: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.chatReadOnly) private var readOnly
     let task: BacklogTask
 
     @State private var evidence: Evidence?
@@ -277,7 +278,7 @@ struct TaskCard: View {
                             .labelStyle(.titleAndIcon)
                     }
                     .buttonStyle(.bulava(emphasis(action)))
-                    .disabled(action.disabledReason != nil)
+                    .disabled(readOnly || action.disabledReason != nil)
                     .help(action.disabledReason.map { Text($0) } ?? Text(action.titleKey))
 
                     .accessibilityIdentifier("task-action-\(action.id)")
