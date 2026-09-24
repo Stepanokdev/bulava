@@ -309,7 +309,7 @@ dispatch        the same, but the dispatch record belongs to the night dispatche
 
 A stage marked `skip_when_followup` in the definition is left out when the context stage has
 recognised the message as the next step of an open task. Every director message used to buy both
-positions and the comparison — sixty times in one week, for lines like «продовжуй» — while the
+positions and the comparison — sixty times in one week, for lines like "carry on" — while the
 worker already held the context and had `consult-codex` for the moment it wanted a second opinion.
 `SUPERVISOR_FOLLOWUP_PEERS=1` restores the old behaviour.
 
