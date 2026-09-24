@@ -2,6 +2,7 @@ import SwiftUI
 
 struct WorkItemCard: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.chatReadOnly) private var readOnly
     let item: WorkItem
 
     private var state: WorkState { model.state(of: item) }
@@ -163,6 +164,7 @@ struct WorkItemCard: View {
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
+                .disabled(readOnly)
 
                 CloseWorkButton(target: .item(item), running: state == .running || state == .paused)
 
@@ -183,9 +185,11 @@ struct WorkItemCard: View {
                         }
                         .menuStyle(.borderlessButton)
                         .fixedSize()
+                        .disabled(readOnly)
                     } else {
                         Button { model.beginAskingChangesOnItem(item) } label: { Text("Ask for changes") }
                             .buttonStyle(.bulava(.quiet))
+                            .disabled(readOnly)
                     }
                     Button { model.openItemReport(item) } label: {
                         Label {

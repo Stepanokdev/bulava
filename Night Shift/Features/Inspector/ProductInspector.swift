@@ -23,7 +23,7 @@ struct ProductInspector: View {
 
     private var product: Product? { model.selectedProduct }
     private var chatID: UUID? {
-        product.flatMap { model.conversations.currentChatID(for: $0.id) }
+        product.flatMap { model.conversations.displayedChatID(for: $0.id) }
     }
     private var chat: Chat? { chatID.flatMap { model.conversations.chat(id: $0) } }
 
@@ -392,7 +392,8 @@ struct ProductInspector: View {
                         .padding(.vertical, 9)
                     }
                     .buttonStyle(.row(radius: 0))
-                    .disabled(generating)
+                    // A report is one more turn in the chat's session; an archived chat is read only.
+                    .disabled(generating || chat.archived)
 
                     ForEach(Array(paths.reversed().enumerated()), id: \.element) { index, path in
                         Hairline()

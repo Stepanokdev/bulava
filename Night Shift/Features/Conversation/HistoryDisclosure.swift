@@ -74,6 +74,7 @@ struct HistoryDisclosure: View {
 
 private struct HistoryRow: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.chatReadOnly) private var readOnly
     let item: HistoryItem
 
     @State private var open = false
@@ -122,6 +123,7 @@ private struct HistoryRow: View {
                             }
                             Button { model.beginFollowUp(task) } label: { Text("Continue from this") }
                                 .buttonStyle(.bulava(.quiet))
+                                .disabled(readOnly)
                         }
                     }
                 }

@@ -156,7 +156,7 @@ struct RootView: View {
 
     private var navigationSubtitle: String {
         guard let productID = model.route.productID else { return "" }
-        return model.directPhase(for: model.conversations.currentChatID(for: productID)).label
+        return model.directPhase(for: model.conversations.displayedChatID(for: productID)).label
     }
 
     // MARK: - Toolbar

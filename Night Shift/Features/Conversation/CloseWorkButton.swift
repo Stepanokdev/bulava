@@ -2,6 +2,7 @@ import SwiftUI
 
 struct CloseWorkButton: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.chatReadOnly) private var readOnly
 
     enum Target {
         case task(BacklogTask)
@@ -39,6 +40,7 @@ struct CloseWorkButton: View {
             Text("Close it")
         }
         .buttonStyle(.bulava(.quiet))
+        .disabled(readOnly)
         .help(Text("Mark this finished and take it out of the conversation"))
         .confirmationDialog(Text(String(format: String(localized: "Close “%@”?"), title)),
                             isPresented: $asking, titleVisibility: .visible) {
