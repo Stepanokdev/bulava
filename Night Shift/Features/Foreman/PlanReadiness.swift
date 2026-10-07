@@ -137,7 +137,7 @@ nonisolated enum PlanReadiness {
                 out.append(ReadinessGap(
                     kind: .dirtyTree, resource: r.name,
                     what: String(format: String(localized: "“%@” has uncommitted changes in it"), r.name),
-                    plan: String(localized: "I will start from the current state and leave your changes alone"),
+                    plan: String(localized: "before starting I will ask what to do with them — nothing is committed without you"),
                     blocking: false))
             }
 
@@ -260,12 +260,6 @@ nonisolated enum PlanReadiness {
             out.append(d)
         }
         return (out, moved)
-    }
-
-    static func blockingReason(_ gaps: [ReadinessGap]) -> String {
-        let blocking = gaps.filter(\.blocking)
-        guard !blocking.isEmpty else { return "" }
-        return blocking.map { "\($0.what) — \($0.plan)" }.joined(separator: " · ")
     }
 
     static func acceptedContract(_ gaps: [ReadinessGap]) -> String {

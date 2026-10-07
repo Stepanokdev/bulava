@@ -1032,6 +1032,12 @@ nonisolated final class LocalizationSourceScanTests: XCTestCase {
         "Your agents worked %@ across %lld projects.",
         "create %lld INDEPENDENT variants — I will show them all in the gallery and filter nothing out in advance:",
         "take this as ONE job across %lld resources — one report at the end:",
+
+        // A label and then its number: no word in either language agrees with the count.
+        "Checks · %lld", "Revision %lld", "Saved · revision %lld", "back · at most %lld",
+        "Rounds back to the worker, at most: %lld", "Rounds back to the worker, at most: %lld (was %lld)",
+        "Sends back: %@ · rounds at most: %lld",
+        "More waiting for you: %lld.", "Decided: %lld of %lld",
     ]
 
     func testEveryCountingStringHasPluralFormsInBothLanguages() throws {
@@ -1070,6 +1076,36 @@ nonisolated final class LocalizationSourceScanTests: XCTestCase {
         let strings = ((raw as? [String: Any])?["strings"] as? [String: Any]) ?? [:]
         let stale = Self.countingStringsWithoutPlurals.filter { strings[$0] == nil }
         XCTAssertTrue(stale.isEmpty, "no longer in the catalog:\n" + stale.sorted().joined(separator: "\n"))
+    }
+
+    /// What macOS says when it asks for a permission comes from the app's Info.plist, not from
+    /// Localizable — and until 5 Oct it was English on every Mac, whatever its language.
+    func testEveryPermissionPromptIsTranslated() throws {
+        let project = try String(contentsOf: repoRoot.appendingPathComponent("Night Shift.xcodeproj/project.pbxproj"),
+                                 encoding: .utf8)
+        let plist = try String(contentsOf: repoRoot.appendingPathComponent("Night Shift/Info.plist"), encoding: .utf8)
+        let pattern = try NSRegularExpression(pattern: #"(NS\w+UsageDescription)"#)
+        var keys: Set<String> = []
+        for text in [project, plist] {
+            for match in pattern.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+                if let range = Range(match.range(at: 1), in: text) { keys.insert(String(text[range])) }
+            }
+        }
+        XCTAssertGreaterThan(keys.count, 3, "the scan found suspiciously few permission prompts")
+
+        let url = repoRoot.appendingPathComponent("Night Shift/InfoPlist.xcstrings")
+        let raw = try JSONSerialization.jsonObject(with: try Data(contentsOf: url))
+        let strings = ((raw as? [String: Any])?["strings"] as? [String: Any]) ?? [:]
+        var missing: [String] = []
+        for key in keys {
+            let localizations = (strings[key] as? [String: Any])?["localizations"] as? [String: Any] ?? [:]
+            for lang in ["uk", "ru"] {
+                let unit = (localizations[lang] as? [String: Any])?["stringUnit"] as? [String: Any]
+                if (unit?["value"] as? String ?? "").isEmpty { missing.append("\(key) [\(lang)]") }
+            }
+        }
+        XCTAssertTrue(missing.isEmpty, "permission prompts without a translation in InfoPlist.xcstrings:\n"
+                      + missing.sorted().joined(separator: "\n"))
     }
 }
 

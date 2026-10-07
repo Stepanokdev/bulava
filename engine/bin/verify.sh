@@ -81,7 +81,7 @@ run_step() {  # $1 criterion  $2 timeout ; then the command + args
 should_build() {  # $1 = ERE of buildable paths
   local re="$1" files
   [ -n "$BASE_SHA" ] && git -C "$PROJ" cat-file -e "$BASE_SHA" 2>/dev/null || return 0
-  files="$(git -C "$PROJ" diff "$BASE_SHA" --name-only 2>/dev/null; git -C "$PROJ" ls-files --others --exclude-standard 2>/dev/null)"
+  files="$(git -C "$PROJ" diff "$BASE_SHA" --name-only 2>/dev/null; worker_untracked "$PROJ" "$IDIR")"
   printf '%s\n' "$files" | grep -qiE "$re"
 }
 skip_build() {  # record a skipped build step (neutral, never blocks)
@@ -100,7 +100,7 @@ is_js_workspace(){ [ -f "$PROJ/pnpm-workspace.yaml" ] || jq -e '.workspaces // e
 pkg_has_script(){ jq -e --arg s "$2" '.scripts[$s] // empty' "$PROJ/$1/package.json" >/dev/null 2>&1; }
 changed_js_pkgs(){
   { [ -n "$BASE_SHA" ] && git -C "$PROJ" diff --name-only "$BASE_SHA" 2>/dev/null; \
-    git -C "$PROJ" ls-files --others --exclude-standard 2>/dev/null; } \
+    worker_untracked "$PROJ" "$IDIR"; } \
   | while IFS= read -r f; do
       [ -n "$f" ] || continue
       local d; d="$(dirname "$f")"
@@ -228,7 +228,7 @@ fi
 _shell_changed=""      # files changed since base (tracked + untracked), or "?" when unknown
 if [ -n "$BASE_SHA" ] && git -C "$PROJ" cat-file -e "$BASE_SHA" 2>/dev/null; then
   _shell_changed="$( { git -C "$PROJ" diff "$BASE_SHA" --name-only 2>/dev/null;
-                       git -C "$PROJ" ls-files --others --exclude-standard 2>/dev/null; } | sort -u)"
+                       worker_untracked "$PROJ" "$IDIR"; } | sort -u)"
 else
   _shell_changed="?"
 fi

@@ -34,7 +34,6 @@ extension AppModel {
 
         guard !hasLiveTrail(for: task) else { return }
 
-        thinkingProductIDs.insert(productID)
         let run = task
         Task { [weak self] in
 
@@ -42,7 +41,6 @@ extension AppModel {
                 WorkerTrail.read(task: run)
             }.value
             guard let self else { return }
-            self.thinkingProductIDs.remove(productID)
 
             guard !trail.isEmpty else {
 

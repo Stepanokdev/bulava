@@ -184,6 +184,7 @@
 				CEBE1DFC30102DFF003C4304 /* Resources */,
 				ABCDEF00000000000000SPF3 /* Embed Frameworks */,
 				ABCDEF00000000000000ENG0 /* Bundle the work engine */,
+				ABCDEF00000000000000BLD0 /* Stamp the build number */,
 			);
 			buildRules = (
 			);
@@ -276,6 +277,22 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		ABCDEF00000000000000BLD0 /* Stamp the build number */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "Stamp the build number";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "sh \"$SRCROOT/scripts/stamp-build-number.sh\"\n";
+		};
 		ABCDEF00000000000000ENG0 /* Bundle the work engine */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -556,6 +573,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				BULAVA_CHANNEL = dev;
 				CODE_SIGN_ENTITLEMENTS = "Night Shift/Bulava.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -572,8 +590,9 @@
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Night Shift/Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = Bulava;
-				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Bulava opens Terminal for you when you ask to watch a run from the console side.";
+				INFOPLIST_KEY_CFBundleDisplayName = "Bulava Dev";
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Bulava opens Terminal when you ask to watch a run from the console side, and reads new letters in Mail for automations you set up to start on a letter.";
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Bulava starts an automation when a meeting in your calendar ends, if you set one up to.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Bulava listens so you can describe work out loud instead of typing it.";
 				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "Bulava takes the before/after screenshots your run reports are made of. A worker cannot take them itself, so Bulava does it on its behalf.";
@@ -583,8 +602,8 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 1.8.5;
-				PRODUCT_BUNDLE_IDENTIFIER = "stepanok.com.Night-Shift";
+				MARKETING_VERSION = 1.12;
+				PRODUCT_BUNDLE_IDENTIFIER = "stepanok.com.Night-Shift.dev";
 				PRODUCT_NAME = Bulava;
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -601,6 +620,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				BULAVA_CHANNEL = production;
 				CODE_SIGN_ENTITLEMENTS = "Night Shift/Bulava.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -618,7 +638,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Night Shift/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Bulava;
-				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Bulava opens Terminal for you when you ask to watch a run from the console side.";
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Bulava opens Terminal when you ask to watch a run from the console side, and reads new letters in Mail for automations you set up to start on a letter.";
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Bulava starts an automation when a meeting in your calendar ends, if you set one up to.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Bulava listens so you can describe work out loud instead of typing it.";
 				INFOPLIST_KEY_NSScreenCaptureUsageDescription = "Bulava takes the before/after screenshots your run reports are made of. A worker cannot take them itself, so Bulava does it on its behalf.";
@@ -628,7 +649,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 1.8.5;
+				MARKETING_VERSION = 1.12;
 				PRODUCT_BUNDLE_IDENTIFIER = "stepanok.com.Night-Shift";
 				PRODUCT_NAME = Bulava;
 				REGISTER_APP_GROUPS = YES;

@@ -11,6 +11,17 @@ enum Route: Hashable {
     /// product, and a window that has to be summoned is not where anyone looks.
     case skills
 
+    /// Every automation, and what each of them has been doing.
+    case automations
+
+    case automation(UUID)
+
+    /// The pipelines a message can go through: the built-in ones and his own.
+    case pipelines
+
+    /// One pipeline open for reading or editing.
+    case pipeline(String)
+
     case preflight
 }
 

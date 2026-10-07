@@ -353,125 +353,162 @@ nonisolated final class FindInThisChatTests: XCTestCase {
 
     // MARK: - The phrase, marked where it stands inside the agent's prose
 
+    private func matches(_ markdown: String, query: String, active: Int? = nil) -> [ProseMatch] {
+        let find = ProseFind(query: query,
+                             displayed: ConversationFind.displayedText(ofMarkdown: markdown),
+                             entryID: UUID(), blockID: "m1", activeOccurrence: active)
+        return MarkdownProse.matches(in: ProseDocument.make(markdown), find: find).flatMap { $0 }
+    }
+
+    private func text(_ markdown: String) throws -> ProseTextSegment {
+        let parts = ProseDocument.make(markdown).parts
+        guard parts.count == 1, case .text(let segment) = parts[0].segment else {
+            XCTFail("expected one text part for:\n\(markdown)")
+            throw CancellationError()
+        }
+        return segment
+    }
+
     /// The whole point of this pass. Before it, an answer holding the phrase was outlined from
     /// its first line to its last, and the reader had to find the phrase by eye all over again.
     @MainActor
     func testTheAgentsProseMarksThePhraseAndNothingElse() throws {
         let paragraph = "панель у safe-area стрічки — довів це тестом"
-        let marked = try XCTUnwrap(ProseHighlight.attributed(markdown: paragraph, leaf: .paragraph))
-        let painted = ProseHighlight.marking(marked, query: "довів", activeOccurrence: 0)
-
-        XCTAssertEqual(String(painted.characters), paragraph,
+        let segment = try text(paragraph)
+        XCTAssertEqual(segment.attributed.string, paragraph,
                        "not one character of the paragraph may change")
-        let coloured = painted.runs.filter { $0.backgroundColor != nil }
-        XCTAssertEqual(coloured.count, 1, "exactly the phrase carries a background")
-        XCTAssertEqual(coloured.map { String(painted[$0.range].characters) }, ["довів"])
-        XCTAssertEqual(coloured.first?.backgroundColor, Palette.accent)
+        let found = matches(paragraph, query: "довів", active: 0)
+        XCTAssertEqual(found.map { (segment.attributed.string as NSString).substring(with: $0.range) },
+                       ["довів"])
+        XCTAssertEqual(found.map(\.isActive), [true])
     }
 
     /// Safari marks every occurrence and the one you are on more strongly. A one-letter query is
     /// the case that used to paint half the thread: many soft marks are right, two strong ones
     /// never are.
     @MainActor
-    func testOnlyOneOccurrenceIsTheOneBeingRead() throws {
-        let marked = try XCTUnwrap(ProseHighlight.attributed(markdown: "а, а, а, а", leaf: .paragraph))
-        let painted = ProseHighlight.marking(marked, query: "а", activeOccurrence: 2)
-
-        let backgrounds = painted.runs.compactMap(\.backgroundColor)
-        XCTAssertEqual(backgrounds.filter { $0 == Palette.accent }.count, 1)
-        XCTAssertEqual(backgrounds.filter { $0 == Palette.accentSoft }.count, 3)
+    func testOnlyOneOccurrenceIsTheOneBeingRead() {
+        let found = matches("а, а, а, а", query: "а", active: 2)
+        XCTAssertEqual(found.count, 4)
+        XCTAssertEqual(found.filter(\.isActive).map(\.occurrence), [2])
     }
 
     @MainActor
-    func testNoneIsTheActiveOneWhenTheReaderIsStandingElsewhere() throws {
-        let marked = try XCTUnwrap(ProseHighlight.attributed(markdown: "довів, довів", leaf: .paragraph))
-        let painted = ProseHighlight.marking(marked, query: "довів", activeOccurrence: nil)
-        XCTAssertTrue(painted.runs.compactMap(\.backgroundColor).allSatisfy { $0 == Palette.accentSoft })
+    func testNoneIsTheActiveOneWhenTheReaderIsStandingElsewhere() {
+        XCTAssertFalse(matches("довів, довів", query: "довів", active: nil).contains(where: \.isActive))
     }
 
-    /// Redrawing the paragraph must not cost it its formatting — otherwise searching a word
-    /// silently unbolds the sentence it is in.
+    /// Drawing the paragraph as text must not cost it its formatting.
     @MainActor
-    func testRedrawingAParagraphKeepsItsBoldCodeAndLinks() throws {
-        let source = "**жирне**, `код` і [посилання](https://x.dev) разом"
-        let marked = try XCTUnwrap(ProseHighlight.attributed(markdown: source, leaf: .paragraph))
-
-        XCTAssertEqual(String(marked.characters), "жирне, код і посилання разом",
+    func testTheTextKeepsItsBoldCodeAndLinks() throws {
+        let segment = try text("**жирне**, `код` і [посилання](https://x.dev) разом")
+        let string = segment.attributed.string as NSString
+        XCTAssertEqual(segment.attributed.string, "жирне, код і посилання разом",
                        "the syntax goes, the words stay")
-        func run(containing needle: String) -> AttributedString.Runs.Element? {
-            marked.runs.first { String(marked[$0.range].characters).contains(needle) }
+        func attributes(of needle: String) -> [NSAttributedString.Key: Any] {
+            segment.attributed.attributes(at: string.range(of: needle).location, effectiveRange: nil)
         }
-        XCTAssertEqual(run(containing: "жирне")?.font, ProseStyle.body.weight(.semibold))
-        XCTAssertEqual(run(containing: "код")?.font, ProseStyle.inlineCode)
-        XCTAssertEqual(run(containing: "код")?.backgroundColor, Palette.panelMuted)
-        XCTAssertEqual(run(containing: "посилання")?.link?.absoluteString, "https://x.dev")
-        XCTAssertEqual(run(containing: "посилання")?.foregroundColor, Palette.accent)
+        let body = ProseInk.font(size: ProseStyle.bodySize)
+        let bold = try XCTUnwrap(attributes(of: "жирне")[.font] as? NSFont)
+        XCTAssertEqual(bold, ProseInk.font(size: ProseStyle.bodySize, weight: .semibold))
+        XCTAssertNotEqual(bold, body, "bold is drawn heavier")
+        let code = try XCTUnwrap(attributes(of: "код")[.font] as? NSFont)
+        XCTAssertTrue(code.isFixedPitch, "inline code is monospaced")
+        XCTAssertEqual(code.pointSize, ProseStyle.drawn(ProseStyle.inlineCodeSize))
+        XCTAssertEqual(attributes(of: "код")[.backgroundColor] as? NSColor, ProseInk.panelMuted)
+        XCTAssertEqual((attributes(of: "посилання")[.link] as? URL)?.absoluteString, "https://x.dev")
+        XCTAssertEqual(attributes(of: "посилання")[.foregroundColor] as? NSColor, ProseInk.accent)
     }
 
     @MainActor
-    func testAHeadingIsRedrawnWithoutItsHashes() throws {
-        let marked = try XCTUnwrap(
-            ProseHighlight.attributed(markdown: "## Чого я НЕ довів", leaf: .heading(level: 2)))
-        XCTAssertEqual(String(marked.characters), "Чого я НЕ довів")
+    func testAHeadingIsDrawnWithoutItsHashes() throws {
+        XCTAssertEqual(try text("## Чого я НЕ довів").attributed.string, "Чого я НЕ довів")
     }
 
     @MainActor
     func testACodeBlockIsMarkedVerbatim() throws {
         let code = "let довів = true\nprint(довів)"
-        let marked = try XCTUnwrap(ProseHighlight.attributed(markdown: code, leaf: .codeBlock))
-        XCTAssertEqual(String(marked.characters), code, "code is not markdown and is not reparsed")
+        let segment = try text("```swift\n\(code)\n```")
+        XCTAssertEqual(segment.attributed.string, code, "code is not markdown and is not reparsed")
+        XCTAssertEqual(matches("```swift\n\(code)\n```", query: "довів").count, 2)
     }
 
-    /// A paragraph carrying an inline image cannot be redrawn as text — the image would simply
-    /// vanish. It keeps MarkdownUI's own drawing and marks nothing, which is the honest answer.
+    /// A paragraph carrying a picture stays in the run: the picture is drawn where it stands and
+    /// is not a word, so the words around it are found and counted as before.
     @MainActor
-    func testAParagraphWithAnInlineImageIsLeftToTheLibrary() {
-        XCTAssertNil(ProseHighlight.attributed(markdown: "перед ![shot](a.png) після довів",
-                                               leaf: .paragraph))
+    func testAParagraphWithAPictureStaysInTheText() {
+        let parts = ProseDocument.make("до\n\nперед ![shot](a.png) після довів\n\nпісля").parts
+        XCTAssertEqual(parts.count, 1)
+        XCTAssertEqual(matches("до\n\nперед ![shot](a.png) після довів\n\nпісля", query: "довів").count, 1)
+        XCTAssertEqual(matches("до\n\nперед ![shot](a.png) після довів\n\nпісля", query: "shot").count, 0,
+                       "a picture's name is not one of the answer's words")
     }
 
-    // MARK: - Which of the answer's results a paragraph is holding
+    /// Results are remembered per message, and a message that changes — the answer still
+    /// streaming — is read again: never a stale count, never the whole thread re-read for it.
+    func testRememberedResultsFollowAnAnswerThatGrows() {
+        let product = UUID()
+        let still = ConversationEntry(productID: product, kind: .foreman, text: "довів раз")
+        var growing = ConversationEntry(productID: product, kind: .foreman, text: "ще нічого")
+        XCTAssertEqual(ConversationFind.places(in: [still, growing], query: "довів").count, 1)
 
-    private func prose(_ markdown: String, query: String, active: Int? = nil) -> ProseFind {
-        ProseFind(query: query,
-                  displayed: ConversationFind.displayedText(ofMarkdown: markdown),
-                  entryID: UUID(), blockID: "m1", activeOccurrence: active)
+        growing.text = "ще нічого, а тепер довів"
+        XCTAssertEqual(ConversationFind.places(in: [still, growing], query: "довів").count, 2,
+                       "the grown answer is read again")
+        growing.text += " і знову довів"
+        XCTAssertEqual(ConversationFind.places(in: [still, growing], query: "довів").map(\.entryID),
+                       [still.id, growing.id, growing.id])
+        XCTAssertEqual(ConversationFind.places(in: [still, growing], query: "знову").count, 1,
+                       "another phrase is its own question")
+        XCTAssertEqual(ConversationFind.places(in: [still], query: "довів",
+                                               explained: [still.id: "довів у поясненні"]).count, 2,
+                       "an explanation arriving is a change too")
     }
 
-    func testAParagraphKnowsHowManyResultsCameBeforeIt() {
-        let answer = """
-        довів перший раз
+    // MARK: - Which of the answer's results a mark is
 
-        нічого тут
-
-        довів другий раз, і довів третій
-        """
-        let find = prose(answer, query: "довів")
-        XCTAssertEqual(find.occurrencesBefore(leaf: "довів перший раз"), 0)
-        XCTAssertEqual(find.occurrencesBefore(leaf: "довів другий раз, і довів третій"), 1)
-    }
-
-    /// Two paragraphs word for word the same, with a different number of results before each:
-    /// this paragraph cannot tell which of them it is, and says so rather than guessing. It then
-    /// marks its matches softly and claims none of them is the one being read.
-    func testAParagraphThatCannotPlaceItselfSaysSo() {
+    /// Every occurrence is numbered across the whole answer, the way the index numbers them —
+    /// so the same sentence twice is no longer a puzzle.
+    func testTheSameParagraphTwiceIsNumberedInOrder() {
         let answer = """
         довів
 
-        те саме речення
+        те саме речення довів
 
         довів
 
-        те саме речення
+        те саме речення довів
         """
-        XCTAssertNil(prose(answer, query: "довів").occurrencesBefore(leaf: "те саме речення"))
+        let found = matches(answer, query: "довів", active: 3)
+        XCTAssertEqual(found.map(\.occurrence), [0, 1, 2, 3])
+        XCTAssertEqual(found.filter(\.isActive).map(\.occurrence), [3])
+        XCTAssertEqual(found.count, ConversationFind.mentions(
+            in: ConversationFind.displayedText(ofMarkdown: answer), query: "довів"))
     }
 
-    /// The same paragraph twice with nothing between them that matches IS placeable — both
-    /// copies stand after the same number of results, so the answer is unambiguous.
-    func testRepeatedParagraphsWithNoResultsBetweenThemStillPlaceThemselves() {
-        let answer = "те саме речення\n\nте саме речення"
-        XCTAssertEqual(prose(answer, query: "довів").occurrencesBefore(leaf: "те саме речення"), 0)
+    /// A table is part of the text, and the numbering runs through it: its occurrence is counted
+    /// where it stands, and the text after it carries on from there.
+    func testNumberingRunsThroughATable() {
+        let answer = """
+        довів раз
+
+        | A | B |
+        |---|---|
+        | довів | x |
+
+        довів три
+        """
+        let document = ProseDocument.make(answer)
+        XCTAssertEqual(document.parts.count, 1)
+        let found = MarkdownProse.matches(in: document,
+                                          find: ProseFind(query: "довів", displayed: "",
+                                                          entryID: UUID(), activeOccurrence: 2))
+        XCTAssertEqual(found.map { $0.map(\.occurrence) }, [[0, 1, 2]])
+        XCTAssertEqual(found.first?.map(\.isActive), [false, false, true])
+        guard case .text(let segment)? = document.parts.first?.segment else { return XCTFail("no text") }
+        let string = segment.attributed.string as NSString
+        XCTAssertEqual(found.first?.map { string.substring(with: $0.range) },
+                       ["довів", "довів", "довів"], "the one in the cell is marked on the cell's word")
     }
 
     // MARK: - A card Find opened, and the reader closing it again

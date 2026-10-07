@@ -21,12 +21,40 @@
 
 TEST_TMUX_DIR=""
 
+# The run a test started and never stopped, ended along with its server.
+#
+# A watchdog leaves only when its instance directory goes, and a test that forgets `night-shift
+# stop` — or whose `rm -rf "$TMP"` never runs — leaves it polling a dead tmux every 45 seconds,
+# forever. Seven of them were found alive eighteen hours after a suite run, and because their
+# command line read `…/engine/bin/watchdog.sh`, Bulava refused to install its engine for them.
+#
+# Only a state directory this test made is touched: it has to sit in a temporary directory, and the
+# pid has to be a watchdog of an instance inside it. The director's own runs live elsewhere.
+test_stop_watchdogs() {
+  local state="${SUPERVISOR_STATE_DIR:-}" real tmp pidfile pid slug cmd
+  [ -n "$state" ] && [ -d "$state/instances" ] || return 0
+  real="$(cd "$state" 2>/dev/null && pwd -P)" || return 0
+  tmp="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)"
+  case "$real/" in
+    "$tmp"/*|/private/tmp/*|/tmp/*|/private/var/folders/*) ;;
+    *) return 0 ;;
+  esac
+  for pidfile in "$real"/instances/*/watchdog.pid; do
+    [ -f "$pidfile" ] || continue
+    pid="$(tr -dc '0-9' < "$pidfile" 2>/dev/null)"; [ -n "$pid" ] || continue
+    slug="$(basename "$(dirname "$pidfile")")"
+    cmd="$(ps -p "$pid" -o command= 2>/dev/null)" || continue
+    case "$cmd" in *watchdog.sh*"$slug"*|*watchdog*"$slug"*) kill "$pid" 2>/dev/null || true ;; esac
+  done
+}
+
 # Remove the server — and only if it is definitely ours.
 #
 # What is checked is not the intent but the fact: does TMUX_TMPDIR point at the directory we
 # isolated. Called before `tmux_isolate`, with an empty or substituted TMUX_TMPDIR, it silently
 # does nothing — which is exactly how the trap stops being a trap.
 tmux_cleanup() {
+  test_stop_watchdogs
   [ -n "${TEST_TMUX_DIR:-}" ] || return 0
   [ "${TMUX_TMPDIR:-}" = "$TEST_TMUX_DIR" ] || return 0
   # …and no inherited `$TMUX`. It outranks TMUX_TMPDIR: the client goes to the server written in
@@ -44,7 +72,18 @@ tmux_isolate() {
   unset TMUX
   export TMUX_TMPDIR="$TEST_TMUX_DIR"
   export TEST_TMUX_DIR
-  trap 'tmux_cleanup' EXIT INT TERM
+  # A test that set its own EXIT trap first — `cleanup() { tmux_cleanup; rm -rf "$TMP"; }` — keeps
+  # it. This used to REPLACE it, so the fixture was never deleted, the instance directory outlived
+  # the test, and so did the watchdog that waits for that directory to go.
+  local previous=""
+  eval "set -- $(trap -p EXIT)"
+  [ "${1:-}" = trap ] && previous="${3:-}"
+  case "$previous" in
+    ""|tmux_cleanup) trap 'tmux_cleanup' EXIT ;;
+    "tmux_cleanup; "*) ;;   # isolated twice: already chained
+    *) trap "tmux_cleanup; $previous" EXIT ;;
+  esac
+  trap 'tmux_cleanup' INT TERM
 }
 
 # Whether we are isolated right now — something a test can check instead of guessing.

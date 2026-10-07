@@ -4,7 +4,13 @@ import Observation
 @MainActor
 @Observable
 final class ConversationStore {
-    private(set) var entries: [ConversationEntry] = []
+    private(set) var entries: [ConversationEntry] = [] {
+        didSet { inChatCache.removeAll(keepingCapacity: true) }
+    }
+    /// `entries(inChat:)` is asked for by every row that wants to know where it stands — whether
+    /// it is the last thing he said, whether it can be taken back — and each time it filtered and
+    /// sorted the whole history of every chat. Kept until the next change.
+    @ObservationIgnored private var inChatCache: [UUID: [ConversationEntry]] = [:]
     private(set) var chats: [Chat] = []
 
     private let file: JSONFile<[ConversationEntry]>
@@ -20,7 +26,7 @@ final class ConversationStore {
         heal()
     }
 
-    private func persist() { file.save(entries) }
+    private func persist() { file.saveSoon(entries) }
 
     private func persistChats() {
         chats = Self.merge(memory: chats, stored: chatFile.load() ?? [])
@@ -65,7 +71,9 @@ final class ConversationStore {
 
     private func pruneEmptyChats() {
         let used = Set(entries.compactMap(\.chatID))
-        let empty = chats.filter { !used.contains($0.id) }
+        // A new chat he has already set to work in a copy, or to go through a pipeline, carries a
+        // choice of his: kept, so the first message still goes where and how he said.
+        let empty = chats.filter { !used.contains($0.id) && !$0.wantsCopy && $0.pipelineID == nil }
         guard !empty.isEmpty else { return }
 
         chats = Self.merge(memory: chats, stored: chatFile.load() ?? [],
@@ -75,8 +83,15 @@ final class ConversationStore {
 
     // MARK: - Chats
 
+    /// His conversations in this product. Automation runs are not among them: they have their
+    /// own screen, and anything that asks what is WAITING passes `includingAutomationRuns`.
     func chats(for productID: UUID) -> [Chat] {
-        chats.filter { $0.productID == productID && !$0.archived }
+        chats(for: productID, includingAutomationRuns: false)
+    }
+
+    func chats(for productID: UUID, includingAutomationRuns: Bool) -> [Chat] {
+        chats.filter { $0.productID == productID && !$0.archived
+                       && (includingAutomationRuns || !$0.isAutomationRun) }
             .sorted { a, b in
                 if a.pinned != b.pinned { return a.pinned }
                 return a.createdAt > b.createdAt
@@ -84,7 +99,77 @@ final class ConversationStore {
     }
 
     func archivedChats(for productID: UUID) -> [Chat] {
-        chats.filter { $0.productID == productID && $0.archived }.sorted { $0.updatedAt > $1.updatedAt }
+        chats.filter { $0.productID == productID && $0.archived && !$0.isAutomationRun }
+            .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    /// A new conversation for one automation run. Unlike `newChat` it does not become the chat the
+    /// window has open: a run starting at night must not take the place of the one he left there.
+    /// Made under an id the run chose before anything else, so a restart in the middle finds the
+    /// chat it already made instead of making a second one.
+    @discardableResult
+    func newAutomationChat(id: UUID, for productID: UUID, runID: UUID, copyID: UUID, title: String) -> Chat {
+        if let existing = chat(id: id) { return existing }
+        var chat = Chat(id: id, productID: productID, title: title)
+        chat.automationRunID = runID
+        chat.workCopyID = copyID
+        chat.wantsCopy = true
+        chats.append(chat)
+        persistChats()
+        return chat
+    }
+
+    /// Opening a product means his conversations. A run's chat stays open only while he is
+    /// looking at it from its automation: coming back to the product through the sidebar must not
+    /// land the next thing he types in last night's run.
+    func leaveAutomationChat(for productID: UUID) {
+        guard let id = openChatID[productID], chat(id: id)?.isAutomationRun == true else { return }
+        openChatID[productID] = chats(for: productID).first?.id
+    }
+
+    /// A run's conversation when its automation is deleted: an ordinary chat in the archive.
+    func releaseAutomationChat(_ chatID: UUID) {
+        guard let i = chats.firstIndex(where: { $0.id == chatID }) else { return }
+        chats[i].automationRunID = nil
+        chats[i].archived = true
+        persistChats()
+    }
+
+    func setWorkCopy(_ copyID: UUID?, for chatID: UUID) {
+        guard let i = chats.firstIndex(where: { $0.id == chatID }), chats[i].workCopyID != copyID else { return }
+        chats[i].workCopyID = copyID
+        chats[i].updatedAt = max(chats[i].updatedAt, Date())
+        persistChats()
+    }
+
+    /// Put back which run a conversation is, which copy it works in, and where its session lives —
+    /// each only where given, all in one write. Nothing is written when the chat already agrees.
+    func relinkCopy(_ chatID: UUID, runID: UUID?, copyID: UUID, session: ChatSessionBinding?) {
+        guard let i = chats.firstIndex(where: { $0.id == chatID }) else { return }
+        var chat = chats[i]
+        if let runID, chat.automationRunID == nil { chat.automationRunID = runID }
+        chat.workCopyID = copyID
+        chat.wantsCopy = true
+        if let session { chat.session = session }
+        guard chat != chats[i] else { return }
+        chats[i] = chat
+        persistChats()
+    }
+
+    func setWantsCopy(_ wants: Bool, for chatID: UUID) {
+        guard let i = chats.firstIndex(where: { $0.id == chatID }), chats[i].wantsCopy != wants else { return }
+        chats[i].wantsCopy = wants
+        persistChats()
+    }
+
+    /// Forget where a conversation ran, keeping which project it belongs to: its next message
+    /// starts a session wherever it works now. Used when its copy has gone — a session belongs to
+    /// the folder it was started in.
+    func clearSession(for chatID: UUID, primaryProjectID: UUID?, projectPath: String) {
+        guard let i = chats.firstIndex(where: { $0.id == chatID }) else { return }
+        chats[i].session = ChatSessionBinding(primaryProjectID: primaryProjectID, projectPath: projectPath)
+        chats[i].updatedAt = max(chats[i].updatedAt, Date())
+        persistChats()
     }
 
     func chat(id: UUID) -> Chat? { chats.first { $0.id == id } }
@@ -142,6 +227,20 @@ final class ConversationStore {
         return chat
     }
 
+    /// A chat started on another device, under the id that device chose.
+    ///
+    /// Unlike `newChat` this leaves `openChatID` alone: a phone opening a chat must not move the
+    /// chat the Mac has on screen, or the next message typed at the desk lands in the phone's
+    /// thread. And the id is the phone's, so asking twice — a reply lost on the way back — finds
+    /// the chat the first request made instead of making a second one.
+    @discardableResult
+    func adoptChat(id: UUID, for productID: UUID) -> Chat {
+        if let existing = chat(id: id) { return existing }
+        let chat = Chat(id: id, productID: productID, title: String(localized: "New chat"))
+        chats.append(chat)
+        return chat
+    }
+
     private func titleIfNeeded(_ chatID: UUID, from text: String) {
         guard let i = chats.firstIndex(where: { $0.id == chatID }), chats[i].firstMessage.isEmpty,
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -162,6 +261,18 @@ final class ConversationStore {
         if !archived, viewingArchivedID[chats[i].productID] == chatID {
             viewingArchivedID[chats[i].productID] = nil
         }
+        persistChats()
+    }
+
+    func setRunChoices(_ choices: RunChoices?, for chatID: UUID) {
+        guard let i = chats.firstIndex(where: { $0.id == chatID }), chats[i].run != choices else { return }
+        chats[i].run = choices
+        persistChats()
+    }
+
+    func setPipeline(_ pipelineID: String?, for chatID: UUID) {
+        guard let i = chats.firstIndex(where: { $0.id == chatID }), chats[i].pipelineID != pipelineID else { return }
+        chats[i].pipelineID = pipelineID
         persistChats()
     }
 
@@ -238,16 +349,16 @@ final class ConversationStore {
         entries.last { $0.taskID == taskID && $0.kind == .foreman && !$0.text.isEmpty }?.text
     }
 
-    func openQuestion(for productID: UUID, isFinished: (UUID) -> Bool) -> ConversationEntry? {
-        live(for: productID, isFinished: isFinished).last { $0.kind == .question }
-    }
-
     func entries(inChat chatID: UUID) -> [ConversationEntry] {
-        entries.enumerated()
+        let all = entries   // read first: this is what makes a view that asked depend on it
+        if let cached = inChatCache[chatID] { return cached }
+        let mine = all.enumerated()
             .filter { $0.element.chatID == chatID }
             .sorted { $0.element.at == $1.element.at ? $0.offset < $1.offset
                                                      : $0.element.at < $1.element.at }
             .map(\.element)
+        inChatCache[chatID] = mine
+        return mine
     }
 
     // MARK: - Writes
@@ -263,8 +374,9 @@ final class ConversationStore {
 
     @discardableResult
     func appendUser(_ text: String, productID: UUID, chatID: UUID? = nil,
-                    attachments: [Attachment] = [], taskID: UUID? = nil) -> ConversationEntry {
-        var e = ConversationEntry(productID: productID, kind: .user, text: text,
+                    attachments: [Attachment] = [], taskID: UUID? = nil,
+                    id: UUID = UUID()) -> ConversationEntry {
+        var e = ConversationEntry(id: id, productID: productID, kind: .user, text: text,
                                   taskID: taskID, attachments: attachments)
         e.chatID = chatID
         append(e)
@@ -515,41 +627,9 @@ final class ConversationStore {
         if entries.count != before { persist() }
     }
 
-    @discardableResult
-    func resolveQuestion(taskID: UUID, answered: Int? = nil) -> Bool {
-        guard let answered,
-              let i = entries.firstIndex(where: { $0.kind == .question && $0.taskID == taskID }),
-              var record = entries[i].decision, record.items.count > 1,
-              answered >= 1, answered <= record.items.count else {
-            let before = entries.count
-            entries.removeAll { $0.kind == .question && $0.taskID == taskID }
-            if entries.count != before { persist() }
-            return false
-        }
-        record.items.remove(at: answered - 1)
-        entries[i].decision = record
-
-        if record.items.count == 1 { entries[i].text = record.items[0].question }
-        persist()
-        return true
-    }
-
     func answers(taskID: UUID, since: Date) -> [String] {
         entries.filter { $0.kind == .user && $0.taskID == taskID && $0.at >= since }
             .map(\.text).filter { !$0.isEmpty }
-    }
-
-    func postReport(_ title: String, productID: UUID, taskID: UUID) {
-        guard lastReportAt(taskID: taskID) == nil else { return }
-        append(ConversationEntry(productID: productID, kind: .report, text: title, taskID: taskID))
-    }
-
-    func lastReportAt(taskID: UUID) -> Date? {
-        entries.last { $0.kind == .report && $0.taskID == taskID }?.at
-    }
-
-    func postUpdatedReport(_ title: String, productID: UUID, taskID: UUID) {
-        append(ConversationEntry(productID: productID, kind: .report, text: title, taskID: taskID))
     }
 
     func postEvent(_ text: String, productID: UUID,
@@ -574,14 +654,6 @@ final class ConversationStore {
         var entry = ConversationEntry(productID: productID, kind: .event, text: text, tone: tone)
         entry.chatID = chatID
         append(entry)
-    }
-
-    func hasOpenQuestion(taskID: UUID) -> Bool {
-        entries.contains { $0.kind == .question && $0.taskID == taskID }
-    }
-
-    func postDecision(_ text: String, productID: UUID, taskID: UUID? = nil) {
-        append(ConversationEntry(productID: productID, kind: .decision, text: text, taskID: taskID))
     }
 
     func detach(taskID: UUID, keepingIn productID: UUID) {

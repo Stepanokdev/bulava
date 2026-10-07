@@ -135,6 +135,11 @@ nonisolated struct PendingUserQuestion: Sendable, Equatable {
 
     var terminalReview: Bool = false
 
+    /// The keys that give each answer, for a screen whose answers are keys rather than a list to
+    /// move through: "Press Enter to continue", "(y/n)", "Esc to cancel". Empty for a list, which is
+    /// answered by moving the selection (`terminalOptionIndices`).
+    var terminalKeys: [String: [String]] = [:]
+
     var headline: String {
         if let summary, !summary.isEmpty { return summary }
         return questions.first?.question ?? "A worker needs your decision."
@@ -235,7 +240,6 @@ nonisolated struct SupervisorInstance: Sendable, Identifiable, Equatable {
 
     var reviewProgress: ReviewProgress?
 
-    var reviewVerdict: ReviewVerdict?
     var auditState: String?
     var reviewActive: Bool = false
     var reviewStage: String? = nil
@@ -278,6 +282,13 @@ nonisolated struct SupervisorInstance: Sendable, Identifiable, Equatable {
     /// Envelopes in the queue counted as files, including any this build cannot parse. The parsed
     /// list is what the app shows; this is what says the directory is not empty.
     var pendingFiles: Int = 0
+    /// Work the run took on and has not finished, by the engine's own markers (`instance_owes_work`):
+    /// a usage window it is parked on, a review or a resume it owes, a dispatch held for Codex,
+    /// messages accepted and not delivered. A run that owes work and has no watchdog is one nothing
+    /// will bring back unless Bulava does (`AppModel.reviveDeadRuns`).
+    var owesWork: Bool = false
+    /// The director stopped this run. Nothing brings it back but him.
+    var directorStopped: Bool = false
     /// Which peer is reading this message right now, if either is.
     var peerClaude: PeerWork?
     var peerCodex: PeerWork?
@@ -301,12 +312,19 @@ nonisolated struct SupervisorInstance: Sendable, Identifiable, Equatable {
 
     var offlineSince: Date?
 
-    var injectFailure: String?
-    var injectFailureDispatchID: String?
-
     var dispatch: DispatchRecord?
 
     var finishedDispatches: [DispatchRecord] = []
+
+    /// Claude Code is showing one of its permission dialogs, since this moment
+    /// (`permission-wait.json`, written by `hooks/permission-gate.sh`). The pane is read for it, so
+    /// it can be answered from the Mac or the phone instead of waiting in a pane nobody watches.
+    var permissionWaitSince: Date?
+
+    /// Claude is asking on a screen of its own while the run starts, since this moment
+    /// (`screen-wait.json`, written by the engine's `await_handshake`). The start waits for an answer
+    /// instead of being rolled back, so the screen is read and put in front of the person.
+    var screenWaitSince: Date?
 
     var id: String { slug }
 
@@ -386,6 +404,11 @@ nonisolated struct SupervisorInstance: Sendable, Identifiable, Equatable {
     /// Long enough for a dispatched run to get its watchdog up.
     static let startupGrace: TimeInterval = 60
 
+    /// Started too recently for a missing watchdog to mean anything.
+    var inStartupGrace: Bool {
+        startedAt.map { Date().timeIntervalSince($0) < Self.startupGrace } ?? false
+    }
+
     /// Twice the engine's stall-park window, so a run this call gives up on is one the engine had
     /// already given up on and then some.
     static let abandonedAfter: TimeInterval = 30 * 60
@@ -428,6 +451,12 @@ nonisolated struct SupervisorInstance: Sendable, Identifiable, Equatable {
     }
 
     var healthy: Bool { watchdogAlive }
+
+    /// Nobody is watching it and it still owes work: its watchdog died with its session, and it
+    /// will stay parked for ever unless someone brings it back.
+    var needsRevival: Bool {
+        !watchdogAlive && owesWork && doneResult == nil && !directorStopped
+    }
 
     var idleSeconds: TimeInterval? {
         guard let lastActivity else { return nil }
@@ -472,22 +501,6 @@ nonisolated struct ReviewProgress: Sendable, Equatable {
         guard let stall, let stallLimit, stallLimit > 0 else { return false }
         return stall >= stallLimit
     }
-}
-
-nonisolated struct ReviewVerdict: Sendable, Equatable {
-    var state: String
-    var verdict: String
-    var disposition: String
-    var round: Int
-    var findings: String
-    var at: String
-
-    var isWorthShowing: Bool {
-        !findings.isEmpty && (verdict.uppercased() == "FAIL" || disposition == "needs-user"
-                              || disposition == "scope_violation")
-    }
-
-    var identity: String { "\(at)|\(round)|\(verdict)|\(disposition)" }
 }
 
 /// Where the engine's recovery of a frozen turn stands.

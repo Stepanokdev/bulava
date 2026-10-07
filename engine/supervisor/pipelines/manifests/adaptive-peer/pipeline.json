@@ -1,0 +1,157 @@
+{
+  "schema": "bulava.pipeline/1",
+  "id": "adaptive-peer",
+  "name": "Claude + Codex",
+  "description": "Дві незалежні позиції, звірка, Claude виконує, Codex перевіряє і може повернути. За замовчуванням так працює кожен чат і кожна автоматизація.",
+  "i18n": {
+    "en": {
+      "description": "Two independent positions, an alignment, Claude does the work, Codex reviews and can send it back. Every chat and automation runs this way unless you choose another.",
+      "node.chat": "Chat message",
+      "node.context": "Neutral context",
+      "node.peer-claude": "Claude's position",
+      "node.peer-codex": "Codex's position",
+      "node.align": "Align the positions",
+      "node.compose": "Brief for the worker",
+      "node.deliver": "Claude does the work",
+      "node.scope": "Scope of changes",
+      "node.verify": "Build proof",
+      "node.review": "Codex review",
+      "node.report": "Report",
+      "node.merge": "Merge the branch"
+    }
+  },
+  "version": "3.2.0",
+  "revision": 1,
+  "builtin": true,
+  "executes": "adaptive-peer",
+  "nodes": [
+    {
+      "id": "chat",
+      "module": "bulava/trigger.chat@1",
+      "title": "Повідомлення в чаті"
+    },
+    {
+      "id": "context",
+      "module": "bulava/prep.context@1",
+      "title": "Нейтральний контекст"
+    },
+    {
+      "id": "peer-claude",
+      "module": "bulava/prep.position@1",
+      "title": "Позиція Claude",
+      "params": {
+        "engine": "claude",
+        "skipOnFollowup": true
+      }
+    },
+    {
+      "id": "peer-codex",
+      "module": "bulava/prep.position@1",
+      "title": "Позиція Codex",
+      "params": {
+        "engine": "codex",
+        "skipOnFollowup": true
+      }
+    },
+    {
+      "id": "align",
+      "module": "bulava/prep.align@1",
+      "title": "Звірка позицій",
+      "params": {
+        "skipOnFollowup": true
+      }
+    },
+    {
+      "id": "compose",
+      "module": "bulava/prep.compose@1",
+      "title": "Бриф виконавцю"
+    },
+    {
+      "id": "deliver",
+      "module": "bulava/agent.claude@1",
+      "title": "Claude виконує"
+    },
+    {
+      "id": "scope",
+      "module": "bulava/gate.scope@1",
+      "title": "Межі змін"
+    },
+    {
+      "id": "verify",
+      "module": "bulava/gate.verify@1",
+      "title": "Доказ збіркою"
+    },
+    {
+      "id": "review",
+      "module": "bulava/gate.review@1",
+      "title": "Рев'ю Codex"
+    },
+    {
+      "id": "report",
+      "module": "bulava/out.report@1",
+      "title": "Звіт"
+    },
+    {
+      "id": "merge",
+      "module": "bulava/out.merge@1",
+      "title": "Злиття гілки"
+    }
+  ],
+  "edges": [
+    {
+      "from": "chat.task",
+      "to": "context.task"
+    },
+    {
+      "from": "context.context",
+      "to": "peer-claude.context"
+    },
+    {
+      "from": "context.context",
+      "to": "peer-codex.context"
+    },
+    {
+      "from": "peer-claude.position",
+      "to": "align.positions"
+    },
+    {
+      "from": "peer-codex.position",
+      "to": "align.positions"
+    },
+    {
+      "from": "align.checks",
+      "to": "compose.in"
+    },
+    {
+      "from": "compose.brief",
+      "to": "deliver.brief"
+    },
+    {
+      "from": "deliver.work",
+      "to": "scope.work"
+    },
+    {
+      "from": "scope.work",
+      "to": "verify.work"
+    },
+    {
+      "from": "verify.work",
+      "to": "review.work"
+    },
+    {
+      "from": "review.pass",
+      "to": "report.in"
+    },
+    {
+      "from": "review.pass",
+      "to": "merge.work"
+    },
+    {
+      "from": "review.fail",
+      "to": "deliver.feedback",
+      "loop": {
+        "max": 3
+      }
+    }
+  ]
+}

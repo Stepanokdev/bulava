@@ -23,7 +23,9 @@ nonisolated enum DecisionSigner {
     }
 
     private static let account = "codex-decision-signing-key"
-    private static let service = "app.bulava.decisions"
+    /// Per channel: a key read by a build that did not create it raises a keychain prompt, and
+    /// Bulava Dev is a different build by design.
+    private static let service = AppChannel.current.signingKeyService
 
     /// Sign `request|choice` and return the signature, DER-encoded, base64 for a JSON field.
     ///

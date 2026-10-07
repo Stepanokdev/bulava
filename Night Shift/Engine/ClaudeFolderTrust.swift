@@ -71,6 +71,15 @@ nonisolated enum ClaudeFolderTrust {
 
         var projects = root["projects"] as? [String: Any] ?? [:]
 
+        // Claude keys a folder by its real path. `canonicalPath` resolves symlinks the Foundation
+        // way, which turns `/private/tmp/…` into `/tmp/…` — a key Claude never looks up — so both
+        // spellings are written when they differ.
+        let real = Self.realPath(folder)
+        if real != folder {
+            var twin = projects[real] as? [String: Any] ?? projects[folder] as? [String: Any] ?? [:]
+            twin["hasTrustDialogAccepted"] = true
+            projects[real] = twin
+        }
         var entry = projects[folder] as? [String: Any] ?? [
             "allowedTools": [], "mcpContextUris": [], "mcpServers": [String: Any](),
             "enabledMcpjsonServers": [], "disabledMcpjsonServers": [],
@@ -93,6 +102,40 @@ nonisolated enum ClaudeFolderTrust {
         } catch {
             return false
         }
+    }
+
+    /// Take back what `grant` gave a folder that is gone — a run's copy after it is removed — so a
+    /// year of copies does not leave a year of entries behind. Only the exact path; a folder that
+    /// still exists is never forgotten.
+    @discardableResult
+    static func forget(forProjectPath path: String, configURL: URL = configURL) -> Bool {
+        let keys = Set([path, Slug.canonicalPath(path), Self.realPath(path)])
+        guard !keys.contains(where: { FileManager.default.fileExists(atPath: $0) }),
+              let data = try? Data(contentsOf: configURL),
+              var root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              var projects = root["projects"] as? [String: Any] else { return false }
+        let before = projects.count
+        for key in keys { projects.removeValue(forKey: key) }
+        guard projects.count != before else { return true }
+        root["projects"] = projects
+        guard let out = try? JSONSerialization.data(withJSONObject: root,
+                                                    options: [.sortedKeys, .withoutEscapingSlashes])
+        else { return false }
+        do {
+            try out.write(to: configURL, options: .atomic)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// The path as the kernel spells it — `/private/tmp/…`, not `/tmp/…` — which is how Claude
+    /// names the folder it runs in. A path that does not exist stays as it was given.
+    static func realPath(_ path: String) -> String {
+        guard let resolved = realpath(path, nil) else { return path }
+        defer { free(resolved) }
+        return String(cString: resolved)
     }
 
     static func problem(forProjectPath path: String) -> String? {

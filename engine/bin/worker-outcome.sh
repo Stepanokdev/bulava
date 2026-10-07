@@ -40,7 +40,8 @@ if jq -nc --arg r "$RESULT" --arg s "$SUMMARY" --arg ts "$(date '+%F %T')" \
        + (if $did == "" then {} else {dispatch_id:$did} end)
        + (if $tid == "" then {} else {thread_id:$tid} end)' > "$tmp" 2>/dev/null \
    && mv -f "$tmp" "$IDIR/outcome.json"; then
-  :
+  run_event "$IDIR" outcome declared "$(printf '%s' "$SUMMARY" | clip_utf8 600 2>/dev/null || printf '%s' "$SUMMARY" | head -c 600)" \
+    "$(jq -nc --arg r "$RESULT" '{result:$r}')"
 else
   rm -f "$tmp" 2>/dev/null || true
   echo "❌ could not write outcome.json" >&2; exit 1
@@ -67,6 +68,8 @@ write_receipt() {
     commits="$(git -C "$PROJ_DIR" log "$range" --pretty=format:'%h%x1f%s' 2>/dev/null \
       | jq -R -s 'split("\n")|map(select(length>0))|map(split("\u001f"))|map({sha:.[0],subject:.[1]})' 2>/dev/null || echo '[]')"
     diffstat="$(git -C "$PROJ_DIR" diff --stat "$range" 2>/dev/null | tail -1)"
+    # A snapshot base: see report.sh — the worker's change is snapshot → disk, not snapshot → HEAD.
+    [ -f "$IDIR/base-snapshot" ] && diffstat="$(git -C "$PROJ_DIR" diff --stat "$base" 2>/dev/null | tail -1)"
   fi
   [ -z "$diffstat" ] && diffstat="$(git -C "$PROJ_DIR" diff --stat 2>/dev/null | tail -1)"
 

@@ -90,35 +90,6 @@ nonisolated final class OneJobOneCardTests: XCTestCase {
         XCTAssertEqual(store.tasks.first?.title, "Ще дороби пошук")
     }
 
-    // MARK: - One transcript, one console
-
-    @MainActor
-    func testTheSameSessionIsReadIntoOneTurnOnly() {
-        let transcript = URL(fileURLWithPath: "/tmp/bulava-one-job/session.jsonl")
-
-        var older = BacklogTask(title: "Робота", projectPath: project)
-        older.dispatchedAt = Date().addingTimeInterval(-3600)
-        var newer = BacklogTask(title: "Та сама робота, інша картка", projectPath: project)
-        newer.dispatchedAt = Date()
-
-        let picked = AppModel.onePerTranscript([(older, UUID(), transcript), (newer, UUID(), transcript)])
-        XCTAssertEqual(picked.count, 1, "the same night was going to be shown twice")
-        XCTAssertEqual(picked.first?.0.id, newer.id, "the card that is running should hold the feed")
-
-        let reversed = AppModel.onePerTranscript([(newer, UUID(), transcript), (older, UUID(), transcript)])
-        XCTAssertEqual(reversed.first?.0.id, newer.id)
-    }
-
-    @MainActor
-    func testTwoDifferentSessionsAreBothFollowed() {
-        var a = BacklogTask(title: "A", projectPath: project); a.dispatchedAt = Date()
-        var b = BacklogTask(title: "B", projectPath: project); b.dispatchedAt = Date()
-        let picked = AppModel.onePerTranscript([
-            (a, UUID(), URL(fileURLWithPath: "/tmp/bulava-one-job/a.jsonl")),
-            (b, UUID(), URL(fileURLWithPath: "/tmp/bulava-one-job/b.jsonl"))])
-        XCTAssertEqual(picked.count, 2)
-    }
-
     // MARK: - A revision inside a worktree still gets a card
 
     @MainActor

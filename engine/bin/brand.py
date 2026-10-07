@@ -26,16 +26,18 @@ def mark(height_css="14px"):
 
 
 def lockup():
-    """Plate, mark and wordmark — the same lockup the app's sidebar shows."""
+    """Plate, mark and wordmark — the same lockup the app's sidebar shows — at the top of the page,
+    a link to bulava.app, where the app lives."""
     glyph = mark()
     if not glyph:
         return ""
-    return ('<div class="brand"><span class="plate">' + glyph
-            + '</span><span class="word">bulava<em>.app</em></span></div>')
+    return ('<a class="brand" href="https://bulava.app"><span class="plate">' + glyph
+            + '</span><span class="word">bulava<em>.app</em></span></a>')
 
 
 CSS = """
-.brand { display:flex; align-items:center; gap:9px; margin:0 0 22px; }
+.brand { display:flex; width:fit-content; align-items:center; gap:9px; margin:0 0 22px;
+         text-decoration:none; color:inherit; }
 .brand .plate { width:24px; height:24px; border-radius:7px; background:var(--brand-field);
                 display:flex; align-items:center; justify-content:center; flex:0 0 auto; }
 .brand .plate svg { display:block; color:var(--brand); }

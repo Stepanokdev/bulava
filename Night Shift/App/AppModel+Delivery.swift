@@ -2,60 +2,6 @@ import Foundation
 
 extension AppModel {
 
-    func postDelivery(for task: BacklogTask, productID: UUID) {
-        guard !deliveredArtifacts.contains(task.id) else { return }
-        let key = task.reportKey
-        let directory = settings.paths.reportDir(task8: key)
-        let blocks = Self.deliveryBlocks(runID: key, directory: directory,
-                                         manifest: Self.manifest(in: directory))
-        guard !blocks.isEmpty else { return }
-        deliveredArtifacts.insert(task.id)
-
-        var entry = ConversationEntry(productID: productID, kind: .foreman,
-                                      text: Self.deliveryCaption(blocks), blocks: blocks,
-                                      taskID: task.id)
-        entry.chatID = conversations.currentChatID(for: productID)
-        conversations.append(entry)
-    }
-
-    func postDelivery(forItem item: WorkItem, productID: UUID) {
-        guard !deliveredArtifacts.contains(item.id) else { return }
-
-        var blocks: [ConversationBlock] = []
-        var gallery: [ArtifactRef] = []
-        for part in deliveredParts(of: item) {
-            let key = part.reportKey
-            let directory = settings.paths.reportDir(task8: key)
-            let name = partName(part, in: item)
-            for block in Self.deliveryBlocks(runID: key, directory: directory,
-                                             manifest: Self.manifest(in: directory)) {
-                switch block.kind {
-                case .gallery:
-                    gallery += block.artifacts
-                case .file:
-
-                    guard var ref = block.artifacts.first else { continue }
-                    ref.displayName = name.isEmpty ? ref.displayName : name + " · " + ref.displayName
-                    blocks.append(.file(id: key + "/" + block.id, ref))
-                default:
-                    continue
-                }
-            }
-        }
-        if !gallery.isEmpty {
-            blocks.insert(.gallery(id: "gallery", gallery,
-                                   caption: Fmt.count("%lld frames", gallery.count)), at: 0)
-        }
-        guard !blocks.isEmpty else { return }
-        deliveredArtifacts.insert(item.id)
-
-        var entry = ConversationEntry(productID: productID, kind: .foreman,
-                                      text: Self.deliveryCaption(blocks), blocks: blocks,
-                                      taskID: item.id)
-        entry.chatID = conversations.currentChatID(for: productID)
-        conversations.append(entry)
-    }
-
     nonisolated static func deliveryBlocks(runID: String, directory: URL,
                                            manifest: ReportManifest?) -> [ConversationBlock] {
         let names = relativeFiles(in: directory)

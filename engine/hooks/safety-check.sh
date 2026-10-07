@@ -29,6 +29,10 @@ if [ -d "$SUP_INSTANCES" ]; then
     # A worker parked on a frozen turn is holding an unfinished task, not abandoned — the same
     # exemption the watchdog's own idle teardown makes (`hung_recovery_kept`).
     hung_recovery_kept "${d%/}" && continue
+    # Nor is one that still owes work — parked on a usage window, owing a review or a resume. A wait
+    # for Codex's week touches nothing for longer than this threshold, and deleting it here took the
+    # review it was waiting to run, and the director's signed answer to wait, with it.
+    instance_owes_work "${d%/}" && continue
     marker="$d/last-activity"; [ -f "$marker" ] || marker="$d/started-at"
     if [ "$(age_h "$marker")" -ge "$STALE_HOURS" ]; then
       [ -f "$d/watchdog.pid" ] && kill "$(cat "$d/watchdog.pid")" 2>/dev/null

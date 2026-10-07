@@ -63,7 +63,12 @@ nonisolated struct BacklogTask: Identifiable, Codable, Equatable, Sendable {
     var askedVerbatim: String?
 
     var holds: [TaskHold] = []
+    /// The copy this card works in now. Only ever a folder that exists and is a checkout of its
+    /// project — see `AppModel.prepareCardFolder`.
     var worktree: String?
+    /// Copies it worked in before that are gone. Kept because the transcripts of those sessions
+    /// are filed under the copy's path, and "what happened?" still has to find them.
+    var retiredWorktrees: [String] = []
     var wantsReport: Bool
 
     var runMode: RunMode?
@@ -146,6 +151,7 @@ nonisolated struct BacklogTask: Identifiable, Codable, Equatable, Sendable {
         holds = (try? c.decodeIfPresent([TaskHold].self, forKey: .holds)) ?? []
         requestedBranch = try? c.decodeIfPresent(String.self, forKey: .requestedBranch)
         worktree = try c.decodeIfPresent(String.self, forKey: .worktree)
+        retiredWorktrees = (try? c.decodeIfPresent([String].self, forKey: .retiredWorktrees)) ?? []
         wantsReport = try c.decodeIfPresent(Bool.self, forKey: .wantsReport) ?? true
         runMode = try c.decodeIfPresent(RunMode.self, forKey: .runMode)
         writePaths = try c.decodeIfPresent([String].self, forKey: .writePaths) ?? []

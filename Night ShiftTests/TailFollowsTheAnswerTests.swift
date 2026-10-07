@@ -125,4 +125,86 @@ nonisolated final class TailFollowsTheAnswerTests: XCTestCase {
         let short = TailFollow.Frame(offsetY: 0, contentHeight: 200, viewportHeight: 500)
         XCTAssertTrue(follow.advance(from: short, to: short))
     }
+
+    // MARK: - A lazy thread re-measuring itself
+
+    func testALazyThreadSettlingIsNotTheReaderLeaving() {
+        var follow = TailFollow()
+        // The rows above were estimated; measured, the content is shorter — and one reading later
+        // the offset is pulled up to match, with nobody touching anything.
+        let estimated = TailFollow.Frame(offsetY: 9_000, contentHeight: 10_000, viewportHeight: 900)
+        let remeasured = TailFollow.Frame(offsetY: 9_000, contentHeight: 8_000, viewportHeight: 900)
+        let pulledUp = TailFollow.Frame(offsetY: 7_000, contentHeight: 8_000, viewportHeight: 900)
+        follow.advance(from: estimated, to: remeasured)
+        XCTAssertTrue(follow.advance(from: remeasured, to: pulledUp),
+                      "the thread keeps following its answer through the layout settling")
+    }
+
+    // MARK: - The window changing width
+
+    /// 5 Oct: a narrower window re-measured every row of a long chat; the height and the offset
+    /// jumped together for several readings, that read as a hand, and the thread stopped following
+    /// the answer being written — then, gone blank, it was put back in the middle of the history.
+    func testANarrowerWindowIsNotTheReaderLeaving() {
+        var follow = TailFollow()
+        let wide = TailFollow.Frame(offsetY: 15_100, contentHeight: 16_000, viewportHeight: 900,
+                                    viewportWidth: 1_200)
+        // Narrower: everything is re-measured, height and offset move in the same readings, and
+        // again in the readings after.
+        let narrow1 = TailFollow.Frame(offsetY: 14_000, contentHeight: 46_000, viewportHeight: 900,
+                                       viewportWidth: 700)
+        let narrow2 = TailFollow.Frame(offsetY: 12_000, contentHeight: 30_000, viewportHeight: 900,
+                                       viewportWidth: 700)
+        let narrow3 = TailFollow.Frame(offsetY: 9_000, contentHeight: 18_000, viewportHeight: 900,
+                                       viewportWidth: 700)
+        follow.advance(from: wide, to: narrow1)
+        follow.advance(from: narrow1, to: narrow2)
+        follow.advance(from: narrow2, to: narrow3)
+        XCTAssertTrue(follow.following, "the window changing width is not a hand on the trackpad")
+    }
+
+    func testAHandDuringTheReMeasureIsStillHim() {
+        var follow = TailFollow()
+        let wide = TailFollow.Frame(offsetY: 15_100, contentHeight: 16_000, viewportHeight: 900,
+                                    viewportWidth: 1_200)
+        let narrow = TailFollow.Frame(offsetY: 14_000, contentHeight: 20_000, viewportHeight: 900,
+                                      viewportWidth: 700)
+        let up = TailFollow.Frame(offsetY: 11_000, contentHeight: 20_000, viewportHeight: 900,
+                                  viewportWidth: 700)
+        follow.advance(from: wide, to: narrow)
+        XCTAssertFalse(follow.advance(from: narrow, to: up, byHand: true))
+    }
+
+    func testOnceTheWidthHasSettledTheOffsetMovingIsHimAgain() {
+        var follow = TailFollow()
+        var frame = TailFollow.Frame(offsetY: 9_100, contentHeight: 10_000, viewportHeight: 900,
+                                     viewportWidth: 1_200)
+        let narrow = TailFollow.Frame(offsetY: 9_100, contentHeight: 10_000, viewportHeight: 900,
+                                      viewportWidth: 700)
+        follow.advance(from: frame, to: narrow)
+        frame = narrow
+        for _ in 0..<TailFollow.relayoutWindow { follow.advance(from: frame, to: frame) }
+        let up = TailFollow.Frame(offsetY: 8_700, contentHeight: 10_000, viewportHeight: 900,
+                                  viewportWidth: 700)
+        XCTAssertFalse(follow.advance(from: frame, to: up),
+                       "the re-measure is over; an offset moving up with nothing re-measured is him")
+    }
+
+    func testAHandScrollingUpIsBelievedBeforeItsPhaseArrives() {
+        var follow = TailFollow()
+        let end = TailFollow.Frame(offsetY: 9_100, contentHeight: 10_000, viewportHeight: 900)
+        let up = TailFollow.Frame(offsetY: 8_700, contentHeight: 10_000, viewportHeight: 900)
+        XCTAssertFalse(follow.advance(from: end, to: up, byHand: false),
+                       "nothing was being re-measured, so the offset moving is him")
+    }
+
+    func testAHandDuringSettlingStillCounts() {
+        var follow = TailFollow()
+        let a = TailFollow.Frame(offsetY: 9_000, contentHeight: 10_000, viewportHeight: 900)
+        let b = TailFollow.Frame(offsetY: 9_000, contentHeight: 9_500, viewportHeight: 900)
+        let c = TailFollow.Frame(offsetY: 7_000, contentHeight: 9_500, viewportHeight: 900)
+        follow.advance(from: a, to: b)
+        XCTAssertFalse(follow.advance(from: b, to: c, byHand: true))
+    }
 }
+

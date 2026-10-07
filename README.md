@@ -119,6 +119,8 @@ digests and the procedure that produced them are published at
 |---|---|
 | `Night Shift/` | the macOS app — SwiftUI, `NavigationSplitView`, a native `.inspector` |
 | `engine/` | the work engine: sessions, the review gate, the verifier, the queue, the watchdog |
+| `bulava-mobile/` | Bulava on the phone — Compose Multiplatform for Android and iPhone, a window onto the Mac |
+| `link-protocol/` | the contract between the Mac and the phone, with the files both sides are tested against |
 | `site/install.sh` | the one-liner below, in full — the thing you would be piping into `bash` |
 | `Night ShiftTests/`, `Night ShiftUITests/` | what proves it |
 
@@ -198,11 +200,21 @@ The engine's own suite is pure bash and runs without the app:
 bash engine/tests/run-all.sh     # 81 suites; codex and claude are mocked through PATH
 ```
 
+The phone app builds from its own folder:
+
+```bash
+cd bulava-mobile
+./gradlew :androidApp:assembleDebug        # Android
+./gradlew :shared:testAndroidHostTest      # the phone's logic and its half of the wire contract
+open iosApp/iosApp.xcodeproj               # iPhone
+```
+
 ### Where it keeps things
 
 The engine owns `~/.claude/supervisor`. The app keeps its own layer — your product registry,
 captures, work items and conversations — in `~/Library/Application Support/NightShift`. Deleting
-that folder resets the app without touching the engine.
+that folder resets the app without touching the engine. The phone link keeps the Mac's key and the
+list of paired phones in `mobile-link/` there.
 
 Each project folder maps to an engine instance by the slug the engine uses: the sanitized folder
 name plus the first 12 hex characters of the SHA-1 of its canonical path. That is how a project you

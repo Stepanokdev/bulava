@@ -274,12 +274,12 @@ struct TaskCard: View {
 
                 ForEach(actions) { action in
                     Button { action.perform(model) } label: {
-                        Label { Text(action.titleKey) } icon: { Image(systemName: action.symbol) }
+                        Label { Text(action.title) } icon: { Image(systemName: action.symbol) }
                             .labelStyle(.titleAndIcon)
                     }
                     .buttonStyle(.bulava(emphasis(action)))
                     .disabled(readOnly || action.disabledReason != nil)
-                    .help(action.disabledReason.map { Text($0) } ?? Text(action.titleKey))
+                    .help(action.disabledReason.map { Text($0) } ?? Text(action.title))
 
                     .accessibilityIdentifier("task-action-\(action.id)")
                 }

@@ -88,9 +88,13 @@ case "$(when_human "$far")" in
   *"$(date -r "$far" '+%d.%m')"*) ok "a reset five days out names the date" ;;
   *) bad "five days away still reads as a time today: $(when_human "$far")" ;;
 esac
-case "$(when_human "$(( $(now) + 3600 ))")" in
+# An hour away, or less when midnight is nearer: after 23:00 an hour away IS tomorrow, and the
+# suite went red every night between eleven and midnight for saying so.
+_midnight="$(( $(date -j -v+1d -v0H -v0M -v0S +%s) ))"
+_soon="$(( $(now) + 3600 ))"; [ "$_soon" -ge "$(( _midnight - 60 ))" ] && _soon="$(( (now_s=$(now)) + (_midnight - now_s) / 2 ))"
+case "$(when_human "$_soon")" in
   *сьогодні*) ok "and one an hour away says today" ;;
-  *) bad "an hour away is not shown as today: $(when_human "$(( $(now) + 3600 ))")" ;;
+  *) bad "an hour away is not shown as today: $(when_human "$_soon")" ;;
 esac
 
 echo "===== whose limit it is decides who has to stop ====="

@@ -46,28 +46,6 @@ nonisolated final class TemporarySessionCleanupTests: XCTestCase {
     }
 }
 
-nonisolated final class CaptureClassifierTests: XCTestCase {
-    func testTypeFromKeywords() {
-        XCTAssertEqual(CaptureClassifier.suggestType(for: "fix the crash on launch"), .bug)
-        XCTAssertEqual(CaptureClassifier.suggestType(for: "adjust spacing in the layout"), .design)
-        XCTAssertEqual(CaptureClassifier.suggestType(for: "write SEO articles"), .content)
-        XCTAssertEqual(CaptureClassifier.suggestType(for: "додай свайп меню"), .feature)
-    }
-
-    func testPriorityFromKeywords() {
-        XCTAssertEqual(CaptureClassifier.suggestPriority(for: "URGENT: prod is down"), .p0)
-        XCTAssertEqual(CaptureClassifier.suggestPriority(for: "important cleanup"), .p1)
-        XCTAssertEqual(CaptureClassifier.suggestPriority(for: "someday maybe"), .p2)
-    }
-
-    func testProjectMatchByName() {
-        let projects = [Project(name: "Narada", path: "/a/Narada"),
-                        Project(name: "Map Alerts", path: "/a/Map Alerts")]
-        let id = CaptureClassifier.suggestProject(for: "bug in map alerts screen", in: projects)
-        XCTAssertEqual(id, projects[1].id)
-    }
-}
-
 nonisolated final class BacklogTaskTests: XCTestCase {
     func testDispatchTextCarriesFeedbackAndAttachments() {
         var task = BacklogTask(title: "Swipe menu", detail: "left swipe hides it",
@@ -139,20 +117,6 @@ nonisolated final class BacklogStoreSchedulingTests: XCTestCase {
         XCTAssertTrue(store.resumable().contains { $0.id == added.id })
         store.markDispatched(added.id)
         XCTAssertFalse(store.resumable().contains { $0.id == added.id })
-    }
-
-    @MainActor func testExternalPRBlockerDetection() {
-        let store = freshStore()
-        var pr = BacklogTask(title: "Behind PR", projectPath: "/p", state: .ready)
-        pr.externalBlocker = "backend PR #481"
-        store.add(pr)
-        var vague = BacklogTask(title: "Behind ops", projectPath: "/p", state: .ready)
-        vague.externalBlocker = "waiting on the ops team"
-        store.add(vague)
-
-        let flagged = store.withExternalPRBlocker()
-        XCTAssertTrue(flagged.contains { $0.title == "Behind PR" })
-        XCTAssertFalse(flagged.contains { $0.title == "Behind ops" })
     }
 }
 

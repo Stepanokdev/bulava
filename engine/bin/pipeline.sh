@@ -43,9 +43,23 @@ case "$RELATION" in continue|new) ;; *) RELATION="" ;; esac
 [ -n "$MSG" ] || { echo "❌ порожній конверт" >&2; exit 2; }
 
 case "$PIPE" in *[!a-z0-9-]*|"") PIPE=plain ;; esac   # a name goes onto a path
-DEF="$ROOT/supervisor/pipelines/$PIPE.json"
-[ -s "$DEF" ] || DEF="$ROOT/supervisor/pipelines/plain.json"
-[ -s "$DEF" ] || { echo "❌ нема опису пайплайна" >&2; exit 2; }
+# Where the description lives. The built-ins keep their proven stage lists in the engine; a pipeline
+# somebody built lives in the engine's STATE, because the engine folder is replaced wholesale on
+# every update. A name that is neither is refused out loud: falling back to `plain` used to turn a
+# misspelt pipeline into "no positions, no review" without a word to anyone.
+SRC_KIND=legacy
+SRC_DEF="$ROOT/supervisor/pipelines/$PIPE.json"
+if [ ! -s "$SRC_DEF" ]; then
+  SRC_KIND=manifest
+  SRC_DEF="$SUP_STATE/pipelines/$PIPE"
+  if [ ! -s "$SRC_DEF/pipeline.json" ]; then
+    echo "$(date '+%F %T') [pipeline/$PIPE] no such pipeline — refusing rather than running plain" >> "$LOG"
+    RUN_EVENT_MESSAGE_ID="$MSG_ID" RUN_EVENT_PIPELINE="$PIPE" \
+      run_event "$IDIR" pipeline failed "Пайплайн «${PIPE}» не знайдено" '{"reason":"unknown-pipeline"}'
+    echo "❌ нема пайплайна «${PIPE}»" >&2
+    exit 3
+  fi
+fi
 
 # A caller that already owns the dispatch record (the night dispatcher does — it allocated the
 # report folder and wrote the product memory against that id) says so, and this run reuses it
@@ -73,6 +87,30 @@ mkdir -p "$ART" 2>/dev/null || true
 printf '%s\n' "$MSG" > "$ART/task.txt"
 STAGES_LOG="$ART/stages.jsonl"
 : > "$STAGES_LOG" 2>/dev/null || true
+
+# Who every event of this preparation belongs to, fixed now — not looked up later from a marker
+# another message may have overwritten by then.
+export RUN_EVENT_MESSAGE_ID="$MSG_ID" RUN_EVENT_DISPATCH_ID="$DISPATCH_ID" RUN_EVENT_PIPELINE="$PIPE"
+
+# The run reads its own copy of the description. The runner used to re-read the live file at every
+# step, so a pipeline saved while a message was being prepared shifted the stages of that very run.
+REVISION=0
+if [ "$SRC_KIND" = legacy ]; then
+  DEF="$ART/pipeline.def.json"
+  cp -f "$SRC_DEF" "$DEF" 2>/dev/null || DEF="$SRC_DEF"
+else
+  DEF="$ART/pipeline.compiled.json"
+  if ! python3 "$BIN_DIR/pipeline-tool.py" compile "$SRC_DEF" --out "$DEF" --snapshot "$ART/pipeline" >>"$LOG" 2>&1 \
+     || [ ! -s "$DEF" ]; then
+    echo "$(date '+%F %T') [pipeline/$PIPE] the description does not compile — refusing to run it" >> "$LOG"
+    run_event "$IDIR" pipeline failed "Опис пайплайна «${PIPE}» не проходить перевірку" '{"reason":"invalid-pipeline"}'
+    exit 4
+  fi
+  REVISION="$(jq -r '.revision // 0' "$DEF" 2>/dev/null || echo 0)"
+fi
+[ -s "$DEF" ] || { echo "❌ нема опису пайплайна" >&2; exit 2; }
+GATES="$(jq -c '.gates // {}' "$DEF" 2>/dev/null || echo '{}')"
+case "$GATES" in '{'*'}') ;; *) GATES='{}' ;; esac
 
 now_ms() { perl -MTime::HiRes -e 'printf "%.0f", Time::HiRes::time()*1000' 2>/dev/null || printf '%s000' "$(date +%s)"; }
 plog() { echo "$(date '+%F %T') [pipeline/$PIPE] $*" >> "$LOG"; }
@@ -129,8 +167,9 @@ record_dispatch() {
   jq -nc --arg id "$DISPATCH_ID" --arg at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" --arg task "$MSG" \
      --arg rk "$rk" --arg pipe "$PIPE" --arg intent "$INTENT" --arg mid "${MSG_ID:-}" \
      --arg tid "${THREAD_ID:-}" --arg rel "${RELATION:-}" \
-     --argjson chat "$chat" \
+     --argjson chat "$chat" --argjson gates "$GATES" --arg kind "$SRC_KIND" --arg rev "$REVISION" \
      '{id:$id, at:$at, task:$task, report_key:$rk, pipeline:$pipe, intent:$intent, chat:$chat}
+      + (if $kind == "manifest" then {pipeline_gates:$gates, pipeline_revision:($rev|tonumber? // 0)} else {} end)
       + (if $mid == "" then {} else {message_id:$mid} end)
       + (if $tid == "" then {} else {thread_id:$tid} end)
       + (if $rel == "" then {} else {relation:$rel} end)' > "$IDIR/dispatch.json.tmp" 2>/dev/null \
@@ -155,7 +194,10 @@ run_stage() {   # $1=stage id  $2..=argv from the definition
   local cmd="$1"; shift
   case "$cmd" in */*|..*|"") plog "stage $id: refusing command '$cmd'"; return 127 ;; esac
   [ -x "$BIN_DIR/$cmd" ] || { plog "stage $id: no such stage command '$cmd'"; return 127; }
-  local s e rc
+  local s e rc node
+  node="$(jq -r --arg id "$id" '[.stages[] | select(.id == $id) | (.node // .id)][0] // $id' "$DEF" 2>/dev/null)"
+  [ -n "$node" ] && [ "$node" != null ] || node="$id"
+  run_event "$IDIR" "$id" running "" "$(jq -nc --arg n "$node" '{node:$n}')"
   s="$(now_ms)"
   PIPE_IDIR="$IDIR" PIPE_ART="$ART" PIPE_PROJ="$PROJ" PIPE_SESSION="$SESSION" \
   PIPE_ENVELOPE="$ENVELOPE" PIPE_DISPATCH_ID="$DISPATCH_ID" PIPE_STAGE="$id" \
@@ -167,11 +209,26 @@ run_stage() {   # $1=stage id  $2..=argv from the definition
   jq -nc --arg id "$id" --argjson s "$s" --argjson e "$e" --argjson rc "$rc" \
      '{stage:$id, started_ms:$s, ended_ms:$e, exit:$rc}' >> "$STAGES_LOG" 2>/dev/null || true
   plog "stage $id finished in $((e - s))ms (exit $rc)"
+  case "$rc" in
+    0) run_event "$IDIR" "$id" done "" "$(jq -nc --arg n "$node" --argjson d "$((e - s))" '{node:$n, ms_taken:$d}')" ;;
+    7) run_event "$IDIR" "$id" cancelled "" "$(jq -nc --arg n "$node" '{node:$n}')" ;;
+    *) # A stage that could not take part, or chose not to, says so in a file; that is not a failure.
+       if [ -s "$ART/.unavailable-$id" ]; then
+         run_event "$IDIR" "$id" unavailable "$(head -c 400 "$ART/.unavailable-$id")" "$(jq -nc --arg n "$node" '{node:$n}')"
+       elif [ -s "$ART/.skip-$id" ]; then
+         run_event "$IDIR" "$id" skipped "$(head -c 400 "$ART/.skip-$id")" "$(jq -nc --arg n "$node" '{node:$n}')"
+       else
+         run_event "$IDIR" "$id" failed "exit $rc" "$(jq -nc --arg n "$node" --argjson rc "$rc" '{node:$n, exit:$rc}')"
+       fi ;;
+  esac
   return "$rc"
 }
 
 [ -n "$OWNED_DISPATCH" ] || record_dispatch
 plog "message $SEQ (${MSG_ID:-no id}) → $(jq -r '[.stages[].id] | join(" → ")' "$DEF")"
+run_event "$IDIR" pipeline running "" "$(jq -nc --arg k "$SRC_KIND" --arg snap "$ART" --argjson rev "${REVISION:-0}" \
+  --argjson stages "$(jq -c '[.stages[] | {id, node:(.node // .id), group:(.group // null), optional:(.optional // false)}]' "$DEF" 2>/dev/null || echo '[]')" \
+  '{kind:$k, snapshot:$snap, revision:$rev, stages:$stages}')"
 
 # Stages in order; stages sharing a `group` start together and are waited on together. That is the
 # whole of the parallelism: two positions formed side by side, neither able to see the other's file
@@ -207,9 +264,10 @@ while [ "$i" -lt "$total" ]; do
   if [ -z "$grp" ]; then
     id="$(jq -r ".stages[$i].id" "$DEF")"
     opt="$(jq -r ".stages[$i].optional // false" "$DEF")"
-    withdrawn && exit 7
+    withdrawn && { run_event "$IDIR" pipeline cancelled "Повідомлення забрано"; exit 7; }
     if stage_skipped "$i"; then
       plog "stage $id skipped — follow-up to the open task; the worker consults Codex itself when it needs to"
+      run_event "$IDIR" "$id" skipped "Продовження відкритої задачі" "$(jq -nc --arg n "$(jq -r ".stages[$i].node // .stages[$i].id" "$DEF")" '{node:$n, reason:"followup"}')"
       i=$((i + 1))
       continue
     fi
@@ -220,12 +278,14 @@ while [ "$i" -lt "$total" ]; do
     if [ "$st" != 0 ]; then
       if [ "$st" = 7 ] || { [ -n "$MSG_ID" ] && message_cancelled "$IDIR" "$MSG_ID"; }; then
         plog "stage $id stopped because the message was taken back"
+        run_event "$IDIR" pipeline cancelled "Повідомлення забрано"
         rm -f "$(pipeline_active_file "$IDIR")" 2>/dev/null || true
         exit 7
       fi
       if [ "$opt" != true ]; then
         plog "stage $id failed and is required — stopping"
         mark_stage "$id" failed
+        run_event "$IDIR" pipeline failed "Обов'язковий крок $id не вдався"
         exit 1
       fi
       plog "stage $id failed but is optional — continuing degraded"
@@ -234,12 +294,17 @@ while [ "$i" -lt "$total" ]; do
     continue
   fi
 
-  withdrawn && exit 7
-  pids=""; ids=""; skipped_ids=""
+  withdrawn && { run_event "$IDIR" pipeline cancelled "Повідомлення забрано"; exit 7; }
+  pids=""; ids=""; skipped_ids=""; required_ids=""
   while [ "$i" -lt "$total" ] && [ "$(jq -r ".stages[$i].group // empty" "$DEF")" = "$grp" ]; do
     id="$(jq -r ".stages[$i].id" "$DEF")"
-    if stage_skipped "$i"; then skipped_ids="$skipped_ids $id"; i=$((i + 1)); continue; fi
+    if stage_skipped "$i"; then
+      skipped_ids="$skipped_ids $id"
+      run_event "$IDIR" "$id" skipped "Продовження відкритої задачі" "$(jq -nc --arg n "$(jq -r ".stages[$i].node // .stages[$i].id" "$DEF")" '{node:$n, reason:"followup"}')"
+      i=$((i + 1)); continue
+    fi
     [ -n "$pids" ] || mark_stage "$grp" running
+    [ "$(jq -r ".stages[$i].optional // false" "$DEF")" = true ] || required_ids="$required_ids $id"
     stage_argv "$i"
     run_stage "$id" "${RUN_ARGV[@]}" &
     pids="$pids $!"; ids="$ids $id"
@@ -248,11 +313,33 @@ while [ "$i" -lt "$total" ]; do
   [ -z "$skipped_ids" ] || plog "group $grp: skipped$skipped_ids — follow-up to the open task; the worker consults Codex itself when it needs to"
   [ -n "$pids" ] || continue
   plog "group $grp: started$ids side by side"
-  grp_rc=0
-  for pid in $pids; do wait "$pid" 2>/dev/null || grp_rc=1; done
-  [ "$grp_rc" = 0 ] || plog "group $grp: at least one stage failed — the pipeline continues with what it has"
+  # Waited on one by one, so a REQUIRED stage that fails stops the run just as it would on its own.
+  # `optional` used to mean nothing inside a group: any failure there was waved through.
+  grp_rc=0; failed_required=""
+  set -- $ids
+  for pid in $pids; do
+    sid="${1:-}"; shift || true
+    if ! wait "$pid" 2>/dev/null; then
+      grp_rc=1
+      case " $required_ids " in *" $sid "*) failed_required="$failed_required $sid" ;; esac
+    fi
+  done
+  if [ -n "$MSG_ID" ] && message_cancelled "$IDIR" "$MSG_ID"; then
+    plog "group $grp stopped because the message was taken back"
+    run_event "$IDIR" pipeline cancelled "Повідомлення забрано"
+    rm -f "$(pipeline_active_file "$IDIR")" 2>/dev/null || true
+    exit 7
+  fi
+  if [ -n "$failed_required" ]; then
+    plog "group $grp: required stage(s)$failed_required failed — stopping"
+    mark_stage "$grp" failed
+    run_event "$IDIR" pipeline failed "Обов'язковий крок$failed_required не вдався"
+    exit 1
+  fi
+  [ "$grp_rc" = 0 ] || plog "group $grp: an optional stage failed — the pipeline continues with what it has"
 done
 
-withdrawn && exit 7
+withdrawn && { run_event "$IDIR" pipeline cancelled "Повідомлення забрано"; exit 7; }
 rm -f "$(pipeline_active_file "$IDIR")" 2>/dev/null || true
+run_event "$IDIR" pipeline done "Підготовку завершено"
 exit 0

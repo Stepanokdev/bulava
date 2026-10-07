@@ -66,6 +66,34 @@ nonisolated struct ChatSessionBinding: Codable, Equatable, Sendable {
     }
 }
 
+/// The models and depths one conversation runs on.
+///
+/// A dialog's own, not the app's: one chat can be on the deepest model while another is on the
+/// cheapest, and choosing in one never moves the other. Settings holds the default a new chat
+/// starts from.
+nonisolated struct RunChoices: Codable, Equatable, Sendable {
+    var claudeModel: ClaudeModelChoice
+    var claudeEffort: ClaudeEffortChoice
+    var codexModel: String
+    var codexEffort: CodexEffortChoice
+
+    init(claudeModel: ClaudeModelChoice = .auto, claudeEffort: ClaudeEffortChoice = .auto,
+         codexModel: String = "", codexEffort: CodexEffortChoice = .auto) {
+        self.claudeModel = claudeModel
+        self.claudeEffort = claudeEffort
+        self.codexModel = codexModel
+        self.codexEffort = codexEffort
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        claudeModel = (try? c.decode(ClaudeModelChoice.self, forKey: .claudeModel)) ?? .auto
+        claudeEffort = (try? c.decode(ClaudeEffortChoice.self, forKey: .claudeEffort)) ?? .auto
+        codexModel = (try? c.decode(String.self, forKey: .codexModel)) ?? ""
+        codexEffort = (try? c.decode(CodexEffortChoice.self, forKey: .codexEffort)) ?? .auto
+    }
+}
+
 nonisolated struct Chat: Identifiable, Codable, Equatable, Sendable {
     var id: UUID
     var productID: UUID
@@ -81,6 +109,28 @@ nonisolated struct Chat: Identifiable, Codable, Equatable, Sendable {
     var firstMessage: String
 
     var session: ChatSessionBinding?
+
+    /// Nil until the chat has choices of its own — a chat made before this existed, or a new one
+    /// nobody has sent from yet. Such a chat follows the default.
+    var run: RunChoices?
+
+    /// The automation run this conversation is. Such a chat is kept out of the product's list of
+    /// conversations — a year of weekly runs would bury his own — but never out of anything that
+    /// tells him something is waiting.
+    var automationRunID: UUID?
+
+    /// The separate copy this conversation works in instead of his folder.
+    var workCopyID: UUID?
+
+    /// He asked for this conversation to work in a separate copy. The copy is made with the first
+    /// message, from the branch his folder is on at that moment.
+    var wantsCopy: Bool = false
+
+    /// The pipeline this conversation's messages go through. Nil follows the chat mode in
+    /// Settings, which is what every chat did before pipelines could be chosen.
+    var pipelineID: String?
+
+    var isAutomationRun: Bool { automationRunID != nil }
 
     init(id: UUID = UUID(), productID: UUID, title: String = "", createdAt: Date = Date(),
          updatedAt: Date = Date(), archived: Bool = false, pinned: Bool = false,
@@ -107,6 +157,11 @@ nonisolated struct Chat: Identifiable, Codable, Equatable, Sendable {
         pinned = (try? c.decode(Bool.self, forKey: .pinned)) ?? false
         firstMessage = (try? c.decode(String.self, forKey: .firstMessage)) ?? ""
         session = try? c.decodeIfPresent(ChatSessionBinding.self, forKey: .session)
+        run = try? c.decodeIfPresent(RunChoices.self, forKey: .run)
+        automationRunID = try? c.decodeIfPresent(UUID.self, forKey: .automationRunID)
+        workCopyID = try? c.decodeIfPresent(UUID.self, forKey: .workCopyID)
+        wantsCopy = (try? c.decode(Bool.self, forKey: .wantsCopy)) ?? false
+        pipelineID = try? c.decodeIfPresent(String.self, forKey: .pipelineID)
     }
 
     static func title(from message: String) -> String {

@@ -1,7 +1,12 @@
 import SwiftUI
 import AppKit
-import MarkdownUI
 
+/// The agent's prose: one answer, drawn so that it can be selected and copied as one.
+///
+/// The answer is parsed once (see `ProseDocument`) into one run of text — paragraphs, headings,
+/// lists, quotes, code, tables and pictures all in one `NSTextView`. A drag therefore runs from
+/// the first line of an answer to the last, and ⌘C copies it in order with its line breaks,
+/// bullets, numbers and table rows.
 struct MarkdownProse: View {
 
     static let proseWidth: CGFloat = 680
@@ -17,175 +22,144 @@ struct MarkdownProse: View {
     var find: ProseFind? = nil
 
     var body: some View {
-        Markdown(FilePathLinks.rewrite(text, roots: fileRoots))
-            .markdownTheme(.bulava(marking: find))
+        let document = Self.document(text, roots: fileRoots)
+        let found = Self.matches(in: document, find: find)
+        let anchor = find.map { (entry: $0.entryID, block: $0.blockID) }
 
-            .markdownImageProvider(LocalImageProvider(roots: fileRoots))
-            .markdownInlineImageProvider(LocalImageProvider(roots: fileRoots))
-            .textSelection(.enabled)
-            .environment(\.openURL, OpenURLAction { url in
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(document.parts.enumerated()), id: \.offset) { index, part in
+                switch part.segment {
+                case .text(let segment):
+                    ProseTextPart(segment: segment, matches: found[index],
+                                  anchorPrefix: anchor,
+                                  onLink: { url in Self.follow(url, roots: fileRoots, openWeb: openWeb) })
+                        .padding(.top, part.spacingBefore)
+                }
+            }
+        }
+        .environment(\.openURL, OpenURLAction { url in
+            switch Self.route(url, roots: fileRoots, openWeb: openWeb) {
+            case .handled:   .handled
+            case .discarded: .discarded
+            case .system:    .systemAction
+            }
+        })
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: Self.proseWidth, alignment: .leading)
+    }
 
-                if let target = FilePathLinks.target(of: url, roots: fileRoots) {
-                    var isDirectory: ObjCBool = false
-                    guard FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirectory) else {
-                        return .handled
-                    }
-                    if isDirectory.boolValue {
-                        NSWorkspace.shared.activateFileViewerSelecting([target])
+    // MARK: The document, remembered
+
+    /// The parsed answer. File paths are turned into links first, the way the reader is shown
+    /// them; that pass looks at the disk, so it is remembered for a few seconds rather than
+    /// redone on every redraw of every message in the thread.
+    static func document(_ text: String, roots: [URL]) -> ProseDocument {
+        guard !roots.isEmpty else { return ProseDocument.make(text) }
+        return ProseDocument.make(LinkedSource.shared.rewrite(text, roots: roots), roots: roots)
+    }
+
+    /// Where the phrase stands in each part, numbered the way Find numbers the answer's results.
+    nonisolated static func matches(in document: ProseDocument, find: ProseFind?) -> [[ProseMatch]] {
+        guard let find, !find.query.isEmpty else {
+            return Array(repeating: [], count: document.parts.count)
+        }
+        var next = 0
+        return document.parts.map { part in
+            let ranges: [NSRange]
+            switch part.segment {
+            case .text(let segment):
+                ranges = segment.matches(of: find.query)
+            }
+            defer { next += ranges.count }
+            return ranges.enumerated().map { offset, range in
+                ProseMatch(range: range, occurrence: next + offset,
+                           isActive: find.activeOccurrence == next + offset)
+            }
+        }
+    }
+
+    // MARK: Links
+
+    /// What a click on a link does: a file in scope opens in Quick Look (a folder in Finder), a
+    /// web page goes to the in-app preview, and anything else is left alone.
+    enum Routed { case handled, discarded, system }
+
+    static func route(_ url: URL, roots: [URL], openWeb: ((URL) -> Void)?) -> Routed {
+        if let target = FilePathLinks.target(of: url, roots: roots) {
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirectory) else {
+                return .handled
+            }
+            if isDirectory.boolValue {
+                NSWorkspace.shared.activateFileViewerSelecting([target])
+            } else if DecisionCenter.current?.open(target) == true {
+                // A report that asks him to decide opens in the report window, with its choices beside it.
+            } else if let openWeb, let shares = ShareCenter.current, shares.enabled,
+                      ["html", "htm", "md", "markdown"].contains(target.pathExtension.lowercased()) {
+                // A page or a note opens as itself — a site with its styles and scripts, a note as a
+                // page — through the share server, and from there one button puts it on the phone.
+                Task { @MainActor in
+                    if case .success(let link) = await shares.share(target, within: roots),
+                       let local = shares.localURL(for: link) {
+                        openWeb(local)
                     } else {
                         QuickLookPresenter.shared.show([target], startingAt: 0)
                     }
-                    return .handled
                 }
-                let scheme = url.scheme?.lowercased()
-                guard scheme == "http" || scheme == "https" else { return .discarded }
-
-                guard let openWeb else { return .systemAction }
-                openWeb(url)
-                return .handled
-            })
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: Self.proseWidth, alignment: .leading)
-    }
-}
-
-// MARK: - The theme
-
-extension Theme {
-
-    static let bulava = Theme.bulava(marking: nil)
-
-    /// The prose theme, with the leaves told where the found phrase is.
-    ///
-    /// `marking` is nil whenever nobody is searching, and then every block style is exactly the
-    /// one that has always drawn this app's answers. When a search IS running, a paragraph,
-    /// heading or code block that holds the phrase draws itself instead — see `ProseLeaf` for
-    /// why the library cannot be asked to do it.
-    static func bulava(marking find: ProseFind?) -> Theme {
-        Theme()
-        .text {
-            FontFamilyVariant(.normal)
-            FontSize(ProseStyle.bodySize)
-            ForegroundColor(Palette.textSecondary)
-        }
-        .code {
-            FontFamilyVariant(.monospaced)
-            FontSize(ProseStyle.inlineCodeSize)
-            ForegroundColor(Palette.text)
-            BackgroundColor(Palette.panelMuted)
-        }
-        .strong { FontWeight(.semibold); ForegroundColor(Palette.text) }
-        .link { ForegroundColor(Palette.accent) }
-        .heading1 { config in
-            ProseLeaf(find: find, markdown: config.content.renderMarkdown(),
-                      leaf: .heading(level: 1)) { config.label }
-                .markdownMargin(top: 16, bottom: 6)
-                .markdownTextStyle {
-                    FontSize(ProseStyle.headingSize(1)); FontWeight(.semibold)
-                    ForegroundColor(Palette.text)
-                }
-        }
-        .heading2 { config in
-            ProseLeaf(find: find, markdown: config.content.renderMarkdown(),
-                      leaf: .heading(level: 2)) { config.label }
-                .markdownMargin(top: 14, bottom: 5)
-                .markdownTextStyle {
-                    FontSize(ProseStyle.headingSize(2)); FontWeight(.semibold)
-                    ForegroundColor(Palette.text)
-                }
-        }
-        .heading3 { config in
-            ProseLeaf(find: find, markdown: config.content.renderMarkdown(),
-                      leaf: .heading(level: 3)) { config.label }
-                .markdownMargin(top: 12, bottom: 4)
-                .markdownTextStyle {
-                    FontSize(ProseStyle.headingSize(3)); FontWeight(.semibold)
-                    ForegroundColor(Palette.text)
-                }
-        }
-        .paragraph { config in
-            ProseLeaf(find: find, markdown: config.content.renderMarkdown(),
-                      leaf: .paragraph) { config.label }
-                .relativeLineSpacing(.em(ProseStyle.bodyLineSpacing))
-                .markdownMargin(top: 0, bottom: 10)
-        }
-        .listItem { config in
-            config.label.markdownMargin(top: 3)
-        }
-        .blockquote { config in
-            HStack(spacing: 10) {
-                Rectangle().fill(Palette.line).frame(width: 2)
-                config.label.markdownTextStyle { ForegroundColor(Palette.textTertiary) }
+            } else {
+                QuickLookPresenter.shared.show([target], startingAt: 0)
             }
-            .markdownMargin(top: 6, bottom: 10)
+            return .handled
         }
-        .codeBlock { config in
+        let scheme = url.scheme?.lowercased()
+        guard scheme == "http" || scheme == "https" else { return .discarded }
 
-            ProseLeaf(find: find, markdown: config.content, leaf: .codeBlock) { config.label }
-                .relativeLineSpacing(.em(ProseStyle.codeBlockLineSpacing))
-                .markdownTextStyle {
-                    FontFamilyVariant(.monospaced); FontSize(ProseStyle.codeBlockSize)
-                }
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(11)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Palette.panelMuted)
-                .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusControl, style: .continuous))
-                .markdownMargin(top: 4, bottom: 12)
-        }
-        .table { config in
+        guard let openWeb else { return .system }
+        openWeb(url)
+        return .handled
+    }
 
-            config.label
-                .fixedSize(horizontal: false, vertical: true)
-                .markdownTableBorderStyle(.init(color: Palette.line,
-                                                strokeStyle: .init(lineWidth: 1)))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .markdownMargin(top: 4, bottom: 12)
-        }
-        .tableCell { config in
-            config.label
-                .markdownTextStyle { if config.row == 0 { FontWeight(.semibold) } }
-                .padding(.vertical, 5)
-                .padding(.horizontal, 9)
-        }
-        .thematicBreak {
-            Rectangle().fill(Palette.line).frame(height: 1).markdownMargin(top: 12, bottom: 12)
+    /// The same, for a click inside the text view, which has no SwiftUI `openURL` to hand it to.
+    static func follow(_ url: URL, roots: [URL], openWeb: ((URL) -> Void)?) {
+        if route(url, roots: roots, openWeb: openWeb) == .system {
+            NSWorkspace.shared.open(url)
         }
     }
 }
 
-// MARK: - Images: from this machine, in scope, or not at all
+// MARK: - File paths as links, remembered briefly
 
-private struct LocalImageProvider: ImageProvider, InlineImageProvider {
-    let roots: [URL]
+/// `FilePathLinks.rewrite` asks the disk whether every path in an answer exists. Remembered for
+/// a few seconds: long enough that a redraw of the whole thread does not stat every path in it,
+/// short enough that a file the agent has just created becomes a link.
+nonisolated private final class LinkedSource: @unchecked Sendable {
+    static let shared = LinkedSource()
+    private static let lifetime: TimeInterval = 10
+    private static let capacity = 600
 
-    @ViewBuilder func makeImage(url: URL?) -> some View {
-        if let url, let file = FilePathLinks.target(of: url, roots: roots),
-           FilePathLinks.isImage(file), let image = NSImage(contentsOf: file) {
-            Button { QuickLookPresenter.shared.show([file], startingAt: 0) } label: {
-                Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: MarkdownProse.proseWidth, maxHeight: 420)
-                    .clipShape(RoundedRectangle(cornerRadius: Metrics.radiusControl, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: Metrics.radiusControl, style: .continuous)
-                            .strokeBorder(Palette.line, lineWidth: 1)
-                    )
-            }
-            .buttonStyle(.plain)
-            .help(Text("Open in preview"))
-        } else {
+    private struct Key: Hashable { var text: String; var roots: [String] }
 
-            Color.clear.frame(width: 0, height: 0)
+    private let lock = NSLock()
+    private var memo: [Key: (value: String, at: Date)] = [:]
+
+    func rewrite(_ text: String, roots: [URL]) -> String {
+        let key = Key(text: text, roots: roots.map(\.path))
+        let now = Date()
+        lock.lock()
+        if let hit = memo[key], now.timeIntervalSince(hit.at) < Self.lifetime {
+            lock.unlock()
+            return hit.value
         }
-    }
+        lock.unlock()
 
-    func image(with url: URL, label: String) async throws -> Image {
-        guard let file = FilePathLinks.target(of: url, roots: roots),
-              FilePathLinks.isImage(file), let image = NSImage(contentsOf: file) else {
-            throw CancellationError()
+        let value = FilePathLinks.rewrite(text, roots: roots)
+
+        lock.lock(); defer { lock.unlock() }
+        if memo.count >= Self.capacity {
+            memo = memo.filter { now.timeIntervalSince($0.value.at) < Self.lifetime }
+            if memo.count >= Self.capacity { memo.removeAll(keepingCapacity: true) }
         }
-        return Image(nsImage: image)
+        memo[key] = (value, now)
+        return value
     }
 }

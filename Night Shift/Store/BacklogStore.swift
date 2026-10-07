@@ -81,8 +81,13 @@ final class BacklogStore {
         persist()
     }
 
+    /// A separate copy rather than a project: the old nested `.nightshift-worktrees` ones, and the
+    /// copies Bulava keeps in its own folder. Work found running in one belongs to whoever made the
+    /// copy, never to a new card.
     nonisolated static func isWorktreePath(_ path: String) -> Bool {
-        path.contains("/.nightshift-worktrees/")
+        if path.contains("/.nightshift-worktrees/") { return true }
+        let root = Slug.canonicalPath(WorkCopies.root.path) + "/"
+        return Slug.canonicalPath(path).hasPrefix(root) || path.hasPrefix(WorkCopies.root.path + "/")
     }
 
     @discardableResult
@@ -218,17 +223,6 @@ final class BacklogStore {
         tasks[idx].updatedAt = Date(); persist()
     }
 
-    func setDependencies(_ id: UUID, _ deps: [UUID]) {
-        guard let idx = tasks.firstIndex(where: { $0.id == id }) else { return }
-        tasks[idx].dependsOn = deps.filter { $0 != id }
-        tasks[idx].updatedAt = Date(); persist()
-    }
-
-    func setAutoResume(_ id: UUID, _ value: Bool) {
-        guard let idx = tasks.firstIndex(where: { $0.id == id }) else { return }
-        tasks[idx].autoResume = value; persist()
-    }
-
     func setHolds(_ id: UUID, _ holds: [TaskHold]) {
         guard let idx = tasks.firstIndex(where: { $0.id == id }) else { return }
         guard tasks[idx].holds != holds else { return }
@@ -242,15 +236,44 @@ final class BacklogStore {
         tasks[idx].worktree = path; persist()
     }
 
-    func resumable() -> [BacklogTask] {
-        tasks.filter { $0.autoResume && $0.dispatchedAt == nil && !isBlocked($0) && $0.isDispatchable }
+    /// The card no longer runs in `worktree` — it is gone, or it is not a checkout of the card's
+    /// project. The path moves to the card's history, where its transcripts are still looked for.
+    func retireWorktree(_ id: UUID) {
+        guard let idx = tasks.firstIndex(where: { $0.id == id }), let old = tasks[idx].worktree else { return }
+        if !tasks[idx].retiredWorktrees.contains(old) { tasks[idx].retiredWorktrees.append(old) }
+        tasks[idx].worktree = nil
+        persist()
     }
 
-    func withExternalPRBlocker() -> [BacklogTask] {
-        tasks.filter { t in
-            guard let b = t.externalBlocker else { return false }
-            return b.range(of: #"#\d+"#, options: .regularExpression) != nil || b.lowercased().contains("github.com")
+    /// Cards pointing at a copy that is no longer on disk, retired once at launch. A copy removed
+    /// by hand, or by a cleanup, left them aiming the next follow-up at a folder that is not there.
+    @discardableResult
+    func retireDeadWorktrees(exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> Int {
+        var retired = 0
+        for idx in tasks.indices {
+            guard let path = tasks[idx].worktree, !exists(path) else { continue }
+            if !tasks[idx].retiredWorktrees.contains(path) { tasks[idx].retiredWorktrees.append(path) }
+            tasks[idx].worktree = nil
+            retired += 1
         }
+        if retired > 0 { persist() }
+        return retired
+    }
+
+    /// Put a card back exactly as it was before a start that was refused before anything ran.
+    func restore(_ snapshot: BacklogTask) {
+        guard let idx = tasks.firstIndex(where: { $0.id == snapshot.id }) else { return }
+        var restored = snapshot
+        restored.worktree = tasks[idx].worktree
+        restored.retiredWorktrees = tasks[idx].retiredWorktrees
+        restored.externalBlocker = tasks[idx].externalBlocker
+        restored.updatedAt = Date()
+        tasks[idx] = restored
+        persist()
+    }
+
+    func resumable() -> [BacklogTask] {
+        tasks.filter { $0.autoResume && $0.dispatchedAt == nil && !isBlocked($0) && $0.isDispatchable }
     }
 
     private func taskOrder(_ a: BacklogTask, _ b: BacklogTask) -> Bool {

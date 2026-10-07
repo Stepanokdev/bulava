@@ -160,7 +160,6 @@ nonisolated final class ClosingWorkOutTests: XCTestCase {
     @MainActor
     func testClosedReadsAsDoneEverywhere() {
         XCTAssertEqual(TaskState.closed.column, .done)
-        XCTAssertEqual(TaskBucket(.closed), .done)
         let t = BacklogTask(title: "x", type: .feature, priority: .p2, state: .closed)
         XCTAssertEqual(WorkProgress.state(task: t, instance: nil), .done)
     }

@@ -269,39 +269,6 @@ nonisolated final class MultiQuestionDecisionTests: XCTestCase {
                                  text: record.headline, taskID: taskID, decision: record)
     }
 
-    @MainActor
-    func testAnsweringOneQuestionLeavesTheOther() throws {
-        let (s, urls) = store(); defer { urls.forEach { try? FileManager.default.removeItem(at: $0) } }
-        let product = UUID(), task = UUID()
-        s.append(card(taskID: task, productID: product))
-
-        XCTAssertTrue(s.resolveQuestion(taskID: task, answered: 1), "the card should still be asking")
-        let left = try XCTUnwrap(s.entries.last { $0.kind == .question }?.decision)
-        XCTAssertEqual(left.items.count, 1)
-        XCTAssertEqual(left.items[0].question, "Чи лишати чесну помилку замість тихого фолбеку?")
-
-        XCTAssertEqual(s.entries.last { $0.kind == .question }?.text, left.items[0].question)
-    }
-
-    @MainActor
-    func testAnsweringTheLastQuestionClosesTheCard() {
-        let (s, urls) = store(); defer { urls.forEach { try? FileManager.default.removeItem(at: $0) } }
-        let product = UUID(), task = UUID()
-        s.append(card(taskID: task, productID: product))
-        XCTAssertTrue(s.resolveQuestion(taskID: task, answered: 2))
-        XCTAssertFalse(s.resolveQuestion(taskID: task, answered: 1), "the last answer closes it")
-        XCTAssertNil(s.entries.first { $0.kind == .question })
-    }
-
-    @MainActor
-    func testAFreeTextAnswerClosesTheWholeCard() {
-        let (s, urls) = store(); defer { urls.forEach { try? FileManager.default.removeItem(at: $0) } }
-        let product = UUID(), task = UUID()
-        s.append(card(taskID: task, productID: product))
-        XCTAssertFalse(s.resolveQuestion(taskID: task, answered: nil))
-        XCTAssertNil(s.entries.first { $0.kind == .question })
-    }
-
     func testTheOptionReplyCarriesItsQuestionNumber() {
         XCTAssertEqual(AppModel.answeredNumber(in: "2: влити як є"), 2)
         XCTAssertEqual(AppModel.answeredNumber(in: "1: перевірити на пристрої"), 1)

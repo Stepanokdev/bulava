@@ -174,6 +174,38 @@ nonisolated enum FilePathLinks {
         return true
     }
 
+    // MARK: - The files an answer names
+
+    /// Every file an answer names that exists inside `roots` — the targets of its links and the
+    /// paths in its text, in that order, each once — and every folder it names that opens as a
+    /// site. Nothing hidden: a path through `.git` or to `.env` is not offered to anybody.
+    ///
+    /// What the phone shows under an answer as things to open (`LinkProjection.block`): the Mac
+    /// makes the same paths clickable in its own copy of the text.
+    static func files(in text: String, roots: [URL], limit: Int = 8) -> [URL] {
+        let canonical = roots.map { $0.standardizedFileURL.resolvingSymlinksInPath().path }
+            .filter { !$0.isEmpty && $0 != "/" }
+        guard !canonical.isEmpty, !text.isEmpty else { return [] }
+        var raws = nodes(in: text).map { String(text[$0.target]) }
+        raws += candidates(in: text).map(\.path)
+        var out: [URL] = []
+        var seen = Set<String>()
+        let fm = FileManager.default
+        for raw in raws where out.count < limit {
+            let path = (raw.removingPercentEncoding ?? raw).trimmingCharacters(in: CharacterSet(charactersIn: "<> "))
+            guard !path.contains("://"), let url = resolve(path, roots: canonical) else { continue }
+            guard let root = canonical.first(where: { url.path == $0 || url.path.hasPrefix($0 + "/") }),
+                  !url.path.dropFirst(root.count).split(separator: "/").contains(where: { $0.hasPrefix(".") }) else { continue }
+            var isDirectory: ObjCBool = false
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDirectory) else { continue }
+            if isDirectory.boolValue,
+               !fm.fileExists(atPath: url.appendingPathComponent("index.html").path),
+               !fm.fileExists(atPath: url.appendingPathComponent("index.htm").path) { continue }
+            if seen.insert(url.path).inserted { out.append(url) }
+        }
+        return out
+    }
+
     // MARK: - Resolving
 
     static func resolve(_ raw: String, roots: [String]) -> URL? {

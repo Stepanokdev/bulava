@@ -80,10 +80,15 @@ codex_prefer_newest
 
 # The director's choices, named once. Both the tmux launch line and the durable file below are
 # generated from this list, so a variable added here reaches every later process automatically.
+#
+# SUPERVISOR_UNATTENDED=1 is an automation's run: nobody is at the computer while it works. The
+# worker's own hooks read it from the environment they inherit (`hooks/permission-request.sh`), and
+# the launch gives it a browser of its own (`automation_mcp_flags`).
 _RUN_ENV_VARS="SUPERVISOR_CODEX_EFFORT SUPERVISOR_CODEX_MODEL \
 SUPERVISOR_CLAUDE_EFFORT SUPERVISOR_CLAUDE_MODEL \
 SUPERVISOR_REPORT_LANGUAGE SUPERVISOR_REPORT_WRITER \
-SUPERVISOR_COLLABORATION_MODE SUPERVISOR_CONSULT_TIMEOUT"
+SUPERVISOR_COLLABORATION_MODE SUPERVISOR_CONSULT_TIMEOUT \
+SUPERVISOR_UNATTENDED"
 
 run_env_stamp() {
   local v
@@ -98,7 +103,66 @@ run_env_stamp() {
   for v in $_RUN_ENV_VARS; do
     printf '%s=%s ' "$v" "$(shq "$(eval "printf '%s' \"\${$v:-}\"")")"
   done
+  # A worker's Claude does not update itself mid-run. Each version is a new program to macOS, and
+  # the folder permissions it was given go with the old one: a night run that updated at 2 a.m.
+  # asked for them again with nobody there. It updates the next time he runs it himself.
+  printf 'DISABLE_AUTOUPDATER=1 '
   return 0
+}
+
+# The browser an automation run gets: Chrome with no window and a throwaway profile, through
+# chrome-devtools-mcp pinned to a known version (`supervisor/automation-mcp.json`). It touches
+# nothing of his — not his Chrome, not his profile, not port 9222 — so it needs nobody to allow it.
+automation_mcp_flags() {
+  [ "${SUPERVISOR_UNATTENDED:-}" = 1 ] || return 0
+  local f="${SUPERVISOR_AUTOMATION_MCP_CONFIG:-$_SUP_BIN_DIR/../supervisor/automation-mcp.json}"
+  [ -s "$f" ] || return 0
+  printf -- '--mcp-config %s ' "$(shq "$f")"
+}
+
+# Bulava's own browser, when it is on: its service file says so and Bulava is alive. Prints the
+# file. A Chrome on a profile of Bulava's that he signed in to once, lent to one run at a time
+# through a door on the loopback (`AccountBrowser`, `BrowserBroker` in the app).
+bulava_browser_service() {
+  local f="$SUP_STATE/browser/service.json" pid
+  [ -s "$f" ] || return 1
+  [ "$(jq -r 'if .enabled == true and ((.port // 0) > 0) then "on" else "off" end' "$f" 2>/dev/null)" = on ] || return 1
+  pid="$(jq -r '.pid // empty' "$f" 2>/dev/null)"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
+  printf '%s\n' "$f"
+}
+
+# The browsers a run gets. With Bulava's browser on, every run gets two: `browser`, headless with a
+# throwaway profile, for anything that needs no sign-in — runs never wait on each other for it —
+# and `accounts`, Bulava's signed-in browser, through its door with this run's own token. A run
+# without the director (SUPERVISOR_UNATTENDED=1) has the sites he keeps for himself closed in its
+# client too; Bulava closes them on its side as well. Without Bulava's browser, an automation keeps
+# the throwaway one it always had.
+browser_mcp_flags() {   # $1=instance dir
+  local idir="$1" svc port token unattended=false blocked='[]' cfg
+  svc="$(bulava_browser_service)" || { automation_mcp_flags; return 0; }
+  [ "${SUPERVISOR_UNATTENDED:-}" = 1 ] && unattended=true
+  port="$(jq -r '.port' "$svc" 2>/dev/null)"
+  # The same token for the whole run, resumes included: Bulava knows the run by it.
+  token=""
+  [ -s "$idir/browser.json" ] && token="$(jq -r '.token // empty' "$idir/browser.json" 2>/dev/null)"
+  [ "${#token}" -ge 32 ] || token="$(LC_ALL=C tr -dc 'a-f0-9' < /dev/urandom 2>/dev/null | head -c 48)"
+  [ "${#token}" -ge 32 ] || { automation_mcp_flags; return 0; }
+  [ "$unattended" = true ] && blocked="$(jq -c '.blocked // []' "$svc" 2>/dev/null || echo '[]')"
+  cfg="$idir/browser-mcp.json"
+  ( umask 077
+    jq -n --arg t "$token" --argjson u "$unattended" '{token:$t, unattended:$u}' > "$idir/browser.json.tmp" \
+      && mv -f "$idir/browser.json.tmp" "$idir/browser.json"
+    jq -n --arg port "$port" --arg token "$token" --argjson blocked "$blocked" '
+      {mcpServers: {
+         browser: {command: "npx", args: ["-y", "chrome-devtools-mcp@1.10.1", "--headless", "--isolated"]},
+         accounts: {command: "npx", args: (["-y", "chrome-devtools-mcp@1.10.1",
+             "--wsEndpoint", ("ws://127.0.0.1:" + $port + "/devtools/browser/bulava"),
+             "--wsHeaders", ({Authorization: ("Bearer " + $token)} | tojson),
+             "--redactNetworkHeaders"]
+           + ($blocked | map("--blockedUrlPattern", ("*://{*.}?" + . + "/*"))))}}}' > "$cfg.tmp" \
+      && mv -f "$cfg.tmp" "$cfg" ) || { automation_mcp_flags; return 0; }
+  printf -- '--mcp-config %s ' "$(shq "$cfg")"
 }
 
 # ------------------------------------------------------------------ the run's choices, on disk
@@ -636,18 +700,29 @@ report_directive() {
   sed -e "s|{{DIR}}|$dir|g" -e "s|{{LANG}}|$lang|g" -e "s|{{CONTINUING}}|$cont|g" "$src"
 }
 
+# The language the worker writes to the person in: theirs, read off their own words. It used to be
+# a fixed name — the app's setting, or this engine's default when the app sent none, which a chat
+# never did — so someone who wrote to Bulava in English or Russian was answered in Ukrainian. The
+# name is now only where to start before they have written anything. The rule is in English because
+# the instructions around a message are in several languages and must not be read as the answer's.
 worker_language_rule() {
   local lang="${SUPERVISOR_REPORT_LANGUAGE:-Ukrainian}"
   printf '%s\n' \
     "" \
-    "# МОВА" \
+    "# LANGUAGE" \
     "" \
-    "Усе, що ти пишеш ЛЮДИНІ в цій сесії — план, міркування вголос, пояснення, підсумки, питання —" \
-    "має бути мовою: $lang. Це те, що директор читає в застосунку, і воно не має бути іншою мовою," \
-    "ніж решта інтерфейсу." \
+    "Write to the person in the language they write to you in: the language of their own words in" \
+    "their latest message — English, Ukrainian, Russian or any other. Text they paste (logs, code," \
+    "quotes, error messages) does not count, and neither do the instructions around their words: this" \
+    "prompt and the engine's and the app's notes are in whatever language they were written in and say" \
+    "nothing about the language to answer in. A message the app or the engine sends on their behalf — a" \
+    "request for a report, a review's verdict, a reminder, a go-ahead — is not their words either. When a" \
+    "message has no words of theirs, keep the language of the conversation so far; before there is any," \
+    "use $lang." \
     "" \
-    "Код, ідентифікатори, шляхи, команди, вивід інструментів і повідомлення комітів НЕ перекладай —" \
-    "вони лишаються як є."
+    "That covers everything you write for the person to read — the plan, thinking aloud, explanations," \
+    "summaries, questions, reports. Code, identifiers, paths, commands, tool output and commit messages" \
+    "are not translated."
 }
 
 # $1=idir  $2=task  $3=artifact dir (optional; where THIS message's preflight wrote its files)
@@ -708,6 +783,28 @@ compose_task_prompt() {   # stdout = full injected task
   printf '  %s <result> "короткий підсумок"\n' "$idir/report-outcome"
   printf '  result: succeeded_changes (є зміни коду) | succeeded_no_change (нічого міняти не треба) | succeeded_research (дослідження/фізибіліті — деліверабл це звіт) | blocked (потрібен доступ/людина) | needs_input (потрібне рішення) | failed (не вдалося).\n'
   printf '  Дослідження, «і так усе ок» чи блокер — це РЕЗУЛЬТАТ, а не «нічого»: заяви явно, інакше зміну не буде видно і задача зависне.\n'
+
+  task_language_line "$task"
+}
+
+# The language line every message ends with. Said with every message, not only once in the system
+# prompt: these notes are Ukrainian and longer than a one-line message, and a worker told only to
+# "follow the person's language" answered English and Russian questions in Ukrainian. So the language
+# is NAMED, read off the person's own words (`language.py`). A message the app wrote — marked
+# `[BULAVA]` — carries no words of theirs, and keeps the conversation's language instead.
+task_language_line() {
+  local task="$1" name
+  case "$task" in
+    "[BULAVA]"*)
+      printf '\n[LANGUAGE] The message above is from the app, not from the person. Answer, and write anything it asks for, in the language the person has been writing to you in — not in the language of the message or of these notes.\n'
+      return 0 ;;
+  esac
+  name="$(printf '%s' "$task" | python3 "$_SUP_BIN_DIR/language.py" name 2>/dev/null)"
+  if [ -n "$name" ]; then
+    printf '\n[LANGUAGE] The person wrote the task above in %s. Answer in %s — not in the language of these notes.\n' "$name" "$name"
+  else
+    printf '\n[LANGUAGE] Answer in the language of the person'"'"'s own words in the task above — not in the language of these notes.\n'
+  fi
 }
 
 worker_session_file() {
@@ -979,6 +1076,14 @@ worker_owes_answer() {   # $1=session [$2=idir]
   found="$(hung_turn_kind "$tx")" || return 1
   read -r kind uuid at <<< "$found"
   [ "$kind" = unanswered ] || return 1
+  # Nor does a question the director stopped. An Escape that lands in the first seconds of a turn —
+  # before Claude Code has anything to interrupt — writes no "[Request interrupted]", so the
+  # transcript still ends on his prompt. Read as owed, that prompt held every later message in the
+  # queue for good: delivery would not type past it, the watchdog's flush asked the same question,
+  # and the Stop marker is exactly what keeps the frozen-turn recovery away. His Stop is the answer.
+  if [ -n "${2:-}" ] && [ -e "$2/director-stopped" ]; then
+    [ "$(stat -f %m "$2/director-stopped" 2>/dev/null || echo 0)" -ge "${at:-0}" ] && return 1
+  fi
   [ -n "${2:-}" ] && [ -f "$2/handshake-ok" ] && [ "${at:-0}" -gt 0 ] || return 0
   born="$(stat -f %m "$2/handshake-ok" 2>/dev/null || echo 0)"
   [ "$at" -ge "$born" ]
@@ -1060,6 +1165,169 @@ worker_relaunch() {   # $1=idir $2=session → 0 when a fresh worker has shaken 
     return 1
   fi
   echo "$(date '+%F %T') [recover] restarted the worker on $session (claude --resume $sid)" >> "$plog"
+  return 0
+}
+
+# ------------------------------------------------------------------ bringing a dead run back in place
+#
+# A run's tmux session and its watchdog can die together outside the engine's hands — the whole tree
+# gone at once, nothing written. A run that was waiting then stayed waiting for ever: the watchdog
+# only sleeps while its session is missing, a dead watchdog does nothing at all, and the next
+# message went through `resume`, which deletes the instance and starts a new run — and the review
+# the run still owed went with it. That is how a chat parked on Codex never came back when Codex
+# did. `instance_revive` brings such a run back IN PLACE: the same directory, the same run id, the
+# same Claude conversation, a new generation. Nothing is deleted.
+
+# Work the run took on and has not finished: a usage window it is parked on, a review or a resume it
+# owes, a dispatch held for Codex, messages accepted and not yet delivered. `codex-owed.json` alone
+# is not on the list: it can outlive the review it describes.
+instance_owes_work() {   # $1=idir
+  local d="${1:-}"
+  [ -d "$d" ] || return 1
+  [ -e "$d/paused-for-limit.json" ] || [ -e "$d/review-pending" ] || [ -e "$d/resume-pending" ] \
+    || [ -s "$d/dispatch-held.json" ] || [ -s "$(undelivered_file "$d")" ] \
+    || [ "$(pending_count "$d" 2>/dev/null || echo 0)" != 0 ]
+}
+
+# The watchdog in watchdog.pid, if it is this instance's: a live pid is not enough, pids are reused.
+instance_watchdog_alive() {   # $1=idir $2=slug
+  local p cmd
+  p="$(tr -d '[:space:]' < "${1:-}/watchdog.pid" 2>/dev/null)"
+  case "$p" in ''|*[!0-9]*) return 1 ;; esac
+  kill -0 "$p" 2>/dev/null || return 1
+  cmd="$(ps -ww -p "$p" -o command= 2>/dev/null)"
+  case "$cmd" in *watchdog*"${2:-@}"*) return 0 ;; *) return 1 ;; esac
+}
+
+# A Claude still running this run's conversation, however it was launched: the conversation's id on
+# its command line (a --resume), or this instance's own system prompt (a first launch names no id).
+# Two of them on one transcript is the thing a revival must never cause.
+instance_worker_alive() {   # $1=idir → the first such pid
+  local d="${1:-}" sid
+  sid="$(tr -d '[:space:]' < "$d/claude-session-id" 2>/dev/null)"
+  ps -ax -ww -o pid=,command= 2>/dev/null | awk -v own="$$" -v prompt="$d/standards.md" -v sid="${sid:-@no-session@}" '
+    $1 == own { next }
+    /tmux new-session|[ \/]awk / { next }
+    /claude/ && (index($0, prompt) || index($0, "--resume " sid) || index($0, "--resume '\''" sid "'\''")) {
+      print $1; found = 1; exit }
+    END { exit found ? 0 : 1 }'
+}
+
+# One revival of a run at a time, whoever asks — the app, the watchdog, a message on its way in. The
+# lock lives outside the instance, which a teardown may delete; one whose holder is gone, or older
+# than any revival takes, is taken over.
+_revive_lock_dir() { printf '%s/locks/revive-%s' "$SUP_STATE" "${1:-x}"; }
+_take_lock() {   # $1=lock dir → 0 when taken by this process
+  local l="${1:-}" p age
+  mkdir -p "$SUP_STATE/locks" 2>/dev/null || true
+  if mkdir "$l" 2>/dev/null; then printf '%s\n' "$$" > "$l/pid"; return 0; fi
+  p="$(cat "$l/pid" 2>/dev/null)"
+  age=$(( $(date +%s) - $(stat -f %m "$l" 2>/dev/null || date +%s) ))
+  if { [ -n "$p" ] && ! kill -0 "$p" 2>/dev/null; } || [ "$age" -gt 300 ]; then
+    rm -rf "$l" 2>/dev/null
+    mkdir "$l" 2>/dev/null && { printf '%s\n' "$$" > "$l/pid"; return 0; }
+  fi
+  return 1
+}
+revive_lock() { _take_lock "$(_revive_lock_dir "${1:-}")"; }   # $1=slug
+revive_unlock() { rm -rf "$(_revive_lock_dir "${1:-}")" 2>/dev/null || true; }
+
+# One start of a Claude conversation at a time — a resume or a revival, from whichever folder it is
+# asked: a folder's lock does not stop two folders starting the same id at once, each finding no one
+# else running it yet. Taken BEFORE the folder's lock, by everyone, and held until the start is
+# confirmed or given up. The holder's slug is written in it, so a second ask from the same run can be
+# told apart from another run's.
+_session_lock_dir() { printf '%s/locks/claude-session-%s' "$SUP_STATE" "$(printf '%s' "${1:-x}" | tr -c 'A-Za-z0-9-' '_')"; }
+session_lock() {   # $1=claude session id $2=slug taking it
+  local l; l="$(_session_lock_dir "${1:-}")"
+  _take_lock "$l" || return 1
+  printf '%s\n' "${2:-}" > "$l/owner"
+}
+session_lock_owner() { cat "$(_session_lock_dir "${1:-}")/owner" 2>/dev/null; }   # $1=claude session id
+session_unlock() { rm -rf "$(_session_lock_dir "${1:-}")" 2>/dev/null || true; }
+
+# $1=slug [$2=worker-only] → 0 whole again (or already whole, or being brought back by someone else)
+# 1 tried and failed, 3 nothing to start it from, 4 refused for good (stopped by the director, or
+# another run by now), 5 not now: a Claude on this conversation is still running. `worker-only` is
+# the watchdog asking: it is alive, so only its session is started.
+instance_revive() {
+  local slug="${1:-}" mode="${2:-}" idir proj tpl sid rid owner rc
+  local plog="$SUP_STATE/supervisor.log"
+  idir="$(instance_dir "$slug")"
+  [ -d "$idir" ] || return 3
+  [ -e "$idir/director-stopped" ] && return 4
+  tpl="$(cat "$idir/relaunch-template" 2>/dev/null)"
+  sid="$(tr -d '[:space:]' < "$idir/claude-session-id" 2>/dev/null)"
+  rid="$(tr -d '[:space:]' < "$idir/run-id" 2>/dev/null)"
+  proj="$(cat "$idir/project" 2>/dev/null)"
+  [ -n "$tpl" ] && [ -n "$sid" ] && [ -n "$rid" ] && [ -d "$proj" ] || return 3
+  # The conversation's lock first, the folder's second — the order `resume` takes them in.
+  if ! session_lock "$sid" "$slug"; then
+    owner="$(session_lock_owner "$sid")"
+    # This very run, being brought back by someone else: theirs to finish, as with the folder's lock.
+    [ "$owner" = "$slug" ] && return 0
+    echo "$(date '+%F %T') [revive] $slug: conversation $sid is being started by ${owner:-another run} right now — not starting a second one" >> "$plog"
+    return 5
+  fi
+  if ! revive_lock "$slug"; then session_unlock "$sid"; return 0; fi
+  _instance_revive_locked "$slug" "$mode" "$tpl" "$sid" "$rid" "$proj"; rc=$?
+  revive_unlock "$slug"; session_unlock "$sid"
+  return "$rc"
+}
+
+# The revival itself, for a caller holding the conversation's lock and the folder's.
+_instance_revive_locked() {   # $1=slug $2=mode $3=launch template $4=session id $5=run id $6=project
+  local slug="$1" mode="$2" tpl="$3" sid="$4" rid="$5" proj="$6" idir session gen launch started=0 i
+  local plog="$SUP_STATE/supervisor.log"
+  idir="$(instance_dir "$slug")"; session="$(session_name "$slug")"
+  # Looked at again under the lock: the run may have been stopped or replaced while it was taken.
+  if [ ! -d "$idir" ] || [ -e "$idir/director-stopped" ] \
+     || [ "$(tr -d '[:space:]' < "$idir/run-id" 2>/dev/null)" != "$rid" ]; then
+    return 4
+  fi
+  if ! tmux has-session -t "$session" 2>/dev/null; then
+    if i="$(instance_worker_alive "$idir")"; then
+      echo "$(date '+%F %T') [revive] $slug: a Claude on this conversation is still running (pid $i) — not starting a second one" >> "$plog"
+      return 5
+    fi
+    # Alive in another run — a copy, his folder — though no process here names it: one
+    # conversation has one place it runs.
+    if i="$(claude_session_holder "$sid" "$slug")"; then
+      echo "$(date '+%F %T') [revive] $slug: conversation $sid is live in $i — not starting a second one" >> "$plog"
+      return 5
+    fi
+    gen="$(new_worker_generation "$idir")"
+    if [ -z "$gen" ] || [ "$(tr -d '[:space:]' < "$idir/worker-generation" 2>/dev/null)" != "$gen" ]; then
+      echo "$(date '+%F %T') [revive] $slug: could not record a new generation — not starting" >> "$plog"
+      return 1
+    fi
+    launch="${tpl//@CLAUDE_SESSION@/$(shq "$sid")}"
+    launch="${launch//@GENERATION@/$(shq "$gen")}"
+    rm -f "$idir/handshake-ok" "$idir/recovering" "$idir/relaunching" 2>/dev/null || true
+    # Before Claude starts: its SessionStart sweeps instances by the age of this file.
+    touch "$idir/last-activity" 2>/dev/null || true
+    if ! tmux new-session -d -s "$session" -c "$proj" "$launch" 2>>"$plog"; then
+      echo "$(date '+%F %T') [revive] $slug: tmux would not start the session" >> "$plog"
+      return 1
+    fi
+    started=1
+  fi
+  if [ "$mode" != worker-only ] && ! instance_watchdog_alive "$idir" "$slug"; then
+    nohup "${SUPERVISOR_WATCHDOG_CMD:-$_SUP_BIN_DIR/watchdog.sh}" "$slug" >/dev/null 2>&1 &
+    printf '%s\n' "$!" > "$idir/watchdog.pid"
+    echo "$(date '+%F %T') [revive] $slug: watchdog started again (pid $!)" >> "$plog"
+  fi
+  if [ "$started" = 1 ]; then
+    for i in $(seq 1 "${SUPERVISOR_REVIVE_HANDSHAKE_WAIT:-60}"); do
+      [ -f "$idir/handshake-ok" ] && break
+      sleep 1
+    done
+    if [ ! -f "$idir/handshake-ok" ]; then
+      echo "$(date '+%F %T') [revive] $slug: the session was started again but Claude never shook hands" >> "$plog"
+      return 1
+    fi
+    echo "$(date '+%F %T') [revive] $slug: brought back in place — run $rid, claude --resume $sid, generation $gen" >> "$plog"
+  fi
   return 0
 }
 
@@ -1446,25 +1714,224 @@ inject_task() {
   return 2
 }
 
-await_handshake() {  # $1=instance dir  $2=slug (for the log)
-  local idir="${1:-}" slug="${2:-}" waited="${SUPERVISOR_HANDSHAKE_WAIT:-0}" i=0
+# Why nobody confirmed the run-id, named from what the worker's pane shows and what is installed.
+#
+# «Check the hooks» used to be the only answer, and on a new user's machine it was the wrong one:
+# the handshake is written by a SessionStart hook, and Claude Code runs no hook while it is still
+# on a screen of its own — the first-run theme picker, a login, the folder-trust question. Those
+# screens sit in a detached tmux pane nobody sees, so the start timed out and was rolled back while
+# the message sent the person to reinstall hooks that were fine. The screen is read before the hooks
+# are suspected, because a screen on display is proof and a missing file is only a likelihood.
+#   $1 = the pane's text   $2 = slug      prints one of:
+#   onboarding | login | trust | hooks | exited | unknown   (and await_handshake: screen)
+handshake_blocker() {
+  local pane="${1:-}" slug="${2:-}" ws="$SUP_STATE/worker-settings.json" hook screen
+  screen="$(handshake_screen "$pane")"
+  [ -n "$screen" ] && { echo "$screen"; return; }
+  # A stubbed worker (tests, SUPERVISOR_CLAUDE_CMD) is not launched with the settings file, so its
+  # absence says nothing about the hooks there.
+  if [ -z "${SUPERVISOR_CLAUDE_CMD:-}" ]; then
+    hook="$(jq -r '[.hooks.SessionStart[]?.hooks[]?.command // empty
+                     | select(test("safety-check\\.sh"))][0] // empty' "$ws" 2>/dev/null || true)"
+    hook="${hook#\'}"; hook="${hook%\'}"
+    if [ -z "$hook" ] || [ ! -f "$hook" ]; then echo hooks; return; fi
+  fi
+  if [ -n "$slug" ] && ! tmux has-session -t "$(session_name "$slug")" 2>/dev/null; then
+    echo exited; return
+  fi
+  echo unknown
+}
+
+# Whether the bottom of the pane is a screen waiting for somebody's key: a menu, a confirmation, a
+# yes/no, "press Enter". Not WHICH screen — Claude Code grows new ones faster than any list of them
+# could (the external-imports question about a CLAUDE.md was the one that stopped a start on 5 Oct)
+# — only that it is asking. Read off the key hints such a screen prints under itself; Claude's own
+# composer prints none of them, and "esc to interrupt" is a turn running, not a question.
+#   $1 = the pane's text
+handshake_screen_asks() {
+  local bottom
+  bottom="$(printf '%s\n' "${1:-}" | sed '/^[[:space:]│]*$/d' | tail -n 10)"
+  # From a here-string, not a pipe: `grep -q` leaving early would hand the writer a SIGPIPE, and
+  # under pipefail a screen that asks would read as one that does not.
+  grep -Eiq '(enter|return) to (confirm|select|continue|submit|accept|approve|choose|proceed)|esc to (cancel|exit|go back|close|dismiss|skip|reject|deny|decline)|press (enter|return)|arrow keys to|↑/↓ to|\((y/n|yes/no)\)|\[(y/n|y/N|Y/n)\]' <<< "$bottom"
+}
+
+# A screen of Claude's own that no hook runs past, or nothing. $1 = the pane's text.
+handshake_screen() {
+  case "${1:-}" in
+    *"Choose the text style"*|*"Let's get started"*)                  echo onboarding ;;
+    *"Select login method"*|*"Please run /login"*|*"Not logged in"*)  echo login ;;
+    *"trust this folder"*|*"Is this a project you"*)                  echo trust ;;
+    *"MCP server found in this project"*|*"MCP servers found in this project"*) echo mcp ;;
+  esac
+}
+
+handshake_blocker_says() {  # $1=cause  $2=pane text  $3=instance dir
+  local cause="$1" pane="${2:-}" project=""
+  [ -n "${3:-}" ] && project="$(cat "$3/project" 2>/dev/null || true)"
+  case "$cause" in
+    onboarding) echo "   Claude Code ще не пройшов перше налаштування на цьому Mac: він чекає вибору теми, а у фоні відповісти нікому. Запусти claude у Терміналі один раз і вибери тему — або натисни «Завершити налаштування» в Булаві." ;;
+    login)      echo "   Claude Code не ввійшов в акаунт і чекає входу. Увійди: claude auth login" ;;
+    trust)      echo "   Claude Code питає, чи довіряти теці${project:+ «${project}»}, а у фоні відповісти нікому. Відкрий claude у цій теці й відповідай «Yes, I trust this folder»." ;;
+    mcp)        echo "   Claude Code питає, чи вмикати MCP-сервери цього проєкту${project:+ «${project}»}, а у фоні відповісти нікому. Вирішити можна кнопкою в Булаві або тут: night-shift mcp-decide \"${project:-.}\" enable|skip" ;;
+    hooks)      echo "   Стартовий хук рушія не встановлено: у $SUP_STATE/worker-settings.json немає safety-check.sh, або файлу, на який він вказує. Перевстанови рушій: bash install.sh" ;;
+    exited)     echo "   Claude завершився одразу після старту." ;;
+    screen)     echo "   Claude Code питав щось на своєму екрані, і ніхто не відповів, поки старт чекав." ;;
+    *)          echo "   Claude запущено, але до роботи він так і не дійшов." ;;
+  esac
+  case "$cause" in
+    exited|unknown|screen)
+      [ -n "$pane" ] || return 0
+      echo "   Останнє на його екрані:"
+      printf '%s\n' "$pane" | sed '/^[[:space:]]*$/d' | tail -n 6 | sed 's/^/     │ /' ;;
+  esac
+}
+
+await_handshake() {  # $1=instance dir  $2=slug (for the log)  $3=seconds (default SUPERVISOR_HANDSHAKE_WAIT)
+  local idir="${1:-}" slug="${2:-}" waited="${3:-${SUPERVISOR_HANDSHAKE_WAIT:-0}}" i=0 ses pane asked=0
+  local answer_wait="${SUPERVISOR_SCREEN_ANSWER_WAIT:-600}"
   [ -n "$slug" ] || slug="$(basename "${idir:-unknown}")"
+  ses="$(session_name "$slug")"
   case "$waited" in ''|*[!0-9]*) waited=0 ;; esac
+  case "$answer_wait" in ''|*[!0-9]*) answer_wait=600 ;; esac
+  # An automation's run has nobody at the computer: a screen there is answered by nobody, so it is
+  # not waited for — the start is rolled back as before and the screen named in the log.
+  [ "${SUPERVISOR_UNATTENDED:-}" = 1 ] && answer_wait=0
   [ "$waited" -gt 0 ] || return 0
   while [ "$i" -lt "$waited" ]; do
-    if [ -f "$idir/handshake-ok" ]; then
-      echo "$(date '+%F %T') [night-shift] run-id handshake confirmed ($slug)" >> "$SUP_STATE/supervisor.log"
-      return 0
+    [ -f "$idir/handshake-ok" ] && break
+    # Nothing left to wait for: Claude is gone, or it sits on a screen of its own that no hook runs
+    # past. A resume waits a minute for a long transcript, and must not spend it on either.
+    tmux has-session -t "$ses" 2>/dev/null || break
+    pane="$(tmux capture-pane -p -t "$ses" -S -80 2>/dev/null)"
+    [ -n "$(handshake_screen "$pane")" ] && break
+    # Any other screen that asks — a menu, a confirmation, a yes/no — is put in front of a person
+    # instead of being timed out. Bulava reads this marker, shows the screen in the chat being
+    # started, and answers with the keys the person chose; the hook then confirms the run-id and
+    # the start carries on. The marker says when the asking began, so the app can tell this screen
+    # from a stale one. While a person may answer, the clock below does not run.
+    if [ "$answer_wait" -gt 0 ] && handshake_screen_asks "$pane"; then
+      if [ ! -f "$idir/screen-wait.json" ]; then
+        jq -nc --argjson at "$(date +%s)" '{at:$at, stage:"start"}' > "$idir/screen-wait.json.tmp" 2>/dev/null \
+          && mv -f "$idir/screen-wait.json.tmp" "$idir/screen-wait.json"
+        echo "$(date '+%F %T') [night-shift] Claude is asking on its own screen at start — shown to the director ($slug)" >> "$SUP_STATE/supervisor.log"
+      fi
+      asked=$((asked + 1))
+      [ "$asked" -ge "$answer_wait" ] && break
+      sleep 1; continue
+    fi
+    if [ -f "$idir/screen-wait.json" ]; then
+      # Answered. The rest of the start gets its whole budget again from here.
+      rm -f "$idir/screen-wait.json"
+      i=0
     fi
     sleep 1; i=$((i + 1))
   done
-  echo "⚠️ хуки не підтвердили run-id за ${waited}s — робота може піти без нагляду. Перевір встановлення хуків: bash install.sh" >&2
-  echo "$(date '+%F %T') [night-shift] WARN run-id handshake NOT confirmed ($slug)" >> "$SUP_STATE/supervisor.log"
+  rm -f "$idir/screen-wait.json"
+  # Said once, whichever way the loop learned of it: the screen going away, or the hook confirming
+  # in the very second after the key.
+  if [ "$asked" -gt 0 ] && [ -f "$idir/handshake-ok" ]; then
+    echo "$(date '+%F %T') [night-shift] the screen was answered after ${asked}s ($slug)" >> "$SUP_STATE/supervisor.log"
+  fi
+  if [ -f "$idir/handshake-ok" ]; then
+    echo "$(date '+%F %T') [night-shift] run-id handshake confirmed after ${i}s ($slug)" >> "$SUP_STATE/supervisor.log"
+    return 0
+  fi
+  local cause
+  pane="$(tmux capture-pane -p -t "$ses" -S -80 2>/dev/null || true)"
+  cause="$(handshake_blocker "$pane" "$slug")"
+  [ "$cause" = unknown ] && handshake_screen_asks "$pane" && cause=screen
+  echo "⚠️ хуки не підтвердили run-id за ${waited}s — робота може піти без нагляду." >&2
+  handshake_blocker_says "$cause" "$pane" "$idir" >&2
+  echo "handshake-blocked=$cause" >&2
+  echo "$(date '+%F %T') [night-shift] WARN run-id handshake NOT confirmed ($slug): $cause" >> "$SUP_STATE/supervisor.log"
+  # The pane is the only witness, and the rollback that follows kills it — so what it showed is
+  # kept here, where the next person asking "why did it not start" can read it.
+  [ -n "$pane" ] && printf '%s\n' "$pane" | sed '/^[[:space:]]*$/d' | tail -n 15 \
+    | sed 's/^/    │ /' >> "$SUP_STATE/supervisor.log"
   if [ "${SUPERVISOR_REQUIRE_HANDSHAKE:-1}" = 1 ]; then
     echo "❌ підтвердження нема — відкат старту." >&2
     return 1
   fi
   return 0
+}
+
+# How long a resume waits for its handshake: its own budget, never shorter than a fresh start's, and
+# none at all where the handshake is switched off.
+resume_handshake_wait() {
+  local base="${SUPERVISOR_HANDSHAKE_WAIT:-0}" own="${SUPERVISOR_RESUME_HANDSHAKE_WAIT:-60}"
+  case "$base" in ''|*[!0-9]*) base=0 ;; esac
+  case "$own" in ''|*[!0-9]*) own=60 ;; esac
+  [ "$base" -gt 0 ] || { echo 0; return; }
+  [ "$own" -gt "$base" ] && echo "$own" || echo "$base"
+}
+
+# A permission dialog on screen that nobody answers, in a run nobody watches. The hook that answers
+# for an automation's run (`hooks/permission-gate.sh`) covers what Claude Code routes through it; a
+# dialog that slipped past — a hook that timed out, a prompt of another kind — would otherwise hold
+# the run until morning, counted as "waiting". After SUPERVISOR_PERMISSION_WAIT_MAX seconds it is
+# declined (Escape) and the worker is told to carry on without it. With a person there nothing is
+# pressed: the app shows the dialog as waiting for him.
+permission_wait_check() {   # $1=idir $2=tmux session $3=now → 0 when it acted this poll
+  local idir="${1:-}" ses="${2:-}" now="${3:-$(date +%s)}" f at tx max msg
+  f="$idir/permission-wait.json"
+  [ -f "$f" ] || return 1
+  at="$(jq -r '.at // 0' "$f" 2>/dev/null)"; case "$at" in ''|*[!0-9]*) at=0 ;; esac
+  # Answered, or moved past: the conversation grew after the dialog appeared.
+  tx="$(worker_transcript "$ses" "$idir" 2>/dev/null || true)"
+  if [ -n "$tx" ] && [ "$(stat -f %m "$tx" 2>/dev/null || echo 0)" -gt $((at + 2)) ]; then
+    rm -f "$f"; return 1
+  fi
+  grep -qx "export SUPERVISOR_UNATTENDED='1'" "$(run_env_file "$idir")" 2>/dev/null || return 1
+  max="${SUPERVISOR_PERMISSION_WAIT_MAX:-600}"; case "$max" in ''|*[!0-9]*) max=600 ;; esac
+  [ $(( now - at )) -ge "$max" ] || return 1
+  msg="$(jq -r '.message // ""' "$f" 2>/dev/null)"
+  echo "$(date '+%F %T') [permission] $(basename "$idir"): a dialog nobody answered for $(( now - at ))s in an unattended run — declined: ${msg:0:200}" >> "$SUP_STATE/supervisor.log"
+  tmux send-keys -t "$ses" Escape 2>/dev/null
+  rm -f "$f"
+  jq -nc --arg at "$(date '+%F %T')" --arg what "$msg" \
+    '{at:$at, event:"watchdog", tool:"", what:$what, decision:"declined-after-timeout", why:"nobody answered the dialog"}' \
+    >> "$idir/permission-decisions.jsonl" 2>/dev/null || true
+  sleep "${SUPERVISOR_PERMISSION_DECLINE_SETTLE:-2}"
+  inject_task "$ses" "[BULAVA] A permission dialog waited ${max}s and nobody answered it: this automation runs with nobody at the computer, so it was declined. Carry on without that access. If the task cannot be finished without it, end the run with report-outcome blocked and name exactly the access that is needed." \
+    >/dev/null 2>&1 \
+    || echo "$(date '+%F %T') [permission] $(basename "$idir"): could not hand the worker the note after declining the dialog" >> "$SUP_STATE/supervisor.log"
+  return 0
+}
+
+# Where a Claude conversation is already running, if anywhere but in the asking run: another
+# instance that recorded it and whose session is alive, or any process resuming it by id.
+#
+# 4 Oct: an automation's run was alive in its copy when its chat, rewritten by an older Bulava,
+# sent the next message to his own folder. The engine resumed the same conversation there, and two
+# Claudes wrote into one transcript from two folders — one of them on his branch. One conversation
+# has one place it runs.
+claude_session_holder() {   # $1=claude session id  $2=slug asking → prints the holder; 0 when held
+  local sid="${1:-}" own="${2:-}" d s
+  [ -n "$sid" ] || return 1
+  for d in "$SUP_INSTANCES"/*/; do
+    [ -d "$d" ] || continue
+    d="${d%/}"; s="$(basename "$d")"
+    [ "$s" = "$own" ] && continue
+    [ "$(tr -d '[:space:]' < "$d/claude-session-id" 2>/dev/null)" = "$sid" ] || continue
+    tmux has-session -t "$(session_name "$s")" 2>/dev/null || continue
+    printf '%s\n' "$s"; return 0
+  done
+  # A Claude itself, resuming exactly this id: the program is `claude`, and `--resume` and the id
+  # are arguments of their own. A shell wrapping the launch line, or a message that merely quotes
+  # such a command in its text, is neither.
+  ps -ax -ww -o pid=,command= 2>/dev/null | awk -v sid="$sid" -v me="$$" '
+    $1 == me { next }
+    {
+      prog = $2; sub(/.*\//, "", prog)
+      if (prog != "claude") next
+      for (i = 3; i < NF; i++) {
+        if ($i != "--resume") continue
+        arg = $(i + 1); gsub(/'\''/, "", arg)
+        if (arg == sid) { print "pid " $1; found = 1; exit }
+      }
+    }
+    END { exit found ? 0 : 1 }'
 }
 
 supervised_session_live() {  # $1=slug
@@ -2757,10 +3224,58 @@ codex_wait_is_his() {   # $1=idir [$2=now] → 0 when the director should be ask
 # spent would be a freeze with no purpose. Only the pipelines that actually form two positions are
 # held — and they are exactly the ones whose work would otherwise go on a hand short.
 codex_needed_for() {   # $1=envelope
-  case "$(jq -r '.pipeline // "plain"' "${1:-}" 2>/dev/null)" in
+  local name
+  name="$(jq -r '.pipeline // "plain"' "${1:-}" 2>/dev/null)"
+  case "$name" in
     dispatch|adaptive-peer) return 0 ;;
-    *) return 1 ;;
+    plain|dispatch-legacy|"") return 1 ;;
   esac
+  # A pipeline someone built: what it needs is read off its graph, not guessed from its name —
+  # a hand-made pipeline with a Codex position must wait for Codex exactly as the built-in does.
+  pipeline_needs "$name" | grep -qx codex
+}
+
+# What a run of pipeline $1 needs, one word per line (codex, …). Nothing for an unknown name.
+pipeline_needs() {
+  python3 "$_SUP_BIN_DIR/pipeline-tool.py" needs "${1:-}" 2>/dev/null \
+    | jq -r '.needs[]? // empty' 2>/dev/null
+}
+
+# ── Run events ───────────────────────────────────────────────────────────────────────────────
+#
+# The chat's run view reads a run as a list of things that HAPPENED, never as a guess. Each line
+# is one JSON object appended to <instance>/run-events.jsonl: small enough that an O_APPEND write
+# lands whole, so the order of lines is the order of events — no counter to race over between two
+# stages running side by side. It carries the message and dispatch it belongs to, written at the
+# moment the event happens, because several chats of one product share this instance folder and a
+# late event must never be read as somebody else's.
+run_events_file() { printf '%s/run-events.jsonl' "${1:-}"; }
+_ms_now() { perl -MTime::HiRes -e 'printf "%.0f", Time::HiRes::time()*1000' 2>/dev/null || printf '%s000' "$(date +%s)"; }
+run_event() {  # $1=instance dir $2=stage $3=state [$4=note] [$5=extra json object]
+  local idir="${1:-}" stage="${2:-}" state="${3:-}" note="${4:-}" extra="${5:-}" f mid did rid pipe
+  [ -n "$idir" ] && [ -d "$idir" ] || return 0
+  [ "${SUPERVISOR_RUN_EVENTS:-1}" = 1 ] || return 0
+  f="$(run_events_file "$idir")"
+  mid="${RUN_EVENT_MESSAGE_ID:-${PIPE_MESSAGE_ID:-}}"
+  did="${RUN_EVENT_DISPATCH_ID:-${PIPE_DISPATCH_ID:-}}"
+  pipe="${RUN_EVENT_PIPELINE:-${PIPE_PIPELINE:-}}"
+  if [ -z "$mid$did" ] && [ -s "$idir/dispatch.json" ]; then
+    mid="$(jq -r '.message_id // empty' "$idir/dispatch.json" 2>/dev/null)"
+    did="$(jq -r '.id // empty' "$idir/dispatch.json" 2>/dev/null)"
+    [ -n "$pipe" ] || pipe="$(jq -r '.pipeline // empty' "$idir/dispatch.json" 2>/dev/null)"
+  fi
+  rid="$(tr -d '[:space:]' 2>/dev/null < "$idir/run-id" || true)"
+  case "$extra" in '{'*'}') ;; *) extra='{}' ;; esac
+  if [ -f "$f" ] && [ "$(wc -c < "$f" 2>/dev/null | tr -d ' ')" -gt "${SUPERVISOR_RUN_EVENTS_MAX:-2000000}" ] 2>/dev/null; then
+    mv -f "$f" "$f.1" 2>/dev/null || true
+  fi
+  jq -nc --arg at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" --arg ms "$(_ms_now)" --arg rid "$rid" --arg did "$did" \
+     --arg mid "$mid" --arg pipe "$pipe" --arg stage "$stage" --arg state "$state" --arg note "$note" \
+     --argjson x "$extra" \
+     '{v:1, at:$at, ms:($ms|tonumber? // 0), run_id:$rid, dispatch_id:$did, message_id:$mid, pipeline:$pipe,
+       stage:$stage, state:$state} + (if $note == "" then {} else {note:$note} end) + $x' \
+     >> "$f" 2>/dev/null || true
+  return 0
 }
 
 # Two things that must stop work BEFORE it starts, rather than degrade it afterwards.
@@ -3547,15 +4062,6 @@ choose_branch_action() {  # $1=current branch name
   esac
 }
 
-resolve_self_dir() {
-  local self="$1" d
-  while [ -L "$self" ]; do
-    d="$(cd -P "$(dirname "$self")" && pwd)"; self="$(readlink "$self")"
-    case "$self" in /*) ;; *) self="$d/$self";; esac
-  done
-  cd -P "$(dirname "$self")" && pwd
-}
-
 PAID_API_ENV_VARS="ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX OPENAI_API_KEY CODEX_API_KEY"
 
 subscription_env_prefix() {
@@ -4101,20 +4607,224 @@ checkpoint_overrun() {   # $1=dir → reason on stdout; 0 = over budget, 1 = fin
   return 1
 }
 
+# The exclude file git actually reads for the repository at $1, with its folder made.
+#
+# Not `$(git rev-parse --git-dir)/info/exclude`, and not a literal `.git/info/exclude`. In a linked
+# worktree (`git worktree add`, which is how Bulava makes a copy to work in at night) the git-dir is
+# `<main>/.git/worktrees/<name>`, and git never reads an exclude file there — only the one in the
+# COMMON dir, shared by every worktree of that repository. And `.git` in a worktree is a file, so
+# `mkdir -p .git/info` fails outright. Either way the rules went nowhere, and the copy's checkpoints
+# and status offered AUDIT-*.md and node_modules as the director's work. `--git-path` asks git where
+# the file is; in an ordinary repository the answer is `.git/info/exclude`, the same file as ever.
+git_exclude_file() {   # $1=dir → absolute path on stdout; 1 = not a repository
+  local d="$1" ex
+  ex="$(git -C "$d" rev-parse --git-path info/exclude 2>/dev/null)" || return 1
+  [ -n "$ex" ] || return 1
+  # Relative to the folder git was run in, which is $1 — not to wherever the caller happens to be.
+  case "$ex" in /*) ;; *) ex="$(cd "$d" 2>/dev/null && pwd)/$ex" || return 1 ;; esac
+  mkdir -p "$(dirname "$ex")" 2>/dev/null || return 1
+  printf '%s\n' "$ex"
+}
+
+# Our own paperwork stays out of every checkpoint: AUDIT-*.md and REVIEW-DEBT.md are what the
+# harness writes about the work, not the work. A local rule, so nothing shows up as a change in the
+# project; a folder that is not a repository is simply left alone.
+harness_exclude_in() {   # $1=dir
+  local ex pat
+  ex="$(git_exclude_file "$1")" || return 0
+  for pat in 'AUDIT-*.md' 'REVIEW-DEBT.md'; do
+    grep -qxF "$pat" "$ex" 2>/dev/null || printf '%s\n' "$pat" >> "$ex" 2>/dev/null || true
+  done
+}
+
 # Keep machine-generated content out of the FIRST commit of a repository we had to create.
 #
 # Written to `.git/info/exclude`, never to the director's `.gitignore`: this is our checkpoint's
 # business and it must not turn up as a change in their project. Only for a repository this run
 # created — an existing repository's rules are its own.
 seed_heavy_excludes() {   # $1=dir
-  local d="$1" gitdir ex pat
-  gitdir="$(cd "$d" && git rev-parse --git-dir 2>/dev/null)" || return 0
-  case "$gitdir" in /*) ;; *) gitdir="$d/$gitdir" ;; esac
-  ex="$gitdir/info/exclude"
-  mkdir -p "$gitdir/info" 2>/dev/null || return 0
+  local d="$1" ex pat
+  ex="$(git_exclude_file "$d")" || return 0
   for pat in $SUPERVISOR_HEAVY_DIRS; do
     grep -qxF "$pat/" "$ex" 2>/dev/null || printf '%s/\n' "$pat" >> "$ex" 2>/dev/null || true
   done
+  # The files the director already said to leave out of checkpoints here. A repository the engine
+  # creates and then has to take away again — a first checkpoint that would not fit — takes its
+  # `.git/info/exclude` with it, so the answer is kept outside the folder and written back in here.
+  local store; store="$(checkpoint_excludes_file "$d")"
+  if [ -s "$store" ]; then
+    while IFS= read -r pat || [ -n "$pat" ]; do
+      [ -n "$pat" ] || continue
+      grep -qxF -- "$pat" "$ex" 2>/dev/null || printf '%s\n' "$pat" >> "$ex" 2>/dev/null || true
+    done < "$store"
+  fi
+}
+
+# ── Big files a checkpoint would have to swallow ──────────────────────────────────────────────
+#
+# A four-gigabyte screen recording lying untracked in a folder was enough to stop every start
+# there: the first checkpoint would have hashed it, the budget said no, and the director got a red
+# paragraph about megabytes with nothing to press. What they wanted was obvious from the paragraph —
+# leave that file out — so the engine now names the files, and leaving them out is one answer.
+#
+# Where things live. The list from the last refusal: `checkpoint-heavy/<slug>.json` in the engine's
+# state, so the answer is applied to exactly the files the director was shown and nothing a caller
+# hands over. The rules they agreed to: `checkpoint-excludes/<slug>`, re-applied to every repository
+# the engine creates in that folder (`seed_heavy_excludes`) — the first attempt's `.git` is removed
+# when the first checkpoint does not fit, and the answer must outlive it.
+checkpoint_heavy_file() {   # $1=dir → the last «too big» list for this folder
+  printf '%s/checkpoint-heavy/%s.json\n' "$SUP_STATE" "$(slug_for "$1")"
+}
+checkpoint_excludes_file() {   # $1=dir → the rules the director chose for checkpoints here
+  printf '%s/checkpoint-excludes/%s\n' "$SUP_STATE" "$(slug_for "$1")"
+}
+
+# The files that put a checkpoint over budget, biggest first, as JSON:
+#
+#   { "total_bytes", "limit_bytes", "file_limit_bytes",
+#     "remaining_bytes"  — what the checkpoint would weigh with every listed untracked file left out,
+#     "fits_after"       — whether that is within both limits,
+#     "files": [ { "path", "size", "tracked", "rule" } ] }
+#
+# Counted exactly as `checkpoint_overrun` counts — untracked and modified, ignored files skipped —
+# so a rule that leaves a file out here leaves it out there. Listed only as far as they matter: every
+# file over the one-file limit, then the biggest until the rest would fit. A TRACKED file is listed
+# too, because it is part of the weight, but it has no rule: an ignore rule does not untrack anything,
+# and untracking somebody's file is not the engine's to do.
+#
+# `rule` is the file as a `.gitignore` line: anchored to the folder (`/path`), with `\ * ? [ ] ! #`
+# escaped and leading or trailing spaces quoted, so a name like `Recording [final] #2 .mov` means
+# that file and nothing else. A name git cannot hold on one line, or that is not UTF-8, gets null.
+checkpoint_heavy_json() {   # $1=dir → JSON on stdout; 0 = listed, 1 = could not list
+  local d="$1" maxb maxone cap out rc
+  maxb="${SUPERVISOR_CHECKPOINT_MAX_BYTES:-1073741824}"
+  maxone="${SUPERVISOR_CHECKPOINT_MAX_FILE_BYTES:-268435456}"
+  cap="${SUPERVISOR_CHECKPOINT_HEAVY_LIST:-30}"
+  case "$maxb"   in ''|*[!0-9]*) maxb=1073741824 ;; esac
+  case "$maxone" in ''|*[!0-9]*) maxone=268435456 ;; esac
+  case "$cap"    in ''|*[!0-9]*|0) cap=30 ;; esac
+  out="$(mktemp 2>/dev/null)" || return 1
+  run_bounded "${SUPERVISOR_CHECKPOINT_COUNT_TIMEOUT:-30}" "$out" /dev/null \
+    git -C "$d" --no-optional-locks ls-files -z -t --others --modified --exclude-standard
+  rc=$?
+  if [ "$rc" != 0 ]; then rm -f "$out" 2>/dev/null; return 1; fi
+  perl -e '
+    use strict; use warnings; use JSON::PP; use Encode ();
+    my ($root, $maxb, $maxone, $cap) = @ARGV;
+    sub text { my $x = shift; return Encode::decode("UTF-8", "$x", Encode::FB_DEFAULT); }
+    sub utf8_ok { my $x = shift; return eval { Encode::decode("UTF-8", "$x", Encode::FB_CROAK); 1 } ? 1 : 0; }
+    sub rule {
+      my $p = shift;
+      return undef if $p =~ /[\n\r]/ || !utf8_ok($p);
+      (my $r = $p) =~ s/([\\*?\[\]!#])/\\$1/g;
+      $r =~ s/^( +)/"\\ " x length($1)/e;
+      $r =~ s/( +)$/"\\ " x length($1)/e;
+      return "/" . $r;
+    }
+    local $/ = "\0";
+    my (%seen, @all); my $total = 0;
+    while (defined(my $rec = <STDIN>)) {
+      chomp $rec;
+      next if length($rec) < 3;
+      my ($tag, $p) = (substr($rec, 0, 1), substr($rec, 2));
+      next if $seen{$p}++;
+      my @st = stat("$root/$p");
+      next unless @st && -f _;
+      $total += $st[7];
+      push @all, { p => $p, s => $st[7], t => ($tag eq "?" ? 0 : 1) };
+    }
+    my @sorted = sort { $b->{s} <=> $a->{s} || $a->{p} cmp $b->{p} } @all;
+    # Untracked files can bring the total down only while the tracked ones fit by themselves. When
+    # they do not, the tracked files that make up the excess are what to name — not a long tail of
+    # small untracked files whose removal would change nothing.
+    my $tracked_total = 0; $tracked_total += $_->{s} for grep { $_->{t} } @all;
+    my $excess = $tracked_total - $maxb;
+    my ($remaining, $capped, $named_tracked, @list) = ($total, 0, 0);
+    for my $e (@sorted) {
+      my $want = $e->{s} > $maxone ? 1
+               : $e->{t}           ? ($excess > 0 && $named_tracked < $excess)
+               :                     ($excess <= 0 && $remaining > $maxb);
+      next unless $want;
+      if (@list >= $cap) { $capped = 1; last; }
+      push @list, $e;
+      if ($e->{t}) { $named_tracked += $e->{s}; } else { $remaining -= $e->{s}; }
+    }
+    my $fits = ($remaining <= $maxb && !$capped) ? 1 : 0;
+    for my $e (@sorted) { if ($e->{t} && $e->{s} > $maxone) { $fits = 0; last; } }
+    my @files = map {
+      my $r = $_->{t} ? undef : rule($_->{p});
+      { path => text($_->{p}), size => $_->{s} + 0,
+        tracked => ($_->{t} ? JSON::PP::true : JSON::PP::false),
+        rule => (defined $r ? text($r) : undef) }
+    } @list;
+    print JSON::PP->new->utf8->canonical->encode({
+      total_bytes => $total + 0, limit_bytes => $maxb + 0, file_limit_bytes => $maxone + 0,
+      remaining_bytes => $remaining + 0, fits_after => ($fits ? JSON::PP::true : JSON::PP::false),
+      files => \@files }), "\n";
+  ' "$d" "$maxb" "$maxone" "$cap" < "$out"
+  rc=$?
+  rm -f "$out" 2>/dev/null
+  return "$rc"
+}
+
+# Write the list down for this folder. 0 only when the budget was broken by SIZE and there are files
+# to name — a folder over the file-count limit, or one too slow to count, has nothing to offer here.
+checkpoint_heavy_record() {   # $1=dir
+  local rec n
+  rec="$(checkpoint_heavy_file "$1")"
+  mkdir -p "$(dirname "$rec")" 2>/dev/null || return 1
+  if ! checkpoint_heavy_json "$1" > "$rec.tmp" 2>/dev/null; then rm -f "$rec.tmp"; return 1; fi
+  n="$(jq '.files | length' "$rec.tmp" 2>/dev/null)"
+  case "$n" in ''|*[!0-9]*|0) rm -f "$rec.tmp"; return 1 ;; esac
+  mv -f "$rec.tmp" "$rec" 2>/dev/null || { rm -f "$rec.tmp"; return 1; }
+}
+
+# The director's answer: leave the listed untracked files out of checkpoints.
+#
+# `local` — into the engine's own record for this folder and, when the folder is a repository of its
+# own, into `.git/info/exclude`: git stops offering those files to a commit, and nothing appears as a
+# change in the project. `gitignore` — the same lines in the project's `.gitignore`, because the
+# director asked for exactly that; it is their file, and it shows up as a change, which is the point.
+# Tracked files are never touched: no `git rm --cached`, no deletion, no commit — they are reported
+# back instead. Every file stays on disk as it is.
+checkpoint_leave_out() {   # $1=dir $2=local|gitignore → JSON summary on stdout; 1 = nothing recorded
+  local d="$1" how="${2:-local}" rec rules target top ex pat
+  rec="$(checkpoint_heavy_file "$d")"
+  [ -s "$rec" ] || return 1
+  rules="$(jq -r '.files[] | select(.tracked | not) | .rule // empty' "$rec" 2>/dev/null)" || return 1
+  case "$how" in
+    gitignore)
+      target="$d/.gitignore"
+      if [ -n "$rules" ] && [ -s "$target" ] && [ -n "$(tail -c 1 "$target" 2>/dev/null)" ]; then
+        printf '\n' >> "$target" || return 1
+      fi
+      while IFS= read -r pat; do
+        [ -n "$pat" ] || continue
+        grep -qxF -- "$pat" "$target" 2>/dev/null || printf '%s\n' "$pat" >> "$target" || return 1
+      done <<< "$rules"
+      ;;
+    local)
+      target="$(checkpoint_excludes_file "$d")"
+      mkdir -p "$(dirname "$target")" 2>/dev/null || return 1
+      top="$(git -C "$d" rev-parse --show-toplevel 2>/dev/null || true)"
+      ex=""
+      if [ -n "$top" ] && [ "$(canon_path "$top")" = "$(canon_path "$d")" ]; then
+        ex="$(git_exclude_file "$d" || true)"
+      fi
+      while IFS= read -r pat; do
+        [ -n "$pat" ] || continue
+        grep -qxF -- "$pat" "$target" 2>/dev/null || printf '%s\n' "$pat" >> "$target" || return 1
+        if [ -n "$ex" ]; then
+          grep -qxF -- "$pat" "$ex" 2>/dev/null || printf '%s\n' "$pat" >> "$ex" || return 1
+        fi
+      done <<< "$rules"
+      ;;
+    *) return 1 ;;
+  esac
+  jq -c --arg how "$how" '{ target: $how,
+      rules: [.files[] | select(.tracked | not) | .rule // empty],
+      tracked: [.files[] | select(.tracked) | .path],
+      unsafe: [.files[] | select((.tracked | not) and .rule == null) | .path] }' "$rec"
 }
 
 # Which staged paths look like secrets — one pass over the index, not two processes per file.
@@ -4186,6 +4896,578 @@ staged_secret_paths_z() {   # NUL-delimited paths to stdout; 0 = scanned, 1 = th
 # The same answer, one path per line, for callers that only need to know whether there were any.
 staged_secret_paths() {
   staged_secret_paths_z | tr '\0' '\n' | grep -v '^$'
+}
+
+# ── The director's uncommitted work, at the moment a run is about to start ────────────────────
+#
+# A start used to answer a dirty folder by committing all of it: `git add -A`, author `night-shift`,
+# message "Checkpoint before night shift", into whatever branch the director was standing on. A fix
+# Claude Code had made in another window minutes earlier — uncommitted, because it was still asking
+# which commit it should go into — went into a commit nobody wrote, under a name that described
+# nothing, and from there to the remote and into a merge request.
+#
+# So a dirty folder is now a question, and the director answers it: start and leave the changes
+# exactly where they are, commit them under their own name, or sort them out themselves. Nothing in
+# the engine commits the director's work unasked. What follows is what those answers stand on.
+#
+# «Dirty» is staged, unstaged, or untracked and not ignored — everything the old checkpoint swept.
+# Ignored files never count: nobody was ever going to commit them. A submodule's own uncommitted
+# work does not count either (`--ignore-submodules=dirty`): this repository cannot commit it, so
+# asking about it would be a question with no answer. `--no-optional-locks`, because the director
+# may have an editor or another Claude Code working in the same folder, and a status check has no
+# business rewriting their index under them.
+#
+# A nested repository is not this repository's uncommitted work either. It shows up in `git status`
+# as `?? inner/`, but its files belong to its own history: committing it here would record a gitlink
+# nobody asked for, and counting it would leave a folder that can never be «clean» however much the
+# director commits.
+_dirty_entries_z() {   # $1=dir → porcelain v1 entries, NUL-delimited, renames as one entry
+  local d="$1" e xy p old
+  while IFS= read -r -d '' e; do
+    [ -n "$e" ] || continue
+    xy="${e:0:2}"; p="${e:3}"
+    case "$xy" in R*|C*) IFS= read -r -d '' old || true ;; esac
+    if [ "$xy" = "??" ]; then
+      case "$p" in */) [ -e "$d/${p}.git" ] && continue ;; esac
+    fi
+    printf '%s\0' "$e"
+  done < <(git -C "$d" --no-optional-locks status --porcelain=v1 -z --untracked-files=normal \
+             --ignore-submodules=dirty 2>/dev/null)
+}
+dirty_entries() {   # $1=dir → one «XY path» per line, for people to read
+  _dirty_entries_z "$1" | tr '\n\0' '?\n'
+}
+worktree_dirty() {   # $1=dir → 0 when there is uncommitted work
+  [ -n "$(_dirty_entries_z "$1" | head -c 1)" ]
+}
+# The nested repositories, as the directory entries `ls-files` reports for them.
+nested_repo_entries() {   # $1=dir → one «inner/» per line
+  local d="$1" e
+  while IFS= read -r -d '' e; do
+    case "$e" in */) [ -e "$d/${e}.git" ] && printf '%s\n' "$e" ;; esac
+  done < <(git -C "$d" ls-files -z --others --exclude-standard 2>/dev/null)
+}
+
+# The untracked entries, NUL-delimited, as two lists: files, and the directories git reports whole
+# (a nested repository shows up as `inner/`, never as its contents).
+_untracked_split() {   # $1=dir $2=files out $3=dirs out
+  local e
+  : > "$2"; : > "$3"
+  while IFS= read -r -d '' e; do
+    [ -n "$e" ] || continue
+    case "$e" in */) printf '%s\0' "$e" >> "$3" ;; *) printf '%s\0' "$e" >> "$2" ;; esac
+  done < <(git -C "$1" ls-files -z --others --exclude-standard 2>/dev/null)
+}
+
+# What the director's untracked files are right now — path and content hash, one per line.
+#
+# Written when a run starts in «leave my changes» mode and compared against for as long as the run
+# lasts: an untracked file that is still here and still says the same thing is the director's, not
+# the worker's. A path with a newline in it cannot be one line and is left out — it will be counted
+# as the worker's, which is the safe way to be wrong.
+untracked_manifest() {   # $1=dir → manifest on stdout ("<hash>\t<path>", "-\t<dir>/")
+  local d="$1" tmp files dirs f h
+  tmp="$(mktemp -d 2>/dev/null)" || return 1
+  files="$tmp/f"; dirs="$tmp/d"
+  _untracked_split "$d" "$files" "$dirs"
+  if [ -s "$files" ]; then
+    # `xargs` keeps the order, so the Nth hash is the Nth path.
+    ( cd "$d" && xargs -0 -n 256 git hash-object -- < "$files" 2>/dev/null ) > "$tmp/h"
+    exec 3< "$tmp/h"
+    while IFS= read -r -d '' f; do
+      IFS= read -r h <&3 || h=""
+      case "$f" in *$'\n'*) continue ;; esac
+      [ -n "$h" ] && printf '%s\t%s\n' "$h" "$f"
+    done < "$files"
+    exec 3<&-
+  fi
+  while IFS= read -r -d '' f; do
+    case "$f" in *$'\n'*) continue ;; esac
+    printf -- '-\t%s\n' "$f"
+  done < "$dirs"
+  rm -rf "$tmp" 2>/dev/null
+  return 0
+}
+
+# Untracked paths that belong to the worker: every untracked entry, minus the director's own files
+# that are still exactly as they were when the run started.
+#
+# In a run that started from a clean tree there is no manifest, and this is plain `ls-files`. Every
+# place that used to list untracked files as «what the run changed» asks this instead — the review,
+# the scope gate, the verifier — because the scope gate DELETES an out-of-scope file it believes is
+# new, and a director's untracked draft is exactly such a file.
+worker_untracked() {   # $1=dir $2=instance dir → one path per line
+  local d="$1" idir="${2:-}" m cur
+  m="${idir:+$idir/base-untracked}"
+  if [ -z "$m" ] || [ ! -f "$m" ]; then
+    git -C "$d" ls-files --others --exclude-standard 2>/dev/null
+    return 0
+  fi
+  cur="$(mktemp 2>/dev/null)" || { git -C "$d" ls-files --others --exclude-standard 2>/dev/null; return 0; }
+  untracked_manifest "$d" > "$cur"
+  awk -F'\t' 'NR == FNR { seen[$0] = 1; next }
+              !($0 in seen) { sub(/^[^\t]*\t/, ""); print }' "$m" "$cur"
+  rm -f "$cur" 2>/dev/null
+  return 0
+}
+
+# A fingerprint of exactly what the director was shown: where HEAD stands, what is staged, what is
+# changed on disk, and the name and content of every untracked file. Compared again when the
+# answer comes back, so «commit these files» commits the files that were on the screen and not
+# something that changed in the seconds between.
+dirty_digest() {   # $1=dir
+  local d="$1" tmp
+  tmp="$(mktemp -d 2>/dev/null)" || return 1
+  _untracked_split "$d" "$tmp/f" "$tmp/d"
+  { git -C "$d" rev-parse --verify --quiet 'HEAD^{commit}' 2>/dev/null || echo unborn
+    printf '\n--index--\n'
+    git -C "$d" --no-optional-locks diff --cached --binary --no-ext-diff --ignore-submodules=dirty 2>/dev/null
+    printf '\n--tree--\n'
+    git -C "$d" --no-optional-locks diff --binary --no-ext-diff --ignore-submodules=dirty 2>/dev/null
+    printf '\n--untracked--\n'
+    cat "$tmp/f" "$tmp/d"
+    [ -s "$tmp/f" ] && ( cd "$d" && xargs -0 -n 256 git hash-object -- < "$tmp/f" 2>/dev/null )
+  } | shasum -a 256 2>/dev/null | awk '{print $1}'
+  rm -rf "$tmp" 2>/dev/null
+}
+
+# Who a commit made «as the director» would be made by: their own git identity, from their own
+# config, and only if both halves are set. Git would otherwise invent one from the login name and
+# the host — `ivan@MacBook-Pro.local` — which is the same mistake as `night-shift`, only quieter.
+director_identity() {   # $1=dir → "Name <email>" or nothing
+  local n e
+  n="$(git -C "$1" config --get user.name 2>/dev/null)"
+  e="$(git -C "$1" config --get user.email 2>/dev/null)"
+  [ -n "$n" ] && [ -n "$e" ] && printf '%s <%s>' "$n" "$e"
+  return 0
+}
+
+# What the application shows when it asks. One scanner, in the engine, for the same reason
+# `scan-folder` is one: the app asks and the engine answers, so the list on the screen is the list
+# the answer will be checked against.
+dirty_state_json() {   # $1=dir $2=max files to list
+  local d="$1" max="${2:-300}" head branch unborn=false dirty=false digest ident total=0 e xy p lines
+  case "$max" in ''|*[!0-9]*) max=300 ;; esac
+  head="$(git -C "$d" rev-parse --verify --quiet 'HEAD^{commit}' 2>/dev/null || true)"
+  [ -n "$head" ] || unborn=true
+  branch="$(git -C "$d" symbolic-ref --short HEAD 2>/dev/null || true)"
+  lines="$(mktemp 2>/dev/null)" || return 1
+  # `XY path` per entry — a rename is listed under its new name: the list is of what is here now.
+  while IFS= read -r -d '' e; do
+    [ -n "$e" ] || continue
+    xy="${e:0:2}"; p="${e:3}"
+    total=$((total + 1))
+    [ "$total" -le "$max" ] && printf '%s\t%s\n' "$xy" "$(printf '%s' "$p" | tr '\n\t' '??')" >> "$lines"
+  done < <(_dirty_entries_z "$d")
+  [ "$total" -gt 0 ] && dirty=true
+  # A repository with no commits is dirty by definition once it holds a file, and it has no base to
+  # measure a run against until somebody makes the first commit.
+  [ "$unborn" = true ] && dirty=true
+  digest="$(dirty_digest "$d")"
+  ident="$(director_identity "$d")"
+  jq -R -s -c --arg head "$head" --arg branch "$branch" --arg digest "$digest" --arg ident "$ident" \
+     --argjson dirty "$dirty" --argjson unborn "$unborn" --argjson total "$total" '
+     { dirty: $dirty, unborn: $unborn, head: $head, branch: $branch, digest: $digest,
+       author: (if $ident == "" then null else $ident end),
+       keep_possible: ($unborn | not),
+       total: $total,
+       files: (split("\n") | map(select(length > 0) | split("\t")
+               | { xy: .[0], path: (.[1:] | join("\t")) })) }' < "$lines"
+  rm -f "$lines" 2>/dev/null
+}
+
+# The director's uncommitted work as a commit shaped exactly like `git stash` makes one — index
+# commit, untracked-files commit, working-tree commit on top — built entirely in throwaway index
+# files. Their real index, their working tree and their branch are not touched: HEAD stays where it
+# was, what they staged stays staged, and every file stays on disk as it is.
+#
+# It serves twice. As the run's BASE, so the review compares the worker's work against what was
+# already there, not against HEAD, and the director's half-finished edits never count as the
+# worker's. And as a way back: under `refs/night-shift/<run>` it is on no branch and pushed by no
+# default refspec, and `git stash apply --index <ref>` puts all of it back, the staged split
+# included.
+#
+# The objects carry the engine's name, not the director's: they record what the engine did, and
+# they never land on a branch where that name would be read as authorship.
+snapshot_director_work() {   # $1=dir $2=ref name ("" = no ref) → snapshot commit id on stdout
+  local d="$1" ref="${2:-}" head gitdir tmp i_tree w_tree u_tree i u="" w branch subj
+  head="$(resolve_base_sha "$d")"; [ -n "$head" ] || return 1
+  gitdir="$(git -C "$d" rev-parse --absolute-git-dir 2>/dev/null)" || return 1
+  tmp="$(mktemp -d 2>/dev/null)" || return 1
+  local -a who=(-c "user.name=Night Shift snapshot" -c "user.email=night-shift@local")
+
+  # The index as it stands — what they staged — copied, never written.
+  if [ -f "$gitdir/index" ]; then cp "$gitdir/index" "$tmp/i" || { rm -rf "$tmp"; return 1; }
+  else GIT_INDEX_FILE="$tmp/i" git -C "$d" read-tree HEAD 2>/dev/null || { rm -rf "$tmp"; return 1; }; fi
+  i_tree="$(GIT_INDEX_FILE="$tmp/i" git -C "$d" write-tree 2>/dev/null)" || { rm -rf "$tmp"; return 1; }
+
+  # Every tracked file as it is on disk, deletions included.
+  cp "$tmp/i" "$tmp/w" || { rm -rf "$tmp"; return 1; }
+  GIT_INDEX_FILE="$tmp/w" git -C "$d" add -u -- . >/dev/null 2>&1 || { rm -rf "$tmp"; return 1; }
+  w_tree="$(GIT_INDEX_FILE="$tmp/w" git -C "$d" write-tree 2>/dev/null)" || { rm -rf "$tmp"; return 1; }
+
+  # Untracked files, and only files: a nested repository is somebody else's history, and taking it
+  # in would record it as a gitlink the stash could not restore.
+  _untracked_split "$d" "$tmp/uf" "$tmp/ud"
+  if [ -s "$tmp/uf" ]; then
+    GIT_LITERAL_PATHSPECS=1 GIT_INDEX_FILE="$tmp/u" git -C "$d" add \
+      --pathspec-from-file="$tmp/uf" --pathspec-file-nul >/dev/null 2>&1 || { rm -rf "$tmp"; return 1; }
+    u_tree="$(GIT_INDEX_FILE="$tmp/u" git -C "$d" write-tree 2>/dev/null)" || { rm -rf "$tmp"; return 1; }
+  fi
+
+  branch="$(git -C "$d" symbolic-ref --short HEAD 2>/dev/null || echo '(no branch)')"
+  subj="$(git -C "$d" log -1 --format='%h %s' "$head" 2>/dev/null)"
+  i="$(git -C "$d" "${who[@]}" commit-tree "$i_tree" -p "$head" -m "index on $branch: $subj" 2>/dev/null)" \
+    || { rm -rf "$tmp"; return 1; }
+  if [ -n "${u_tree:-}" ]; then
+    u="$(git -C "$d" "${who[@]}" commit-tree "$u_tree" -m "untracked files on $branch: $subj" 2>/dev/null)" \
+      || { rm -rf "$tmp"; return 1; }
+  fi
+  w="$(git -C "$d" "${who[@]}" commit-tree "$w_tree" -p "$head" -p "$i" ${u:+-p "$u"} \
+        -m "On $branch: left in place by Night Shift $(date '+%F %H:%M')" 2>/dev/null)" \
+    || { rm -rf "$tmp"; return 1; }
+  rm -rf "$tmp" 2>/dev/null
+  if [ -n "$ref" ]; then
+    git -C "$d" update-ref -m "night-shift: the director's work, left in place" "$ref" "$w" 2>/dev/null || return 1
+  fi
+  printf '%s\n' "$w"
+}
+
+# ── Who will read a question the engine stops on ──────────────────────────────────────────────
+#
+# A start that stops to ask (76 git, 77 uncommitted work, 78 MCP servers) is answered with buttons in
+# Bulava and with flags in a terminal. The engine is updated on its own, so an app can be older than
+# its engine — a Debug copy left running from yesterday — and meet a question it has no buttons for.
+# It then printed the terminal's instructions into the chat: `night-shift start … --dirty=keep`, for
+# somebody who had asked for a button. So Bulava says which questions it answers
+# (SUPERVISOR_APP_ANSWERS), and an app that does not know this one gets told, in words, that the
+# copy is out of date — not handed commands for a terminal it is not sitting at.
+question_reader() {   # $1=question (dirty|mcp|git|heavy) → button | old-app | terminal
+  case " ${SUPERVISOR_APP_ANSWERS:-} " in *" $1 "*) echo button; return ;; esac
+  if [ -n "${SUPERVISOR_APP_ANSWERS:-}${SUPERVISOR_CHAT_CONTEXT_FILE:-}${SUPERVISOR_RUN_ENV_FROM_APP:-}" ]; then
+    echo old-app; return
+  fi
+  echo terminal
+}
+
+old_app_says() {
+  echo "Ця копія Bulava старіша за свій рушій і не вміє спитати про це кнопкою. Закрий її й відкрий новішу (або онови через «Перевірити оновлення») — і надішли повідомлення ще раз. Нічого не закомічено й не змінено."
+}
+
+# What an app that DOES have the buttons is told. It shows its own card and not this text — but the
+# words can still reach the director some other way (a wrapper that folds the exit code, the log, a
+# notification), and what arrives then must be a sentence, never a terminal's flags.
+app_will_ask_says() {
+  echo "Bulava спитає про це кнопками під повідомленням. Нічого не закомічено й не змінено."
+}
+
+# ── MCP servers a project brings with it (`.mcp.json`) ────────────────────────────────────────
+#
+# Claude Code asks, the first time it opens such a project, which of those servers to enable — and
+# it asks BEFORE the session starts, so the SessionStart hook that confirms the run id never fires.
+# In the background nobody can answer, and after twelve seconds the start was rolled back as «the
+# hooks did not confirm the run id», with advice to reinstall them. Eight times in a row for one
+# director, until they opened `claude` in every folder by hand and answered.
+#
+# An MCP server can run code, so the answer stays the director's. What changes is where it is
+# given: the engine sees the question coming, stops before launching anything (exit 78), and Bulava
+# asks with two buttons. The answer is kept in the engine's own state — never written into the
+# project, where `.claude/settings.local.json` would turn up as an uncommitted change — and reaches
+# each worker through its `--settings` file, which Claude honours exactly as if it had been clicked.
+
+project_mcp_servers() {   # $1=dir → one server name per line
+  [ -f "$1/.mcp.json" ] || return 0
+  jq -r '(.mcpServers // {}) | keys[]' "$1/.mcp.json" 2>/dev/null
+}
+
+mcp_decisions_file() {   # $1=dir
+  printf '%s/mcp-decisions/%s.json\n' "$SUP_STATE" "$(slug_for "$(canon_path "$1")")"
+}
+
+# Every place Claude Code reads the answer from, plus our own record: the settings files of every
+# scope, and the per-project entry it keeps in ~/.claude.json. `enableAllProjectMcpServers` anywhere
+# answers for all of them.
+project_mcp_decided() {   # $1=dir → «*» when all are enabled, else one decided name per line
+  local d="$1" f
+  local -a files=("$HOME/.claude/settings.json" "$d/.claude/settings.json" "$d/.claude/settings.local.json"
+                  "$SUP_STATE/worker-settings.json")
+  for f in "${files[@]}"; do
+    [ -f "$f" ] || continue
+    jq -r 'if .enableAllProjectMcpServers == true then "*"
+           else ((.enabledMcpjsonServers // []) + (.disabledMcpjsonServers // []))[] end' "$f" 2>/dev/null
+  done
+  [ -f "$HOME/.claude.json" ] && jq -r --arg p "$d" '
+      (.projects[$p] // {}) as $e
+      | if $e.enableAllProjectMcpServers == true then "*"
+        else (($e.enabledMcpjsonServers // []) + ($e.disabledMcpjsonServers // []))[] end' \
+      "$HOME/.claude.json" 2>/dev/null
+  f="$(mcp_decisions_file "$d")"
+  [ -f "$f" ] && jq -r '((.enabled // []) + (.disabled // []))[]' "$f" 2>/dev/null
+  return 0
+}
+
+# The servers Claude would stop to ask about.
+project_mcp_pending() {   # $1=dir → one name per line
+  local d="$1" decided
+  [ "${SUPERVISOR_MCP_GATE:-1}" = 1 ] || return 0
+  decided="$(project_mcp_decided "$d")"
+  printf '%s\n' "$decided" | grep -qx '\*' && return 0
+  project_mcp_servers "$d" | while IFS= read -r s; do
+    [ -n "$s" ] && ! printf '%s\n' "$decided" | grep -qxF -- "$s" && printf '%s\n' "$s"
+  done
+  return 0
+}
+
+mcp_state_json() {   # $1=dir
+  local d="$1"
+  jq -n -c --arg servers "$(project_mcp_servers "$d")" --arg pending "$(project_mcp_pending "$d")" \
+    '{servers: ($servers | split("\n") | map(select(length > 0))),
+      pending: ($pending | split("\n") | map(select(length > 0)))}'
+}
+
+mcp_decision_record() {   # $1=dir $2=enable|skip $3…=names
+  local d="$1" how="$2" f tmp names
+  shift 2
+  f="$(mcp_decisions_file "$d")"
+  mkdir -p "$(dirname "$f")" 2>/dev/null || return 1
+  [ -f "$f" ] || printf '{}\n' > "$f"
+  names="$(printf '%s\n' "$@" | jq -R . | jq -s -c 'map(select(length > 0))')"
+  tmp="$f.tmp.$$"
+  jq --argjson n "$names" --arg how "$how" '
+      (.enabled // []) as $en | (.disabled // []) as $dis
+      | if $how == "enable" then .enabled = (($en + $n) | unique) | .disabled = ($dis - $n)
+        else .disabled = (($dis + $n) | unique) | .enabled = ($en - $n) end' "$f" > "$tmp" 2>/dev/null \
+    && mv -f "$tmp" "$f" || { rm -f "$tmp"; return 1; }
+}
+
+# The director's answers for one folder, carried to a copy of it.
+#
+# Every answer above is keyed by the folder's path, and a linked worktree Bulava makes for a night's
+# work is a new path: its `.mcp.json` is the same file, yet every server in it reads as never asked
+# about, and the start refuses with 78 at an hour when nobody is there to press the button. The
+# director already answered for these servers — so what they enabled is enabled in the copy and what
+# they turned off stays off, written into the engine's record for the copy and nowhere else.
+#
+# Read from the same places `project_mcp_decided` reads, but with «on» and «off» kept apart: a
+# carried answer must be the same answer, not merely «decided». A server turned off anywhere stays
+# off even where another scope enabled it — it can run code, and «off» is the answer that cannot
+# hurt. Nothing decided, nothing written.
+mcp_carry_decisions() {   # $1=source dir $2=destination dir → what was carried, as JSON; nothing when nothing was
+  local src="$1" dst="$2" f said en dis s
+  local -a files=("$HOME/.claude/settings.json" "$src/.claude/settings.json" "$src/.claude/settings.local.json"
+                  "$SUP_STATE/worker-settings.json")
+  local -a ea=() da=()
+  # One line per answer: «*» for all of them, «+name» on, «-name» off.
+  local q='(if .enableAllProjectMcpServers == true then "*" else empty end),
+           ((.enabledMcpjsonServers // [])[] | "+" + .), ((.disabledMcpjsonServers // [])[] | "-" + .)'
+  said="$(
+    for f in "${files[@]}"; do
+      [ -f "$f" ] && jq -r "$q" "$f" 2>/dev/null
+    done
+    [ -f "$HOME/.claude.json" ] && jq -r --arg p "$src" "(.projects[\$p] // {}) | $q" "$HOME/.claude.json" 2>/dev/null
+    f="$(mcp_decisions_file "$src")"
+    [ -f "$f" ] && jq -r '((.enabled // [])[] | "+" + .), ((.disabled // [])[] | "-" + .)' "$f" 2>/dev/null
+    true
+  )"
+  dis="$(printf '%s\n' "$said" | sed -n 's/^-//p' | grep -v '^$' | sort -u)"
+  en="$( { printf '%s\n' "$said" | sed -n 's/^+//p'
+           printf '%s\n' "$said" | grep -qx '\*' && project_mcp_servers "$src"
+         } | grep -v '^$' | sort -u)"
+  [ -n "$en$dis" ] || return 0
+  while IFS= read -r s; do
+    [ -n "$s" ] || continue
+    printf '%s\n' "$dis" | grep -qxF -- "$s" || ea[${#ea[@]}]="$s"
+  done <<< "$en"
+  while IFS= read -r s; do [ -n "$s" ] && da[${#da[@]}]="$s"; done <<< "$dis"
+  # «on» first and «off» after it: the record's «skip» takes a name out of «enabled», so the order
+  # is what makes «off» win in the copy exactly as it did in the original.
+  if [ "${#ea[@]}" -gt 0 ]; then mcp_decision_record "$dst" enable "${ea[@]}" || return 1; fi
+  if [ "${#da[@]}" -gt 0 ]; then mcp_decision_record "$dst" skip "${da[@]}" || return 1; fi
+  jq -n -c --arg e "$(printf '%s\n' ${ea[@]+"${ea[@]}"})" --arg d "$dis" \
+    '{enabled: ($e | split("\n") | map(select(length > 0))),
+      disabled: ($d | split("\n") | map(select(length > 0)))}'
+}
+
+# The MCP servers, other than the run's own `browser`, that drive a browser: his user-scope ones,
+# the ones he added for this project, and the project's .mcp.json. One name per line.
+#
+# Matched by what they run, not by what he called them: "chrome-devtools" is the name the docs
+# suggest, but another user's bridge to the same Chrome can be called anything.
+browser_mcp_names() {   # $1=project dir
+  local d="$1" cfg="${HOME:-}/.claude.json"
+  local pick='to_entries[] | select(.key != "browser" and .key != "accounts")
+    | select(((.value.command // "") + " " + ((.value.args // []) | map(tostring) | join(" ")))
+             | test("chrome-devtools-mcp|@playwright/mcp|playwright-mcp"; "i"))
+    | .key'
+  {
+    [ -s "$cfg" ] && jq -r --arg p "$d" "[(.mcpServers // {}), (.projects[\$p].mcpServers // {})] | add // {} | $pick" "$cfg" 2>/dev/null
+    [ -s "$d/.mcp.json" ] && jq -r "(.mcpServers // {}) | $pick" "$d/.mcp.json" 2>/dev/null
+  } | sort -u
+  return 0
+}
+
+# The worker's settings for this run: the engine's own, plus the director's MCP answers for this
+# project. Nothing to add, and the shared file is used as it always was.
+#
+# An automation's run (SUPERVISOR_UNATTENDED=1) is also allowed its own browser's tools as a whole
+# server — one rule, where his own settings had collected thirteen of them one dialog at a time.
+#
+# And it is denied every other browser. It loads his user-scope MCP servers like any session, so
+# his chrome-devtools bridge sat next to the run's own browser, and the thirteen tools he had once
+# allowed were allowed here too: the call never reached permission-gate.sh (that only hears a
+# dialog about to be shown), went to his Chrome on port 9222, and hung on Chrome's own "Allow
+# remote debugging?" with nobody at the computer. A deny rule wins over every allow, so the
+# browser he works in is out of reach whatever he has clicked. Claude in Chrome's tools go the
+# same way: they drive his real, signed-in browser too.
+worker_settings_for() {   # $1=instance dir $2=project dir → the settings path to hand the worker
+  local idir="$1" d="$2" base="$SUP_STATE/worker-settings.json" f out unattended=false deny='[]' own=false
+  f="$(mcp_decisions_file "$d")"
+  [ "${SUPERVISOR_UNATTENDED:-}" = 1 ] && unattended=true
+  # With Bulava's browser on, every run — a chat he is in too — has its two browsers allowed and
+  # his own denied: the "Allow remote debugging?" his Chrome asks on every new connection is what
+  # kept the work waiting for him.
+  bulava_browser_service >/dev/null && own=true
+  if [ "$unattended" = true ] || [ "$own" = true ]; then
+    deny="$( { printf '%s\n' chrome-devtools claude-in-chrome; browser_mcp_names "$d"; } \
+      | jq -R -s -c 'split("\n") | map(select(length > 0) | "mcp__" + .) | unique')"
+    [ -n "$deny" ] || deny='["mcp__chrome-devtools","mcp__claude-in-chrome"]'
+  fi
+  if [ ! -s "$f" ] && [ "$unattended" = false ] && [ "$own" = false ]; then
+    [ -f "$base" ] && printf '%s\n' "$base"
+    return 0
+  fi
+  [ -s "$f" ] || f=/dev/null
+  out="$idir/worker-settings.json"
+  { if [ -f "$base" ]; then cat "$base"; else echo '{}'; fi; } \
+    | jq --slurpfile dec "$f" --argjson unattended "$unattended" --argjson own "$own" --argjson deny "$deny" '
+        (($dec[0] // {}) as $d
+         | .enabledMcpjsonServers = (((.enabledMcpjsonServers // []) + ($d.enabled // [])) | unique)
+         | .disabledMcpjsonServers = (((.disabledMcpjsonServers // []) + ($d.disabled // [])) | unique))
+        | if $unattended or $own then
+            .permissions.allow = (((.permissions.allow // []) + ["mcp__browser"] + (if $own then ["mcp__accounts"] else [] end)) | unique)
+            | .permissions.deny = (((.permissions.deny // []) + $deny) | unique)
+          else . end' \
+      > "$out" 2>/dev/null && { printf '%s\n' "$out"; return 0; }
+  [ -f "$base" ] && printf '%s\n' "$base"
+  return 0
+}
+
+# What the worker is told when it starts on top of the director's uncommitted work.
+#
+# The snapshot keeps the review honest, but it cannot stop the worker from repeating the original
+# mistake with its own hands: one `git add -A && git commit` sweeps every one of those files into a
+# commit that has the worker's message on it. So it is told, by name, which files are not its own.
+director_work_brief() {   # $1=dir $2=snapshot ref $3=snapshot commit (defaults to the ref)
+  local d="$1" ref="${2:-}" snap="${3:-${2:-}}" list n
+  # Read off the snapshot rather than off the folder: on a resumed session the folder also holds
+  # whatever the worker has done since, and that is exactly what must not be listed as theirs.
+  list="$( { git -C "$d" -c core.quotePath=false diff --name-status "$snap^1" "$snap" 2>/dev/null
+             git -C "$d" -c core.quotePath=false ls-tree -r --name-only "$snap^3" 2>/dev/null | sed 's/^/?? /'
+           } | tr '\t' ' ')"
+  n="$(printf '%s\n' "$list" | grep -c .)"
+  cat <<EOF
+
+## The director's uncommitted work — not yours, left in place
+
+Before this run started, the folder already had uncommitted changes ($n entries). They are the
+director's, and they were left exactly as they were: nothing was committed, staged or stashed.
+A recovery snapshot is at \`$ref\`. Review measures your work against that snapshot, so these
+files do not count as your changes — unless you change them.
+
+- Do not stage, commit, stash, revert, reset, clean or delete them.
+- Never use \`git add -A\`, \`git add .\`, \`git add -u\`, \`git commit -a\` or \`git stash\` in this run.
+  If you commit, stage the paths you changed by name.
+- If the task genuinely needs you to edit one of these files, you may — say so in your outcome.
+
+The files as they were at the start:
+EOF
+  printf '%s\n' "$list" | grep . | head -80 | sed 's/^/    /'
+  [ "$n" -gt 80 ] && printf '    … and %s more\n' "$((n - 80))"
+  return 0
+}
+
+# ── What a run is measured against, kept across the session ending and being resumed ─────────
+#
+# A chat's session ends (the app quits, the machine sleeps, the worker exits) and is later resumed
+# with `night-shift resume`, which builds a fresh instance folder. It used to measure the resumed
+# session against HEAD — so a chat that had started in «leave my changes» mode lost its snapshot
+# base there, the review counted the director's untouched edits as the worker's, and the scope gate
+# could delete their untracked drafts. So the base is kept per project when an instance stops, and a
+# resume takes it back. It is the base the review last accepted (the snapshot, or the one taken
+# after an accepted turn), so what the worker did after that — reviewed or not — still counts as the
+# worker's. A fresh `start` measures itself and drops it.
+BASE_STATE_FILES="base-sha base-snapshot base-untracked base-ignored snapshot-ref"
+
+saved_base_dir() {   # $1=slug
+  printf '%s/bases/%s\n' "$SUP_STATE" "$1"
+}
+
+save_run_base() {   # $1=instance dir $2=slug
+  local idir="$1" dest f
+  dest="$(saved_base_dir "$2")"
+  rm -rf "$dest" 2>/dev/null
+  [ -f "$idir/base-snapshot" ] || return 0      # an ordinary run: HEAD is a fine base to resume on
+  mkdir -p "$dest" 2>/dev/null || return 0
+  for f in $BASE_STATE_FILES; do
+    [ -f "$idir/$f" ] && cp -f "$idir/$f" "$dest/$f" 2>/dev/null
+  done
+  return 0
+}
+
+forget_run_base() {   # $1=slug
+  rm -rf "$(saved_base_dir "$1")" 2>/dev/null
+  return 0
+}
+
+# Put a saved snapshot base back into a resumed instance — only while there is still uncommitted
+# work to protect, and only if the snapshot commit still exists. Otherwise HEAD, as for any run.
+restore_run_base() {   # $1=instance dir $2=slug $3=project dir → 0 when a snapshot base was restored
+  local idir="$1" src base f
+  src="$(saved_base_dir "$2")"
+  [ -f "$src/base-snapshot" ] && [ -s "$src/base-sha" ] || return 1
+  base="$(only_object_id "$(cat "$src/base-sha")")"
+  [ -n "$base" ] && git -C "$3" cat-file -e "$base^{commit}" 2>/dev/null || return 1
+  worktree_dirty "$3" || return 1
+  for f in $BASE_STATE_FILES; do
+    [ -f "$src/$f" ] && cp -f "$src/$f" "$idir/$f" 2>/dev/null
+  done
+  return 0
+}
+
+# ── Files git ignored when the run started ────────────────────────────────────────────────────
+#
+# The scope gate deletes an out-of-scope file that is not in the base, on the reasoning that such a
+# file is new and the worker's. A file that was IGNORED at the start is not in the base either — and
+# a worker that edits `.gitignore` makes it visible, at which point it looked new and was deleted:
+# somebody's `.env`, a vendored build, a local draft. So the ignored paths are written down when the
+# run starts (`--directory`, so an ignored folder is one line, not its fifty thousand files), and the
+# gate never deletes anything under them.
+ignored_manifest() {   # $1=dir → one path per line («dir/» for a folder)
+  git -C "$1" -c core.quotePath=false ls-files --others --ignored --exclude-standard --directory 2>/dev/null
+}
+
+was_ignored_at_start() {   # $1=instance dir $2=path → 0 when the path was ignored when the run began
+  local m="${1:-}/base-ignored" rel="$2"
+  [ -f "$m" ] || return 1
+  awk -v p="$rel" '
+    { e = $0 }
+    e == p { found = 1; exit }
+    substr(e, length(e)) == "/" && substr(p, 1, length(e)) == e { found = 1; exit }
+    END { exit found ? 0 : 1 }' "$m"
+}
+
+# Snapshots are a way back, not an archive. A month is longer than anybody waits to notice a run
+# went wrong, and a repository with a year of these under a hidden namespace is clutter nobody
+# asked for.
+prune_director_snapshots() {   # $1=dir
+  local d="$1" cutoff ref when
+  cutoff=$(( $(date +%s) - ${SUPERVISOR_SNAPSHOT_KEEP_DAYS:-30} * 86400 ))
+  git -C "$d" for-each-ref --format='%(refname) %(committerdate:unix)' refs/night-shift/ 2>/dev/null \
+    | while read -r ref when; do
+        case "$when" in ''|*[!0-9]*) continue ;; esac
+        [ "$when" -lt "$cutoff" ] && git -C "$d" update-ref -d "$ref" 2>/dev/null
+      done
+  return 0
 }
 
 # What kind of stack a project is, by what is actually in the folder.

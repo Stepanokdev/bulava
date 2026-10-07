@@ -1,0 +1,150 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "NSAppleEventsUsageDescription" : {
+      "comment" : "What macOS shows when it asks for this permission.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Bulava opens Terminal when you ask to watch a run from the console side, and reads new letters in Mail for automations you set up to start on a letter."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bulava открывает Terminal, когда просишь показать работу со стороны консоли, и читает новые письма в Mail для автоматизаций, которые запускаются от письма."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bulava відкриває Terminal, коли просиш показати роботу з боку консолі, і читає нові листи в Mail для автоматизацій, які запускаються від листа."
+          }
+        }
+      }
+    },
+    "NSCalendarsFullAccessUsageDescription" : {
+      "comment" : "What macOS shows when it asks for this permission.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Bulava starts an automation when a meeting in your calendar ends, if you set one up to."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bulava запускает автоматизацию, когда в календаре заканчивается встреча, — если такая настроена."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bulava запускає автоматизацію, коли в календарі закінчується зустріч, — якщо таку налаштовано."
+          }
+        }
+      }
+    },
+    "NSLocalNetworkUsageDescription" : {
+      "comment" : "What macOS shows when it asks for this permission.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Bulava talks to the Bulava app on your phone over this Wi-Fi, directly — nothing goes through the internet."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bulava соединяется с Bulava на твоём телефоне напрямую, через эту сеть Wi-Fi, — через интернет ничего не идёт."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bulava зʼєднується з Bulava на твоєму телефоні напряму, через цю мережу Wi-Fi, — через інтернет нічого не йде."
+          }
+        }
+      }
+    },
+    "NSMicrophoneUsageDescription" : {
+      "comment" : "What macOS shows when it asks for this permission.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Bulava listens so you can describe work out loud instead of typing it."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bulava слушает, чтобы задачу можно было надиктовать, а не печатать."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bulava слухає, щоб завдання можна було надиктувати, а не друкувати."
+          }
+        }
+      }
+    },
+    "NSScreenCaptureUsageDescription" : {
+      "comment" : "What macOS shows when it asks for this permission.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Bulava takes the before/after screenshots your run reports are made of. A worker cannot take them itself, so Bulava does it on its behalf."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bulava делает снимки экрана «до» и «после», из которых складываются отчёты о работе. Исполнитель не может сделать их сам, поэтому Bulava снимает за него."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bulava робить знімки екрана «до» і «після», з яких складаються звіти про роботу. Виконавець не може зробити їх сам, тож Bulava знімає за нього."
+          }
+        }
+      }
+    },
+    "NSSpeechRecognitionUsageDescription" : {
+      "comment" : "What macOS shows when it asks for this permission.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Bulava transcribes what you say into the request it works from, on this Mac."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bulava превращает сказанное в текст запроса, с которым работает, — на этом Mac."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bulava перетворює сказане на текст запиту, з яким працює, — на цьому Mac."
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

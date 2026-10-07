@@ -32,10 +32,12 @@ struct SidebarView: View {
                         Text(verbatim: ".app").foregroundStyle(Palette.textFaint)
                     }
                     .brandStyle()
-                    Text(verbatim: "beta")
+                    // Bulava Dev says so where the eye lands first: two windows that look the same
+                    // and hold different data are how one gets mistaken for the other.
+                    Text(verbatim: AppChannel.current.isDev ? "dev" : "beta")
                         .font(Typo.tag)
                         .tracking(0.4)
-                        .foregroundStyle(Palette.textFaint)
+                        .foregroundStyle(AppChannel.current.isDev ? Palette.orange : Palette.textFaint)
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.down")
@@ -49,7 +51,9 @@ struct SidebarView: View {
         .padding(.horizontal, 12)
         .padding(.top, 12)
         .padding(.bottom, 10)
-        .help(Text("All products"))
+        .help(AppChannel.current.isDev
+              ? Text(verbatim: "Bulava Dev · \(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "")")
+              : Text("All products"))
     }
 
     // MARK: - Search
@@ -100,6 +104,10 @@ struct SidebarView: View {
             }
             .buttonStyle(.row(selected: model.route == .skills))
             .help(Text("Which skills this machine carries, and which ones each product uses (⇧⌘S)"))
+
+            AutomationsDestination()
+
+            PipelinesDestination()
         }
         .padding(.horizontal, 8)
         .padding(.bottom, 10)
@@ -239,14 +247,10 @@ struct SidebarView: View {
         .fixedSize()
     }
 
-    private func tightest(_ usage: UsageSnapshot) -> Int? {
-        let used = [window(usage.fiveHour), usage.sevenDay.flatMap(window)]
-            .compactMap { $0?.used }
-        return used.max()
-    }
+    private func tightest(_ usage: UsageSnapshot) -> Int? { usage.tightestShown() }
 
     @ViewBuilder private func engine(_ name: String, _ usage: UsageSnapshot) -> some View {
-        let stale = usage.updatedAt.map { Date().timeIntervalSince($0) > 1800 } ?? true
+        let stale = usage.isStale()
         let five = window(usage.fiveHour)
         let seven = usage.sevenDay.flatMap(window)
         VStack(alignment: .leading, spacing: 9) {
@@ -323,10 +327,8 @@ struct SidebarView: View {
     }
 
     private func window(_ w: UsageWindow?) -> (used: Int, reset: String?)? {
-        guard let w, w.usedPercent > 0 || w.resetsAt != nil else { return nil }
-        if let resets = w.resetsAt, resets <= Date() { return nil }
-        return (used: min(100, max(0, Int(w.usedPercent.rounded()))),
-                reset: Fmt.resetsCompact(w.resetsAt))
+        guard let w, let used = w.shownPercent() else { return nil }
+        return (used: used, reset: Fmt.resetsCompact(w.resetsAt))
     }
 
     private var footer: some View {
@@ -621,14 +623,19 @@ private struct ProductRow: View {
         Button("Remove product", role: .destructive) { model.removeProduct(product) }
     }
 
+    /// A mark only for what is going on or waits for the director. A chat that answered used to
+    /// keep a green dot for good — the answer stays answered — so every finished chat carried one
+    /// and the column filled up with marks that said nothing; the answer is in the chat itself.
     @ViewBuilder private var folded: some View {
         let phases = foldedChats.map { model.directPhase(for: $0.id) }
-        if phases.contains(where: \.wantsAttention) {
-            StatusDot(color: phases.contains(where: \.isFailure) ? Palette.red : Palette.orange)
-        } else if phases.contains(where: \.isActive) {
+        // Its automations' runs are not among its chats, and a question one of them holds is
+        // still a question in this product.
+        let automation = model.automationState(forProductID: product.id)
+        if phases.contains(where: \.wantsAttention) || automation == .needsAnswer || automation == .failed
+            || automation == .reportReady {
+            StatusDot(color: phases.contains(where: \.isFailure) || automation == .failed ? Palette.red : Palette.orange)
+        } else if phases.contains(where: \.isActive) || automation == .running {
             PulseDot(color: Palette.green, size: 6)
-        } else if phases.contains(.ready) {
-            StatusDot(color: Palette.accent, size: 6)
         } else if product.pinned {
             Image(systemName: "pin.fill")
                 .font(.system(size: 8))
@@ -668,6 +675,7 @@ private struct ChatRow: View {
         .contextMenu {
             Button(chat.pinned ? "Unpin" : "Pin to top") { model.conversations.togglePinned(chat.id) }
             Button("Rename…") { model.beginRenamingChat(chat) }
+            Button("Make it an automation…") { model.automationEditor = .fromChat(chat.id) }
             Divider()
 
             Button("Archive chat…") { confirmingArchive = true }
@@ -716,14 +724,14 @@ private struct ChatRow: View {
         .padding(.trailing, hovering ? 3 : Rail.inset)
     }
 
+    /// Working, waiting for the director, or failed — each of which goes by itself when the state
+    /// changes. "Answered" is not a state that goes, so it has no mark (see `folded`).
     @ViewBuilder private var indicator: some View {
         let phase = model.directPhase(for: chat.id)
         if phase.wantsAttention {
             StatusDot(color: phase.isFailure ? Palette.red : Palette.orange)
         } else if phase.isActive {
             PulseDot(color: Palette.green, size: 6)
-        } else if phase == .ready {
-            StatusDot(color: Palette.accent, size: 6)
         }
     }
 }
@@ -757,5 +765,81 @@ private struct ArchivedChatRow: View {
             Button("Unarchive") { model.unarchiveChat(chat) }
         }
         .help(Text(String(format: String(localized: "Read “%@” — it stays in Archives"), chat.title)))
+    }
+}
+
+
+// MARK: - Automations
+
+/// The way into automations, with the number of runs waiting for him — changes to merge, a
+/// question, a failure, a run asking to start. Nothing waiting, no number: a quiet week is quiet.
+private struct AutomationsDestination: View {
+    @Environment(AppModel.self) private var model
+
+    private var selected: Bool {
+        switch model.route {
+        case .automations, .automation: true
+        default: false
+        }
+    }
+
+    var body: some View {
+        let waiting = model.automationRunsWantingHim.count
+        Button { model.openAutomations() } label: {
+            HStack(spacing: Rail.gap) {
+                Image(systemName: "clock.arrow.2.circlepath")
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(selected ? Palette.text : Palette.textSecondary)
+                    .frame(width: Rail.glyph, height: Rail.glyph)
+                Text("Automations")
+                    .font(selected ? Typo.rowLabel.weight(.semibold) : Typo.rowLabel)
+                    .foregroundStyle(Palette.text)
+                    .lineLimit(1)
+                Spacer(minLength: 6)
+                if waiting > 0 {
+                    CountBadge(count: waiting, accented: true)
+                        .transition(.scale.combined(with: .opacity))
+                }
+            }
+            .padding(.horizontal, Rail.inset)
+            .frame(minHeight: 30)
+            .animation(Motion.standard, value: waiting)
+        }
+        .buttonStyle(.row(selected: selected))
+        .help(Text("Jobs Bulava runs by itself — on a schedule, when something changes, or when something happens on this Mac (⇧⌘A)"))
+    }
+}
+
+// MARK: - Pipelines
+
+/// The way into the pipelines: what a message goes through before and after the worker has it.
+private struct PipelinesDestination: View {
+    @Environment(AppModel.self) private var model
+
+    private var selected: Bool {
+        switch model.route {
+        case .pipelines, .pipeline: true
+        default: false
+        }
+    }
+
+    var body: some View {
+        Button { model.openPipelines() } label: {
+            HStack(spacing: Rail.gap) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(selected ? Palette.text : Palette.textSecondary)
+                    .frame(width: Rail.glyph, height: Rail.glyph)
+                Text("Pipelines")
+                    .font(selected ? Typo.rowLabel.weight(.semibold) : Typo.rowLabel)
+                    .foregroundStyle(Palette.text)
+                    .lineLimit(1)
+                Spacer(minLength: 6)
+            }
+            .padding(.horizontal, Rail.inset)
+            .frame(minHeight: 30)
+        }
+        .buttonStyle(.row(selected: selected))
+        .help(Text("What a message goes through: who prepares it, who does the work, what checks it"))
     }
 }

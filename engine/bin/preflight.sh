@@ -10,15 +10,27 @@ ROOT="$(cd "$BIN_DIR/.." && pwd)"
 # `--stage` exists so the pipeline runner can order the work itself — that is what makes the two
 # independent positions runnable side by side, and what a hand-built pipeline will later reorder.
 # With no flags the script behaves exactly as it always did: one call, everything, in order.
-ART=""; STAGE=all; ENGINE=""
+# A pipeline built in Bulava adds what its graph says: research or design precedent forced on, and
+# its own prompt files in place of the engine's. Every file is checked before it is trusted; a
+# missing one falls back to the engine's own prompt and the log says so.
+ART=""; STAGE=all; ENGINE=""; RESEARCH_MODE=auto; DESIGN_MODE=auto
+PEER_PROMPT=""; ALIGN_PROMPT=""; RESEARCH_PROMPT=""; DESIGN_PROMPT=""
 while [ $# -gt 0 ]; do
   case "${1:-}" in
     --art)    ART="${2:-}"; shift 2 ;;
     --stage)  STAGE="${2:-all}"; shift 2 ;;
     --engine) ENGINE="${2:-}"; shift 2 ;;
+    --research) RESEARCH_MODE="${2:-auto}"; shift 2 ;;
+    --design)   DESIGN_MODE="${2:-auto}"; shift 2 ;;
+    --peer-prompt)     PEER_PROMPT="${2:-}"; shift 2 ;;
+    --prompt)          ALIGN_PROMPT="${2:-}"; shift 2 ;;
+    --research-prompt) RESEARCH_PROMPT="${2:-}"; shift 2 ;;
+    --design-prompt)   DESIGN_PROMPT="${2:-}"; shift 2 ;;
     *) break ;;
   esac
 done
+case "$RESEARCH_MODE" in auto|always|never) ;; *) RESEARCH_MODE=auto ;; esac
+case "$DESIGN_MODE" in auto|always|never) ;; *) DESIGN_MODE=auto ;; esac
 case "$STAGE" in all|context|peer|align) ;; *) echo "❌ невідомий --stage: $STAGE" >&2; exit 2 ;; esac
 
 PROJ="$(canon_path "${1:?usage: preflight.sh [--art DIR] [--stage S] <project-dir> <task...>}")"; shift
@@ -36,6 +48,20 @@ mkdir -p "$ART" 2>/dev/null || true
 PROMPTS="$ROOT/supervisor/prompts"; SCHEMAS="$ROOT/supervisor/schemas"
 LOG="$SUP_STATE/supervisor.log"
 log() { echo "$(date '+%F %T') [preflight] $*" >> "$LOG"; }
+
+# The prompt a stage reads: the pipeline's own file when it gave a usable one, the engine's otherwise.
+prompt_for() {   # $1 = custom file (may be empty)  $2 = engine prompt name
+  if [ -n "${1:-}" ]; then
+    if [ -f "$1" ] && [ -s "$1" ]; then printf '%s' "$1"; return 0; fi
+    log "pipeline prompt $1 is missing or empty — using the engine's $2"
+  fi
+  printf '%s' "$PROMPTS/$2"
+}
+# A stage that decided not to run says so in a file the runner reads: "skipped, and why" is not the
+# same event as "failed".
+stage_skip_note() {   # $1 = reason
+  [ -n "${PIPE_STAGE:-}" ] && printf '%s\n' "$1" > "$ART/.skip-$PIPE_STAGE" 2>/dev/null || true
+}
 
 # Asked here, before a single word of the task reaches anybody.
 #
@@ -145,7 +171,14 @@ run_peer() {   # $1=who  $2=prompt  $3=file to leave the final text in  [$4=labe
   # events for an entire turn and nothing at all while it reasons — its own rollout file grows at
   # exactly the same moments — so for Codex this is not liveness. It is how long a silent reasoning
   # phase may last before we give up on it, and it is the one place a clock still bounds live work.
-  if [ "$who" = codex ]; then
+  #
+  # The alignment is the exception, and it is measured too: comparing two finished positions took a
+  # median of 45s and 80s at the 95th percentile over 94 runs. Fifteen minutes of silence there is a
+  # hung call, not a long thought — and it cost a director exactly that, a quarter of an hour of
+  # «preparing» before the work started without the comparison anyway. So it gets five minutes.
+  if [ "$who" = codex ] && [ "$label" = align ]; then
+    idle="${SUPERVISOR_ALIGN_IDLE_TIMEOUT:-300}"
+  elif [ "$who" = codex ]; then
     idle="${SUPERVISOR_PEER_IDLE_TIMEOUT_CODEX:-900}"
   else
     idle="${SUPERVISOR_PEER_IDLE_TIMEOUT:-180}"
@@ -321,19 +354,20 @@ stage_context() {
       '{scale:$s, needs_plan:$p, needs_external_research:$r, touches_interface:$u, reason:"heuristic"}' > "$ART/preflight.json" 2>/dev/null
   fi
   case "${touches_ui:-}" in true|false) ;; *) touches_ui="$(interface_heuristic "$task")" ;; esac
+  case "$RESEARCH_MODE" in always) needs_research=true ;; never) needs_research=false ;; esac
   printf '%s\n' "$scale" > "$ART/task-scale"
   log "scale=$scale needs_plan=$needs_plan needs_research=$needs_research touches_interface=$touches_ui"
 
   design_text="(no design research performed)"
   printf '%s' "$(printf '%s' "$task" | tr 'A-Z' 'a-z')" | grep -Eq "$S_PATTERN" && mechanical=1
-  if [ "${touches_ui:-false}" = "true" ] && [ "$mechanical" = 0 ] \
-     && [ "${SUPERVISOR_DESIGN_RESEARCH:-1}" = "1" ]; then
+  if [ "$DESIGN_MODE" = always ] || { [ "$DESIGN_MODE" = auto ] && [ "${touches_ui:-false}" = "true" ] && [ "$mechanical" = 0 ] \
+     && [ "${SUPERVISOR_DESIGN_RESEARCH:-1}" = "1" ]; }; then
     t="$(budget "${SUPERVISOR_DESIGN_TIMEOUT:-$RT}")"
     if [ "$t" -gt 5 ]; then
       log "running design precedent research"
       ( cd "$PROJ" && codex_ro "$t" -c tools.web_search=true \
           --output-schema "$SCHEMAS/design.schema.json" \
-          -o "$ART/design.json" "$(render "$PROMPTS/design-research.md")" ) >/dev/null 2>&1
+          -o "$ART/design.json" "$(render "$(prompt_for "$DESIGN_PROMPT" design-research.md)")" ) >/dev/null 2>&1
     else
       log "design research skipped — preflight budget exhausted"
     fi
@@ -362,7 +396,7 @@ stage_context() {
     if [ "$t" -gt 5 ]; then
       log "running research"
       ( cd "$PROJ" && codex_ro "$t" -c tools.web_search=true --output-schema "$SCHEMAS/research.schema.json" \
-          -o "$ART/research.json" "$(render "$PROMPTS/research.md")" ) >/dev/null 2>&1
+          -o "$ART/research.json" "$(render "$(prompt_for "$RESEARCH_PROMPT" research.md)")" ) >/dev/null 2>&1
     else
       log "research skipped — preflight budget exhausted"
     fi
@@ -392,7 +426,7 @@ stage_context() {
   _recent="$(claude_last_reply "$IDIR" 2>/dev/null || true)"
   CONTEXT="$(cat "$ART/context.md" 2>/dev/null)" RECENT="$_recent" \
   RESEARCH="$research_text" DESIGN="$design_text" ARGUE="$(render "$PROMPTS/argue-with-task.md")" \
-    render "$PROMPTS/peer-brief.md" > "$ART/peer-prompt.txt" 2>/dev/null || true
+    render "$(prompt_for "$PEER_PROMPT" peer-brief.md)" > "$ART/peer-prompt.txt" 2>/dev/null || true
   printf '%s\n' "${scale:-large}" > "$ART/.scale"
   printf '%s\n' "${needs_plan:-false}" > "$ART/.needs-plan"
   printf 'new\n' > "$ART/.relation"
@@ -454,6 +488,7 @@ peer_unavailable() {   # $1=claude|codex  $2=reason
   local who="$1" reason="$2"
   printf '%s\n' "$reason" > "$ART/peer-$who.unavailable" 2>/dev/null || true
   [ "$ART" = "$IDIR" ] || cp -f "$ART/peer-$who.unavailable" "$IDIR/peer-$who.unavailable" 2>/dev/null || true
+  [ -n "${PIPE_STAGE:-}" ] && printf '%s\n' "$reason" > "$ART/.unavailable-$PIPE_STAGE" 2>/dev/null || true
 }
 
 stage_peer() {   # $1 = claude|codex
@@ -533,7 +568,9 @@ stage_peer() {   # $1 = claude|codex
   jq -nc --argjson at "$started" --arg partial "$tmp" \
     '{started_at:$at, partial:$partial}' > "$IDIR/peer-$who.running" 2>/dev/null || true
   rm -f "$IDIR/peer-$who.unavailable" 2>/dev/null || true
-  log "peer/$who: starting independent position (stops after ${SUPERVISOR_PEER_IDLE_TIMEOUT:-180}s of silence, model=${SUPERVISOR_CLAUDE_MODEL:-default}/${SUPERVISOR_CODEX_MODEL:-default})"
+  local _quiet="${SUPERVISOR_PEER_IDLE_TIMEOUT:-180}"
+  [ "$who" = codex ] && _quiet="${SUPERVISOR_PEER_IDLE_TIMEOUT_CODEX:-900}"
+  log "peer/$who: starting independent position (stops after ${_quiet}s of silence, model=${SUPERVISOR_CLAUDE_MODEL:-default}/${SUPERVISOR_CODEX_MODEL:-default})"
   run_peer "$who" "$prompt" "$tmp"; rc=$?
   ended="$(date +%s)"
   rm -f "$IDIR/peer-$who.running" 2>/dev/null || true
@@ -598,6 +635,7 @@ stage_align() {
   a="$(cat "$ART/peer-claude.md" 2>/dev/null)"; b="$(cat "$ART/peer-codex.md" 2>/dev/null)"
   if [ -z "$a" ] || [ -z "$b" ]; then
     log "align: SKIPPED — only $( [ -n "$a" ] && echo Claude || { [ -n "$b" ] && echo Codex || echo no; } ) position available; an alignment of one is not an alignment"
+    stage_skip_note "Одна позиція — звіряти нічого"
     return 1
   fi
   STAGE_LOG="$(stage_log_for align)"
@@ -610,7 +648,7 @@ stage_align() {
   align_prompt="$(BRIEF_A="$a" BRIEF_B="$b" \
     CONTEXT="$(cat "$ART/context.md" 2>/dev/null)" \
     RESEARCH="$(cat "$ART/research.md" 2>/dev/null)" DESIGN="$(cat "$ART/design.md" 2>/dev/null)" \
-    render "$PROMPTS/peer-align.md")"
+    render "$(prompt_for "$ALIGN_PROMPT" peer-align.md)")"
   run_peer codex "$align_prompt" "$ART/.align.partial" align; rc=$?
   if [ "$rc" = 0 ] && [ -s "$ART/.align.partial" ]; then
     mv -f "$ART/.align.partial" "$ART/peer-alignment.md"
@@ -646,7 +684,9 @@ settle_plan() {
 
   if [ -s "$ART/peer-codex.md" ] && [ -s "$ART/peer-claude.md" ]; then
     cp "$ART/peer-claude.md" "$ART/plan.md"
-    printf '%s\n' "Звірка двох позицій не вдалася — обидві позиції лишаються чинними, робочою взято позицію Claude." > "$ART/degraded.md"
+    # Said as what happened before the work, not as a failure happening now: the app shows it under
+    # «Night Shift працює» for as long as the task runs, and «не вдалася» there read as a crash.
+    printf '%s\n' "Перед роботою Codex не встиг звірити дві позиції, тож Claude працює за своєю, а позиція Codex лишається під рукою. Це не зупиняє роботу." > "$ART/degraded.md"
     log "adaptive peer: DEGRADED — alignment unavailable; both positions stand, Claude's is the working brief"
   elif [ -s "$ART/peer-codex.md" ]; then
     cp "$ART/peer-codex.md" "$ART/plan.md"

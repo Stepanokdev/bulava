@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import os
 
 struct ConversationView: View {
     @Environment(AppModel.self) private var model
@@ -15,6 +16,13 @@ struct ConversationView: View {
     /// following again — and their own message always brings them back. See `TailFollow` for why
     /// this tracks "did they scroll away" rather than "are they at the bottom".
     @State private var follow = TailFollow()
+    /// Whether the scroll under way is his own — see `TailFollow.advance(from:to:byHand:)`.
+    @State private var scrollingByHand = false
+    /// Which messages the lazy thread has built right now. Find walks toward a result from the
+    /// nearest of these; a reference, so rows coming and going do not redraw the thread.
+    @State private var built = BuiltRows()
+    /// Bumped to build the thread afresh — see `checkStillDrawn(_:)`.
+    @State private var threadGeneration = 0
 
     /// Find in this conversation. It belongs to the view and not to the model on purpose: it owns
     /// scrolling and focus, and it has to die with the thread it was searching.
@@ -40,7 +48,10 @@ struct ConversationView: View {
         ScrollViewReader { proxy in
             ZStack {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
+                    // Lazy, and the messages are its direct rows. A plain stack built every message
+                    // of a long chat — every answer's Markdown, every card — on each change, and a
+                    // streaming answer changes ten times a second: scrolling a long thread crawled.
+                    LazyVStack(alignment: .leading, spacing: 0) {
                         if isFresh {
                             invitation
                         } else {
@@ -49,12 +60,17 @@ struct ConversationView: View {
 
                         if !entries.contains(where: { $0.kind == .question }) {
                             SessionStatusRow(phase: phase, activity: activity, queueCount: queueCount,
-                                             degradation: model.directDegradation(for: chatID))
+                                             degradation: model.directDegradation(for: chatID),
+                                             run: chatID.flatMap { model.chatRuns[$0] })
                                 .padding(.top, 12)
                         }
 
                         Color.clear.frame(height: 1).id(Self.bottomAnchor)
                     }
+                    // Every message is a target the scroll position can go to by its id, built
+                    // or not — which is what lets Find reach one far up a lazy thread.
+                    .scrollTargetLayout()
+                    .id(threadGeneration)
                     .frame(maxWidth: Metrics.readingWidth, alignment: .leading)
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, 30)
@@ -66,7 +82,8 @@ struct ConversationView: View {
                 .onScrollGeometryChange(for: TailFollow.Frame.self) { geometry in
                     TailFollow.Frame(offsetY: geometry.contentOffset.y,
                                      contentHeight: geometry.contentSize.height,
-                                     viewportHeight: geometry.containerSize.height)
+                                     viewportHeight: geometry.containerSize.height,
+                                     viewportWidth: geometry.containerSize.width)
                 } action: { old, new in
                     // A growing answer is not the reader leaving. Both readings go in, and
                     // TailFollow tells the two apart; if it decides to keep following it also
@@ -75,19 +92,37 @@ struct ConversationView: View {
                     // Not animated: this fires on every chunk of a streaming answer, and an
                     // animation started ten times a second fights itself. Pinned text should look
                     // like it is simply standing still while more of it arrives.
-                    if follow.advance(from: old, to: new), new.distanceFromBottom > 0.5 {
+                    //
+                    // Worked out on a copy and written back only when it changed: this runs on every
+                    // frame of a scroll, and writing the state each time rebuilt the whole thread
+                    // each frame.
+                    built.offset = new.offsetY
+                    built.height = new.contentHeight
+                    var next = follow
+                    let keepUp = next.advance(from: old, to: new, byHand: scrollingByHand)
+                    if next != follow { follow = next }
+                    if keepUp, new.distanceFromBottom > 0.5 {
                         scrollToBottom(proxy, animated: false)
                     }
+                    checkStillDrawn(proxy)
                 }
                 // A hand on the trackpad is the one thing that takes the thread back from a find
                 // jump. A programmatic scroll reports `.animating`, so this cannot mistake Find's
                 // own jump for the reader changing their mind.
                 .onScrollPhaseChange { _, phase in
+                    // A fling keeps moving after the fingers lift, and it is still his.
+                    let byHand = phase == .interacting || phase == .tracking || phase == .decelerating
+                    if byHand != scrollingByHand { scrollingByHand = byHand }
                     guard follow.pinned else { return }
                     if phase == .interacting || phase == .tracking { follow.unpin() }
                 }
 
-                .safeAreaInset(edge: .top, spacing: 0) { findLayer(proxy) }
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    VStack(spacing: 0) {
+                        WorkCopyBar(chatID: chatID)
+                        findLayer(proxy)
+                    }
+                }
 
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     if let archived {
@@ -115,6 +150,7 @@ struct ConversationView: View {
             .environment(\.findMark, findMark)
             .environment(\.chatReadOnly, archived != nil)
             .task(id: chatID) {
+                built.reset()
                 closeFind(focusComposer: false)
                 follow.rejoin()
                 model.syncDirectChats()
@@ -126,6 +162,9 @@ struct ConversationView: View {
                 guard !_Concurrency.Task.isCancelled else { return }
                 scrollToBottom(proxy, animated: false)
             }
+
+            // The run's steps, from the engine's journal, for the line under the chat.
+            .task(id: chatID) { await model.watchChatRun(chatID: chatID) }
 
             // ⌘F, ⌘G and ⇧⌘G come from the menu bar, which cannot see this view's state.
             .onChange(of: model.findOpenRequest) { _, _ in openFind() }
@@ -146,7 +185,10 @@ struct ConversationView: View {
             .onChange(of: explainedProse) { _, _ in refreshFind() }
 
             .onChange(of: findShown) { _, shown in model.findBarOpen = shown }
-            .onDisappear { model.findBarOpen = false }
+            .onDisappear {
+                model.findBarOpen = false
+                built.reset()
+            }
 
             // A working agent does not add entries — it grows the last one, and the status line
             // under it changes as it goes. Watching only the COUNT meant the thread sat still
@@ -154,6 +196,7 @@ struct ConversationView: View {
             // hand.
             .onChange(of: tailSignature) { _, _ in
                 if entries.last?.kind == .user { follow.rejoin() }
+                checkStillDrawn(proxy)
                 guard follow.following else { return }
                 scrollToBottom(proxy, animated: true)
             }
@@ -272,11 +315,14 @@ struct ConversationView: View {
     private var explainedProse: [UUID: String] {
         guard findShown, !find.query.isEmpty else { return [:] }
         var out: [UUID: String] = [:]
+        // Straight from the store: Find needs the words of the explanations there are, and the
+        // full state — which fingerprints each turn's whole content to tell whether it went stale
+        // — asked for every answer of a long thread on every streamed chunk held the window still.
         for entry in entries where entry.kind == .foreman {
-            let state = model.explainState(turn: entry)
-            guard state.hasAnything else { continue }
-            let text = ConversationFind.explainedText(brief: state.brief?.text,
-                                                      stepByStep: state.stepByStep?.text)
+            let brief = model.explanations.explanation(.turn(entry.id), .brief)?.text
+            let steps = model.explanations.explanation(.turn(entry.id), .stepByStep)?.text
+            guard brief != nil || steps != nil else { continue }
+            let text = ConversationFind.explainedText(brief: brief, stepByStep: steps)
             if !text.isEmpty { out[entry.id] = text }
         }
         return out
@@ -287,8 +333,49 @@ struct ConversationView: View {
         // the tail-follow slack, and without the pin the next chunk of a streaming answer would
         // drag the reader straight back down off it.
         follow.pin()
-        withAnimation(Motion.arrive) {
-            proxy.scrollTo(place.scrollID, anchor: .top)
+        // The thread is lazy, and a jump far up it is a guess: rows that were never built are
+        // placed by an estimate, and with long answers near the end the estimate can be off by
+        // thousands of points — the jump lands on the wrong message, and asking again lands on the
+        // same wrong one. So the result's row is approached in short hops from the nearest row
+        // that IS built, where the estimate is good, and the exact place inside it is aimed at once
+        // the row exists. Only while the reader is still on this result.
+        //
+        // The bound position still says "the bottom edge" from the last time the thread followed
+        // its tail, and a lazy thread that changes height re-applies it; Find holds its own.
+        scroll = ScrollPosition(idType: UUID.self)
+        let target = place.scrollID
+        let wanted = place.entryID
+        proxy.scrollTo(wanted, anchor: .top)
+        _Concurrency.Task { @MainActor in
+            for _ in 0..<60 {
+                try? await _Concurrency.Task.sleep(for: .milliseconds(40))
+                guard follow.pinned, find.active?.scrollID == target else { return }
+                if built.ids.contains(wanted) { break }
+                let order = entries.map(\.id)
+                guard let goal = order.firstIndex(of: wanted) else { return }
+                let near = order.indices.filter { built.ids.contains(order[$0]) }
+                    .min { abs($0 - goal) < abs($1 - goal) }
+                guard let near else { proxy.scrollTo(wanted, anchor: .top); continue }
+                let hop = min(abs(goal - near), 12)
+                proxy.scrollTo(order[near + (goal > near ? hop : -hop)], anchor: .top)
+            }
+            // The row is there; its own height is now known. Aim at it, then at the place inside it,
+            // and again as whatever was built on the way settles.
+            // Then the place inside it, again and again until the thread stops moving: rows built
+            // on the way are measured after the aim and push the place down under it.
+            proxy.scrollTo(wanted, anchor: .top)
+            var still = 0
+            var last = built.offset
+            for _ in 0..<40 {
+                try? await _Concurrency.Task.sleep(for: .milliseconds(50))
+                guard follow.pinned, find.active?.scrollID == target else { return }
+                proxy.scrollTo(target, anchor: .top)
+                try? await _Concurrency.Task.sleep(for: .milliseconds(30))
+                still = abs(built.offset - last) < 1 && abs(built.height - built.lastHeight) < 1 ? still + 1 : 0
+                last = built.offset
+                built.lastHeight = built.height
+                if still >= 3 { return }
+            }
         }
     }
 
@@ -298,6 +385,87 @@ struct ConversationView: View {
     }
 
     private static let bottomAnchor = "conversation.bottom"
+    private static let log = Logger(subsystem: "app.bulava", category: "thread")
+
+    // MARK: - A thread that stopped drawing
+
+    /// Puts the thread back on screen when the lazy stack has left it standing on a stretch with
+    /// no message built in it.
+    ///
+    /// 5 Oct: "while Bulava works and the chat changes, all the text sometimes disappears, and I
+    /// have to scroll down and up by hand for it to render again." Whenever the thread is measured
+    /// again — the window narrower, the side panel opening, a long answer arriving — the stack
+    /// estimates the rows it has not built, and in a long chat the estimate is off by tens of
+    /// thousands of points. Now and then, depending on timing, the scroll position is restored or
+    /// followed to a place where, by those estimates, there are rows, and in fact there are none:
+    /// nothing is built, nothing is drawn, and nothing changes until a hand moves the thread.
+    /// It is a race inside the stack (`scripts/tests/test-thread-stays-drawn.sh` reproduces it on a
+    /// long chat); no arrangement of the scroll modifiers avoided it every time.
+    ///
+    /// So the thread watches for the state itself. A moment after any change of its geometry or its
+    /// tail, if there are messages and not one of them is built, the stack is built afresh — from
+    /// measurements, not estimates — and taken back to where the reader was: the end while it is
+    /// following, the Find result it is pinned to, or else the messages last on screen.
+    private func checkStillDrawn(_ proxy: ScrollViewProxy) {
+        // One pending look, not one per change: an answer streaming ten times a second would
+        // otherwise push the look back forever and the thread would stay blank while it streams.
+        guard built.drawnCheck == nil, let chat = chatID else { return }
+        built.drawnToken += 1
+        let token = built.drawnToken
+        built.drawnCheck = _Concurrency.Task { @MainActor in
+            defer { if built.drawnToken == token { built.drawnCheck = nil } }
+            try? await _Concurrency.Task.sleep(for: .milliseconds(300))
+            guard !_Concurrency.Task.isCancelled, chatID == chat,
+                  !entries.isEmpty, built.ids.isEmpty else { return }
+            // Three times in ten seconds at most: a stack that keeps going blank must not be rebuilt
+            // in a loop that holds the window still. When the budget is spent, one more look is
+            // booked for the moment it renews, so a thread that went blank and then stood still
+            // is not left that way.
+            let now = Date()
+            built.rebuilds = built.rebuilds.filter { now.timeIntervalSince($0) < 10 }
+            if built.rebuilds.count >= 3, let oldest = built.rebuilds.min() {
+                let wait = max(0.3, 10.05 - now.timeIntervalSince(oldest))
+                try? await _Concurrency.Task.sleep(for: .seconds(wait))
+                guard !_Concurrency.Task.isCancelled, chatID == chat,
+                      !entries.isEmpty, built.ids.isEmpty else { return }
+                built.rebuilds = built.rebuilds.filter { Date().timeIntervalSince($0) < 10 }
+            }
+            built.rebuilds.append(Date())
+
+            // Where the reader was, decided BEFORE the rebuild: the geometry of a fresh stack
+            // passes through a short "bottom" on its way to the real one, and reading the follow
+            // state after it would send somebody reading history to the end.
+            enum Place { case end, find(FindPlace), seen(UUID) }
+            let lastSeen = entries.map(\.id).filter { built.lastSeen.contains($0) }
+            let place: Place
+            if follow.pinned, let result = find.active {
+                place = .find(result)
+            } else if follow.following || lastSeen.isEmpty {
+                place = .end
+            } else {
+                place = .seen(lastSeen[lastSeen.count / 2])
+            }
+
+            threadGeneration += 1
+            try? await _Concurrency.Task.sleep(for: .milliseconds(60))
+            // His hand on the trackpad, or another chat, wins over putting the thread back.
+            guard !_Concurrency.Task.isCancelled, chatID == chat, !scrollingByHand else { return }
+            let described: String
+            switch place {
+            case .find(let result):
+                described = "the Find result"
+                // The way Find itself gets there: the row first, then the place inside it.
+                go(to: result, proxy)
+            case .end:
+                described = "the end"
+                scrollToBottom(proxy, animated: false)
+            case .seen(let id):
+                described = "the messages last on screen"
+                proxy.scrollTo(id, anchor: .center)
+            }
+            Self.log.notice("thread had no message built in view (content \(built.height, privacy: .public) pt, at \(built.offset, privacy: .public)); built it afresh at \(described, privacy: .public)")
+        }
+    }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
         let go = {
@@ -319,32 +487,22 @@ struct ConversationView: View {
 
     // MARK: - Feed
 
-    private var feed: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(entries) { entry in
-                EntryView(entry: entry, productID: productID)
-                    .padding(.bottom, 22)
-                    // Where a find jump lands when the whole entry is the result: his own
-                    // message, or an answer that carries no blocks of its own.
-                    .findAnchor(entry: entry.id)
-            }
+    @ViewBuilder private var feed: some View {
+        ForEach(entries) { entry in
+            EntryView(entry: entry, productID: productID)
+                .padding(.bottom, 22)
+                // Where a find jump lands when the whole entry is the result: his own
+                // message, or an answer that carries no blocks of its own. Inside the row, not
+                // on it: an `.id` on the row would replace the identity the lazy stack knows
+                // rows by before they are built, and a jump to one not built yet went nowhere.
+                .background(alignment: .top) {
+                    Color.clear.frame(height: 1).findAnchor(entry: entry.id)
+                        .onAppear { built.appeared(entry.id) }
+                        .onDisappear { built.disappeared(entry.id) }
+                }
         }
     }
 
-}
-
-// MARK: - Date rule
-
-struct DateRule: View {
-    let text: Text
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Hairline()
-            text.font(Typo.meta).foregroundStyle(Palette.textFaint).fixedSize()
-            Hairline()
-        }
-    }
 }
 
 private struct SessionStatusRow: View {
@@ -354,6 +512,28 @@ private struct SessionStatusRow: View {
     /// Working a hand short. The engine has always recorded this; until now nothing showed it, so
     /// a run continuing without Codex looked exactly like one that had both engineers on it.
     var degradation: String?
+    /// The latest run of this chat, step by step, when the engine has journalled one.
+    var run: ChatRun?
+
+    /// "Work stopped" says THAT it stopped. When the engine said why — a review that needs a
+    /// decision, a permission it was refused — the line says that instead of sending the reader
+    /// up the thread to guess.
+    private var label: String {
+        if phase == .needsReview, case .waitingForYou(let why)? = run?.graph.overall,
+           let why, !why.isEmpty {
+            return String(format: String(localized: "Work stopped: %@"), why)
+        }
+        return phase.label
+    }
+
+    private var showsRun: Bool {
+        guard let run, run.document != nil else { return false }
+        if phase.isActive { return true }
+        switch run.graph.overall {
+        case .waitingForYou, .waitingForCodex, .waitingForLimit: return true
+        default: return false
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -363,7 +543,7 @@ private struct SessionStatusRow: View {
                 } else {
                     Image(systemName: phase.symbol)
                 }
-                Text(phase.label)
+                Text(label)
                     .foregroundStyle(phase.isFailure ? Palette.red
                                      : phase.wantsAttention ? Palette.orange
                                      : Palette.textSecondary)
@@ -384,6 +564,10 @@ private struct SessionStatusRow: View {
                     }
                     .foregroundStyle(Palette.textSecondary)
                 }
+            }
+            if showsRun, let run {
+                RunStrip(run: run)
+                    .padding(.leading, 23)
             }
             if let activity, phase == .working {
                 Text(activity.sentence)
@@ -482,4 +666,44 @@ extension EnvironmentValues {
         get { self[ChatReadOnlyKey.self] }
         set { self[ChatReadOnlyKey.self] = newValue }
     }
+}
+
+/// The rows a lazy thread has built — see `ConversationView.go(to:_:)`.
+@MainActor
+private final class BuiltRows {
+    /// Counted, not a set: when the thread is built afresh the new row can appear before the old
+    /// one with the same id has gone, and a set would then drop a row that is on screen.
+    private var counts: [UUID: Int] = [:]
+    var ids: Set<UUID> { Set(counts.keys) }
+    /// The rows built just before the last of them went: where the reader was when the thread
+    /// went blank.
+    private(set) var lastSeen: Set<UUID> = []
+    var drawnCheck: _Concurrency.Task<Void, Never>?
+    /// Which booked look is the current one, so a look that was called off cannot clear the next.
+    var drawnToken = 0
+    var rebuilds: [Date] = []
+
+    func appeared(_ id: UUID) {
+        counts[id, default: 0] += 1
+        lastSeen = Set(counts.keys)
+    }
+
+    func disappeared(_ id: UUID) {
+        guard let count = counts[id] else { return }
+        if count > 1 { counts[id] = count - 1; return }
+        if counts.count == 1 { lastSeen = Set(counts.keys) }
+        counts[id] = nil
+    }
+
+    /// Another chat: nothing it built and no look booked for it carries over.
+    func reset() {
+        drawnCheck?.cancel()
+        drawnCheck = nil
+        rebuilds = []
+        lastSeen = []
+    }
+    /// The last scroll reading, kept here rather than in state for the same reason.
+    var offset: CGFloat = 0
+    var height: CGFloat = 0
+    var lastHeight: CGFloat = 0
 }

@@ -18,5 +18,11 @@
 	     the permission cannot fix that, because the permission was never what was refusing. -->
 	<key>com.apple.security.device.audio-input</key>
 	<true/>
+
+	<!-- The calendar, for automations that start when a meeting ends. Like the microphone above,
+	     the hardened runtime refuses EventKit without this entitlement whatever the Privacy pane
+	     says, so the switch there would read on while the calendar stayed shut. -->
+	<key>com.apple.security.personal-information.calendars</key>
+	<true/>
 </dict>
 </plist>

@@ -4,11 +4,16 @@ struct ResultAction: Identifiable {
     enum Emphasis { case primary, secondary, quiet, danger }
 
     var id: String
-    var titleKey: LocalizedStringKey
+    /// A localisation key rather than a `LocalizedStringKey`, because the phone shows these buttons
+    /// too: the Mac turns them into words and sends the words, and a `LocalizedStringKey` cannot be
+    /// read back as text outside a SwiftUI `Text`.
+    var titleKey: String.LocalizationValue
     var symbol: String
     var emphasis: Emphasis = .secondary
     var disabledReason: String?
     var perform: (AppModel) -> Void
+
+    var title: String { String(localized: titleKey) }
 }
 
 extension WorkerPhase {

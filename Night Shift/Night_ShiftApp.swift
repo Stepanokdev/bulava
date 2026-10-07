@@ -4,7 +4,12 @@ import OSLog
 
 @main
 struct NightShiftApp: App {
-    @State private var model = AppModel()
+    // Before the model exists: everything it starts — the engine's scripts, the tmux server, the
+    // hooks inside every worker — takes its state folder from the environment it inherits.
+    @State private var model: AppModel = {
+        AppChannel.prepareProcessEnvironment()
+        return AppModel()
+    }()
     @State private var updates = UpdateController()
 
     init() {
@@ -39,7 +44,9 @@ struct NightShiftApp: App {
                 .task {
                     // The updater must not put a window in front of a run in progress.
                     updates.isWorkInFlight = { !model.activeInstances.isEmpty }
-                    updates.start()
+                    // Bulava Dev is built from the checkout; the public feed would "update" it into
+                    // the release it is not.
+                    if AppChannel.current.ownsUpdates { updates.start() }
                 }
                 .preferredColorScheme(model.settings.appearance.colorScheme)
                 .themedLocale(model.settings.interfaceLanguage)
@@ -47,6 +54,7 @@ struct NightShiftApp: App {
                 .onReceive(NotificationCenter.default.publisher(
                     for: NSApplication.willTerminateNotification)) { _ in
                     model.stop()
+                    CoalescedWrites.shared.flushAll()
                 }
         }
         .defaultSize(width: 1380, height: 900)
@@ -54,10 +62,12 @@ struct NightShiftApp: App {
         .commands {
 
             CommandGroup(after: .appInfo) {
-                Button(updates.checking ? "Checking for updates…" : "Check for Updates…") {
-                    updates.checkForUpdates()
+                if AppChannel.current.ownsUpdates {
+                    Button(updates.checking ? "Checking for updates…" : "Check for Updates…") {
+                        updates.checkForUpdates()
+                    }
+                    .disabled(updates.checking)
                 }
-                .disabled(updates.checking)
             }
 
             CommandGroup(replacing: .newItem) {
@@ -109,6 +119,8 @@ struct NightShiftApp: App {
                     .keyboardShortcut("0", modifiers: .command)
                 Button("Skills") { model.openSkills() }
                     .keyboardShortcut("s", modifiers: [.command, .shift])
+                Button("Automations") { model.openAutomations() }
+                    .keyboardShortcut("a", modifiers: [.command, .shift])
                 Button("Back") { model.goBack() }
                     .keyboardShortcut("[", modifiers: .command)
                     .disabled(!model.canGoBack)
@@ -117,7 +129,6 @@ struct NightShiftApp: App {
                     .disabled(!model.canGoForward)
                 Divider()
                 Button("Check Readiness…") { model.openPreflight() }
-                SkillsWindowButton()
             }
         }
 
@@ -131,16 +142,6 @@ struct NightShiftApp: App {
             Image(systemName: model.nightModeActive ? "moon.stars.fill" : "moon.stars")
         }
         .menuBarExtraStyle(.window)
-
-        Window("Skills & MCP", id: "skills") {
-            SkillLibrary()
-                .environment(model)
-                .resolveMotionPreference()
-                .frame(minWidth: 520, minHeight: 460)
-                .preferredColorScheme(model.settings.appearance.colorScheme)
-                .themedLocale(model.settings.interfaceLanguage)
-        }
-        .defaultSize(width: 620, height: 680)
 
         Settings {
             SettingsView()
@@ -164,10 +165,3 @@ extension View {
     }
 }
 
-private struct SkillsWindowButton: View {
-    @Environment(\.openWindow) private var openWindow
-    var body: some View {
-        Button("Open Skills & MCP") { openWindow(id: "skills") }
-            .keyboardShortcut("k", modifiers: [.command, .shift])
-    }
-}

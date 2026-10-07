@@ -69,6 +69,18 @@ for i in $(seq 1 12); do IDIR="$IDIR" bash "$ADD" "check $i" -- /usr/bin/true >/
 check "no more than ten checks are accepted"      '[ "$(grep -c . "$IDIR/checks.jsonl")" -le 10 ]'
 
 echo
+echo "===== a wrong command is corrected by registering the same claim again ====="
+# At the cap, a broken command could never be fixed: the file is control state, nothing but this
+# handle may write it, and it only appended.
+out="$(IDIR="$IDIR" bash "$ADD" "check 3" -- /bin/echo fixed 2>&1)"; rc=$?
+check "the same words replace the earlier check, even at the cap" '[ "$rc" = 0 ] && printf %s "$out" | grep -q "замінив"'
+check "…so there is still one check per claim"     '[ "$(jq -r "select(.criterion==\"check 3\")|.criterion" "$IDIR/checks.jsonl" | grep -c .)" = 1 ]'
+check "…carrying the new command"                  '[ "$(jq -r "select(.criterion==\"check 3\")|.argv[0]" "$IDIR/checks.jsonl")" = /bin/echo ]'
+check "…and the others are untouched"              '[ "$(grep -c . "$IDIR/checks.jsonl")" = 10 ] && [ "$(jq -r "select(.criterion==\"check 7\")|.argv[0]" "$IDIR/checks.jsonl")" = /usr/bin/true ]'
+out="$(IDIR="$IDIR" bash "$ADD" "check 99" -- /usr/bin/true 2>&1)"; rc=$?
+check "a NEW claim at the cap is still refused"   '[ "$rc" != 0 ]'
+
+echo
 echo "===== every run is told the channel exists, not just the visual ones ====="
 # A CLI job has no RunSpec at all — which is exactly the run that spent twelve hours failing review
 # because it did not know it could register a check.

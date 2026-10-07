@@ -1,7 +1,6 @@
 import SwiftUI
 import OSLog
 import Observation
-import CryptoKit
 
 @MainActor
 @Observable
@@ -22,6 +21,12 @@ final class AppModel {
             if settings.workersMayDriveApps != oldValue.workersMayDriveApps {
                 uiControl?.enabled = settings.workersMayDriveApps
                 uiControl?.announce()
+            }
+            if settings.shareLinksEnabled != oldValue.shareLinksEnabled {
+                shares.setEnabled(settings.shareLinksEnabled)
+            }
+            if settings.accountBrowserEnabled != oldValue.accountBrowserEnabled {
+                browser.setEnabled(settings.accountBrowserEnabled)
             }
             if settings.interfaceLanguage != oldValue.interfaceLanguage {
                 LanguageBundle.adopt(settings.interfaceLanguage)
@@ -77,6 +82,22 @@ final class AppModel {
 
     var inspectorShown = false
     var sidebarVisibility: NavigationSplitViewVisibility = .all
+
+    // MARK: Pipelines
+
+    /// What each open chat's latest run is doing, as the engine's journal tells it. Kept fresh only
+    /// for chats somebody is looking at (`watchChatRun`).
+    var chatRuns: [UUID: ChatRun] = [:]
+    var pipelineLibrary: [PipelineSummary] = []
+    var pipelineRegistry: PipelineRegistry?
+    /// Size and date of the journal last read for a chat: an unchanged file is not parsed again.
+    @ObservationIgnored var chatRunStamps: [UUID: String] = [:]
+    /// The description each run was compiled from, by its snapshot folder. A run never changes it.
+    @ObservationIgnored var runDocuments: [String: PipelineDocument] = [:]
+    /// The conversation about each pipeline in its editor, kept while the app runs.
+    @ObservationIgnored var pipelineChatSessions: [String: PipelineChatSession] = [:]
+    /// What he asked for when he created a pipeline from a description; its editor sends it first.
+    var pendingPipelineRequests: [String: String] = [:]
 
     // MARK: Composer
 
@@ -137,20 +158,14 @@ final class AppModel {
     private(set) var snapshot = SupervisorSnapshot()
     private(set) var loadedOnce = false
 
-    var toast: ToastMessage?
+    /// The cards in the top-right corner, oldest first. `toast` (Toasts.swift) posts one.
+    var toasts: [ToastMessage] = []
 
     /// Products holding a folder that turned out to be a workspace, found when the product was
     /// opened. Keyed by resource id, because that is what the offer to fix it acts on.
     var workspaceResources: [UUID: FolderConnection] = [:]
 
-    var postedReviewVerdicts: Set<String> = []
     var busy = false
-
-    var thinkingProductIDs: Set<UUID> = []
-    func isThinking(_ productID: UUID?) -> Bool {
-        guard let productID else { return false }
-        return thinkingProductIDs.contains(productID)
-    }
 
     var pendingProposals: [UUID: ForemanProposal] = [:]
 
@@ -171,12 +186,6 @@ final class AppModel {
 
     func foremanGen(_ productID: UUID) -> Int { rounds.current(productID) }
 
-    private(set) var finalizeVerifyInFlight: Set<UUID> = []
-    func beginFinalizeVerify(_ id: UUID) { finalizeVerifyInFlight.insert(id) }
-    func endFinalizeVerify(_ id: UUID) { finalizeVerifyInFlight.remove(id) }
-
-    var reviewMergeChecked: [UUID: Date] = [:]
-
     var launchFailures: [UUID: Date] = [:]
 
     private static let launchCooldown: TimeInterval = 600
@@ -196,6 +205,12 @@ final class AppModel {
     /// `screenshots`: macOS trusts THIS process, so this process does the privileged thing and
     /// the worker only asks for it. See `UIControlService`.
     private(set) var uiControl: UIControlService?
+    /// What is shared with the phone over the home Wi-Fi: agents' links and files opened from a chat.
+    let shares = ShareCenter()
+    /// Reports that ask him to decide, and what he answered — on the Mac and from the phone.
+    let decisions = DecisionCenter()
+    /// Bulava's own Chrome, signed in to once and lent to one run at a time.
+    let browser = AccountBrowser()
     var generatingReport: Set<UUID> = []
 
     struct ReportViewer: Equatable {
@@ -221,7 +236,7 @@ final class AppModel {
                 reportViewer = ReportViewer(taskID: task.id, title: title, htmlURL: url,
                                             isVideo: manifest?.format == .video)
             } else {
-                toast = ToastMessage(text: "No report yet for this task", kind: .info)
+                toast = ToastMessage(text: String(localized: "No report for this task yet"), kind: .info)
             }
         }
     }
@@ -235,13 +250,6 @@ final class AppModel {
     func reportManifest(for task: BacklogTask) async -> ReportManifest? {
         await client.reportManifest(task8: task.reportKey)
     }
-
-    private(set) var resuming: [String: Date] = [:]
-    func beginResuming(_ path: String) { resuming[Slug.canonicalPath(path)] = Date() }
-    func isResuming(path: String) -> Bool { resuming[Slug.canonicalPath(path)] != nil }
-
-    private let dismissedBlockersFile = JSONFile<[String]>(url: AppSupport.file("dismissed-blockers.json"))
-    private(set) var dismissedBlockers: Set<String> = []
 
     let client: SupervisorClient
 
@@ -276,7 +284,42 @@ final class AppModel {
 
     let events = EventLog()
 
+    /// The phone link: pairing, the paired phones, and the server they talk to. See `MobileLink`.
+    let mobileLink = MobileLink()
+
+    /// Keeps the Mac awake while work goes on without the director. See `PowerKeeper`.
+    let power = PowerKeeper()
+    /// Whether the Mac is on its battery, as of the last refresh — for saying so before a night.
+    var runningOnBattery = false
+
     let foremanSessions = ForemanSessions()
+
+    // MARK: Automations
+
+    let automations = AutomationStore()
+    /// Runs whose copy and conversation are being made right now.
+    var automationPreparing: Set<UUID> = []
+    /// Automations whose watch is out looking.
+    var automationChecking: Set<UUID> = []
+    var lastCopySweep: Date?
+    var sweepingCopies = false
+    @ObservationIgnored var folderWatchers: [UUID: FolderWatcher] = [:]
+    /// A watched folder changed and has not been looked at since.
+    var folderChangedAt: [UUID: Date] = [:]
+    /// Copies something is being done with: a merge, a removal.
+    var copyOperations: Set<UUID> = []
+    /// The automation form, when it is opened from somewhere other than the automations screens —
+    /// a conversation he wants to happen again by itself.
+    var automationEditor: AutomationEditorRequest?
+    /// Chats whose copy is being made by their first message.
+    @ObservationIgnored var chatCopyMaking: [UUID: Task<Result<WorkCopy, ChatCopyRefusal>, Never>] = [:]
+    /// Where a run's brief goes. The conversation's own send, unless a test is listening instead —
+    /// the real one starts an engine.
+    @ObservationIgnored var sendAutomationBrief: (@MainActor (_ message: String, _ productID: UUID,
+                                                               _ chatID: UUID, _ entryID: UUID) -> Void)?
+    /// Readying a copy for unattended work writes his Claude config and the engine's MCP record.
+    /// A test stands in here so it never writes to the real ones.
+    @ObservationIgnored var readyCopyOverride: (@MainActor (WorkCopy) async -> Void)?
 
     var artifactBase: URL { settings.paths.reportsDir }
 
@@ -296,8 +339,6 @@ final class AppModel {
 
     private var loop: Task<Void, Never>?
     private var tick = 0
-    private var monitorTick = 0
-    private var autoDispatchInFlight: Set<UUID> = []
 
     init() {
         let s = AppSettings.load()
@@ -307,13 +348,6 @@ final class AppModel {
         client = SupervisorClient(paths: s.paths)
 
         Trace.destination = s.paths.stateDir
-        dismissedBlockers = Set(dismissedBlockersFile.load() ?? [])
-
-        announcedReports = Set(conversations.entries.compactMap { $0.kind == .report ? $0.taskID : nil })
-
-        deliveredArtifacts = Set(conversations.entries.compactMap { entry in
-            entry.blocks.contains { $0.kind == .file || $0.kind == .gallery } ? entry.taskID : nil
-        })
 
         products.adoptProjectsIfNeeded(from: projects)
 
@@ -332,6 +366,9 @@ final class AppModel {
 
         _ = conversations.dropDeadAnchors(
             known: Set(backlog.tasks.map(\.id)).union(workItems.items.map(\.id)))
+        // Cards aimed at a copy that is not on disk any more — removed by hand or by a cleanup —
+        // stop aiming there; the path stays in their history for the transcripts filed under it.
+        backlog.retireDeadWorktrees()
         let ghosts = backlog.removeGhostRunCards()
         if !ghosts.isEmpty {
 
@@ -373,7 +410,22 @@ final class AppModel {
         uiControl = UIControlService(stateDir: settings.paths.stateDir)
         uiControl?.enabled = settings.workersMayDriveApps
         uiControl?.start()
+        // Not in the test host: a test that wants a share server starts its own.
+        if NSClassFromString("XCTestCase") == nil {
+            shares.attach(self, enabled: settings.shareLinksEnabled, stateDir: settings.paths.stateDir)
+            ShareCenter.current = shares
+            decisions.attach(self, stateDir: settings.paths.stateDir)
+            DecisionCenter.current = decisions
+            browser.attach(self, enabled: settings.accountBrowserEnabled, stateDir: settings.paths.stateDir)
+        }
         if let drive = TestDrive.make() { testDrive = drive; drive.start(self) }
+        // Reports a quit or a lost connection kept from going out last time, and any repair a
+        // crash left running in somebody's folder.
+        flushIncidentReports()
+        sweepOrphanedRepairs()
+        // His phone is paired with his Bulava. A Dev build answering it, or pushing to it, would
+        // be a second desktop he never paired.
+        if AppChannel.current.ownsPhoneLink { mobileLink.attach(self) }
         requestNotifyAuth()
 
         // On a machine that is not ready, the readiness screen IS the first screen. Someone who
@@ -400,8 +452,12 @@ final class AppModel {
                 case .notInstalled, .stale, .unavailable: self.openPreflight()
                 }
             }
-        case .ready, .development:
+        case .ready:
             break
+        case .development(let engine):
+            // Bulava Dev runs this checkout's engine against a state folder of its own; its
+            // workers need hook settings there that name this checkout, and nothing global moved.
+            Task.detached(priority: .utility) { _ = await EngineInstaller.writeWorkerSettings(engine: engine) }
         }
 
         let askEnabled = settings.askUserEnabled
@@ -439,9 +495,14 @@ final class AppModel {
     func stop() {
         loop?.cancel()
         loop = nil
+        stopRepairs()
         foremanSessions.shutdownAll()
         uiControl?.stop()
-        stopWorkerFeeds()
+        shares.detach()
+        decisions.detach()
+        browser.detach()
+        mobileLink.shutdown()
+        power.hold(false)
         stopChatFeeds()
     }
 
@@ -454,6 +515,8 @@ final class AppModel {
         }
         let snap = await client.snapshot()
         snapshot = withAnsweredCodexDecisionsHidden(snap)
+        reviveDeadRuns()
+        updatePower()
         // Re-asserted on every refresh, not only at launch.
         //
         // The engine verifies decisions against a file, and a worker running as this user can
@@ -470,7 +533,13 @@ final class AppModel {
 
         syncDirectChats()
 
+        automationsTick()
+
         await refreshWorkerActivity()
+
+        // The branch each folder is on, for the inspector and the phone. The call went missing in
+        // the move to direct chats and both have shown no branch since.
+        if tick % 5 == 0 { await refreshCurrentBranches() }
 
         // Free checks only. The paid probes have their own day-long clock inside the runner, so
         // this loop no longer spends a Codex turn every twenty minutes to learn what it already
@@ -562,15 +631,53 @@ final class AppModel {
         }
     }
 
+    // MARK: What a chat runs on
+
+    /// The default a chat starts from, which is what Settings shows.
+    var defaultRunChoices: RunChoices {
+        RunChoices(claudeModel: settings.claudeModel, claudeEffort: settings.claudeEffort,
+                   codexModel: settings.codexModel, codexEffort: settings.codexEffort)
+    }
+
+    /// What this chat runs on: its own choices, or the default when it has none yet. Nil is the
+    /// default itself — Settings, and anything that is not one conversation.
+    func runChoices(for chatID: UUID?) -> RunChoices {
+        guard let chatID else { return defaultRunChoices }
+        return conversations.chat(id: chatID)?.run ?? defaultRunChoices
+    }
+
+    /// Change what one chat runs on — or, with no chat, the default for new ones. A chat that had
+    /// no choices of its own gets them here, so the change cannot reach any other chat.
+    func updateRunChoices(for chatID: UUID?, _ change: (inout RunChoices) -> Void) {
+        var choices = runChoices(for: chatID)
+        change(&choices)
+        guard let chatID, conversations.chat(id: chatID) != nil else {
+            settings.claudeModel = choices.claudeModel
+            settings.claudeEffort = choices.claudeEffort
+            settings.codexModel = choices.codexModel
+            settings.codexEffort = choices.codexEffort
+            return
+        }
+        conversations.setRunChoices(choices, for: chatID)
+    }
+
+    /// A chat keeps what it was sent with. Called on its first message, so a later change to the
+    /// default in Settings does not quietly move a conversation already under way.
+    func settleRunChoices(for chatID: UUID) {
+        guard let chat = conversations.chat(id: chatID), chat.run == nil else { return }
+        conversations.setRunChoices(defaultRunChoices, for: chatID)
+    }
+
     /// Pick the Claude model, and keep the depth to one that model accepts.
     ///
     /// Haiku has no reasoning levels at all, and the versions differ in which ones they take — a
     /// depth left behind from the previous model is a setting the CLI ignores while the composer
     /// goes on claiming it.
-    func chooseClaudeModel(_ choice: ClaudeModelChoice) {
-        settings.claudeModel = choice
-        if !claudeModels.levels(for: choice).contains(settings.claudeEffort) {
-            settings.claudeEffort = .auto
+    func chooseClaudeModel(_ choice: ClaudeModelChoice, for chatID: UUID? = nil) {
+        let levels = claudeModels.levels(for: choice)
+        updateRunChoices(for: chatID) { run in
+            run.claudeModel = choice
+            if !levels.contains(run.claudeEffort) { run.claudeEffort = .auto }
         }
     }
 
@@ -579,10 +686,11 @@ final class AppModel {
     /// A depth the model refuses is not a harmless setting: the CLI rejects its config and the
     /// turn dies with a message nobody reads. Both places that choose a model come through here
     /// so neither can leave the pair impossible.
-    func chooseCodexModel(_ slug: String) {
-        settings.codexModel = slug
-        if !codexModels.levels(forSlug: slug).contains(settings.codexEffort) {
-            settings.codexEffort = .auto
+    func chooseCodexModel(_ slug: String, for chatID: UUID? = nil) {
+        let levels = codexModels.levels(forSlug: slug)
+        updateRunChoices(for: chatID) { run in
+            run.codexModel = slug
+            if !levels.contains(run.codexEffort) { run.codexEffort = .auto }
         }
     }
 
@@ -595,25 +703,43 @@ final class AppModel {
 
     var launching: Set<String> = []
 
-    var announcedReports: Set<UUID> = []
-
-    var deliveredArtifacts: Set<UUID> = []
-
-    var undeliveredSeen: Set<UUID> = []
-
-    var workerFeeds: [UUID: WorkerFeed] = [:]
-
     var chatFeeds: [UUID: ChatTranscriptFeed] = [:]
     var sendingChatIDs: Set<UUID> = []
+    /// Chats whose run is being started right now, and the folder it is started in. Until the start
+    /// returns the chat is bound to no run, so a screen Claude asks on while starting is found
+    /// through this (`startingInstance(for:)`).
+    var startingChats: [UUID: String] = [:]
     var stoppingChatIDs: Set<UUID> = []
 
     var codexTurns: [UUID: CodexChatRunner] = [:]
 
     var composerDrafts: [UUID: String] = [:]
+    /// How one Codex turn is run. The real runner in the app; a test puts a stand-in here to hold
+    /// a turn open and end it however it needs to — a quota refusal, say.
+    var runCodexTurn: @MainActor (CodexTurnRequest) async -> CodexChatRunner.Outcome = { request in
+        await CodexChatRunner.send(prompt: request.prompt, threadID: request.threadID, cwd: request.cwd,
+                                   effort: request.effort, model: request.model, path: request.path,
+                                   register: request.register, onProgress: request.onProgress)
+    }
+    /// Told the choices a delivery to Claude starts with. Nil in the app; a test listens here.
+    var claudeDeliveryStarted: ((UUID, RunChoices) -> Void)?
+
+    /// The chat each product's recording belongs to, fixed when the recording starts.
+    var dictationSlots: [UUID: UUID] = [:]
 
     var webPreview: URL?
     var generatingChatReportIDs: Set<UUID> = []
+    /// Runs being brought back after their watchdog died (`reviveDeadRuns`), by slug.
+    var revivals: [String: RevivalAttempt] = [:]
     var chatErrors: [UUID: String] = [:]
+    /// Failures being put right, or offered to be, by chat (AppModel+Repair.swift).
+    var repairs: [UUID: ChatRepair] = [:]
+    /// When a failure of each kind was last handed to a repair, by chat and fingerprint — so the
+    /// same failure is not repaired in a loop.
+    var repairAttempts: [String: Date] = [:]
+    /// Messages the engine said it delivered — a turn confirmed running, or Codex's answer back.
+    /// What a repair's verification takes as proof that the message went (AppModel+Repair.swift).
+    var confirmedDeliveries: Set<UUID> = []
 
     /// Chats where a message was taken back after the agent had already read it.
     ///
@@ -622,6 +748,10 @@ final class AppModel {
     var supersededChatIDs: Set<UUID> = []
 
     var trustBlocked: [UUID: String] = [:]
+
+    /// Chats whose send stopped because Claude Code has not been through its first run here, so a
+    /// worker would sit on the theme picker where nobody can answer it (`ClaudeOnboarding`).
+    var setupBlocked: Set<UUID> = []
 
     /// A folder with no git where the run stopped to ask: create git here or not.
     ///
@@ -640,6 +770,100 @@ final class AppModel {
         let folder: String
         static func == (a: GitConsentAsk, b: GitConsentAsk) -> Bool { a.id == b.id }
     }
+
+    /// Chats whose message stopped because the project brings MCP servers Claude has not been told
+    /// about (engine exit 78). Claude would ask about them before its session starts, where nobody
+    /// can answer; an MCP server can run code, so the answer is the director's — given here.
+    var mcpBlocked: [UUID: McpBlock] = [:]
+
+    struct McpBlock: Equatable {
+        let entryID: UUID
+        let folder: String
+        let servers: [String]
+    }
+
+    /// The same question raised by a task card, as a dialog.
+    var mcpAsk: McpAsk?
+
+    struct McpAsk: Identifiable, Equatable {
+        let id = UUID()
+        let task: BacklogTask
+        let folder: String
+        let servers: [String]
+        static func == (a: McpAsk, b: McpAsk) -> Bool { a.id == b.id }
+    }
+
+    /// Chats whose message stopped on the director's uncommitted work (engine exit 77).
+    ///
+    /// The engine used to commit it all as `night-shift` and start. Now it asks, and the chat shows
+    /// the list with the answers under the message: leave the changes, commit them as the director,
+    /// or sort them out another way — while the row is up, the folder is watched and the message
+    /// goes out by itself once it is clean.
+    var dirtyTreeBlocked: [UUID: DirtyTreeBlock] = [:]
+
+    struct DirtyTreeBlock: Equatable {
+        let entryID: UUID
+        let folder: String
+        var tree: DirtyTree
+        /// Why the last answer did not go through — a commit git refused, say — shown in the row.
+        var problem: String?
+        /// Earlier messages in this chat that stopped on the same question, oldest first. The row sits
+        /// under the newest; when it is answered, these go out too, in the order they were written.
+        var waiting: [UUID] = []
+
+        /// Every held message, oldest first — the order they are sent in.
+        var held: [UUID] { waiting + [entryID] }
+    }
+
+    /// The answer the next start of this chat carries. Consumed by that start and by nothing else.
+    var dirtyTreeAnswer: [UUID: DirtyTreeChoice] = [:]
+
+    /// Chats whose message stopped because the checkpoint would be too big, and the engine named the
+    /// files that make it so (exit 79). The row lists them with «leave them out and send».
+    var heavyFilesBlocked: [UUID: HeavyFilesBlock] = [:]
+
+    struct HeavyFilesBlock: Equatable {
+        let entryID: UUID
+        let folder: String
+        var files: HeavyFiles
+        /// «Leave my changes» was the answer this start carried. It is carried again on the retry,
+        /// so leaving the files out does not bring the uncommitted-work question back.
+        var keepChanges: Bool = false
+        /// Pressed and not finished yet — the buttons wait.
+        var applying: Bool = false
+        /// Why the last «leave them out» did not go through.
+        var problem: String?
+    }
+
+    /// The same question, raised by a task card. A card has no row to put it under, so it is a dialog.
+    var dirtyTreeAsk: DirtyTreeAsk?
+
+    struct DirtyTreeAsk: Identifiable, Equatable {
+        let id = UUID()
+        let task: BacklogTask
+        let folder: String
+        let tree: DirtyTree
+        static func == (a: DirtyTreeAsk, b: DirtyTreeAsk) -> Bool { a.id == b.id }
+    }
+
+    /// The answer a task's next dispatch carries, and the tasks waiting for their folder to be clean.
+    var dirtyTaskAnswer: [UUID: DirtyTreeChoice] = [:]
+    var dirtyTaskWaiting: [UUID: String] = [:]
+
+    /// «Commit as me…»: the sheet where the director sees the list, their own name and the message.
+    var commitAsMe: CommitAsMeRequest?
+
+    struct CommitAsMeRequest: Identifiable, Equatable {
+        enum Target: Equatable { case chat(entryID: UUID, chatID: UUID), task(BacklogTask) }
+        let id = UUID()
+        let target: Target
+        let folder: String
+        let tree: DirtyTree
+        static func == (a: CommitAsMeRequest, b: CommitAsMeRequest) -> Bool { a.id == b.id }
+    }
+
+    /// One watcher per chat or task while the director is sorting the folder out their own way.
+    var dirtyTreeWatchers: [String: Task<Void, Never>] = [:]
 
     /// A send that met a live run belonging to another chat, and what it would take to proceed.
     ///
@@ -681,53 +905,6 @@ final class AppModel {
         var resumesOwnSession: Bool
     }
 
-    // MARK: Autonomous scheduling
-
-    private func scheduleAutoResumeAndMonitor() {
-
-        if !resuming.isEmpty {
-            let now = Date()
-            resuming = resuming.filter { path, started in
-                let slug = Slug.forPath(path)
-                let running = snapshot.instances.contains { $0.slug == slug && $0.active }
-                return !running && now.timeIntervalSince(started) < 120
-            }
-        }
-
-        for t in backlog.resumable() where !autoDispatchInFlight.contains(t.id) {
-            let id = t.id
-            autoDispatchInFlight.insert(id)
-
-            dispatch(task: t, userInitiated: false) { [weak self] in self?.autoDispatchInFlight.remove(id) }
-        }
-        monitorTick += 1
-        guard monitorTick % 15 == 0 else { return }
-        for t in backlog.withExternalPRBlocker() {
-            guard let blocker = t.externalBlocker,
-                  let r = blocker.range(of: #"#\d+"#, options: .regularExpression),
-                  let project = t.projectID.flatMap({ projects.project(id: $0) }),
-                  let remote = project.gitRemote else { continue }
-            let number = blocker[r].replacingOccurrences(of: "#", with: "")
-            let repo = ghRepo(from: remote)
-            let taskID = t.id, title = t.title, name = project.name, path = project.path
-            Task {
-                if await client.checkPRMerged(number: number, repo: repo, cwd: path) == true {
-                    backlog.setExternalBlocker(taskID, nil)
-                    toast = ToastMessage(text: "\(name): PR #\(number) merged — \(title) unblocked", kind: .success)
-                }
-            }
-        }
-    }
-
-    private func ghRepo(from remote: String) -> String {
-        var s = remote
-        if let at = s.range(of: "@") { s = String(s[at.upperBound...]) }
-        s = s.replacingOccurrences(of: "https://", with: "")
-             .replacingOccurrences(of: ":", with: "/").replacingOccurrences(of: ".git", with: "")
-        let parts = s.split(separator: "/")
-        return parts.count >= 2 ? parts.suffix(2).joined(separator: "/") : s
-    }
-
     func refreshNow() { Task { await refresh() } }
 
     func enrichProjects() {
@@ -757,32 +934,6 @@ final class AppModel {
             let info = await client.projectGitInfo(p.path)
             projects.setGitInfo(id, remote: info.remote, defaultBranch: info.defaultBranch)
         }
-    }
-
-    // MARK: Blocker resolution
-
-    func blockerKey(projectID: UUID, note: String) -> String {
-        let hex = Insecure.SHA1.hash(data: Data(note.utf8)).map { String(format: "%02x", $0) }.joined().prefix(12)
-        return "\(projectID.uuidString)|\(hex)"
-    }
-
-    func isBlockerDismissed(projectID: UUID, note: String) -> Bool {
-        dismissedBlockers.contains(blockerKey(projectID: projectID, note: note))
-    }
-
-    func resolveBlocker(projectID: UUID, note: String) {
-        dismissedBlockers.insert(blockerKey(projectID: projectID, note: note))
-        dismissedBlockersFile.save(Array(dismissedBlockers))
-        toast = ToastMessage(text: "Blocker marked resolved", kind: .success)
-    }
-
-    static func isActiveBlocker(_ note: String) -> Bool {
-        let low = note.lowercased()
-        if low.contains("nothing blocks") || low.contains("nothing is blocked") { return false }
-        let signals = ["— blocked", "- blocked", "secret-scan", "не закомічено", "waiting for",
-                       "чекає", "needs user", "needs-user", "потрібен доступ", "requires access"]
-        if signals.contains(where: { low.contains($0) }) { return true }
-        return note.range(of: "## 20", options: .literal) != nil
     }
 
     // MARK: Derived
@@ -881,7 +1032,6 @@ final class AppModel {
                     await refresh()
                     return
                 }
-                if choice == "claude" { beginResuming(inst.projectPath) }
                 note(.answerSent, .info,
                      choice == "claude"
                        ? "«\(inst.projectName)» продовжує з Claude замість Codex."
@@ -899,26 +1049,51 @@ final class AppModel {
                 let result = await client.answerTerminalQuestion(session: inst.session,
                                                                  expected: pending, answer: t)
                 if result.ok {
-                    beginResuming(inst.projectPath)
                     note(.answerSent, .info, "Відповідь надіслано — «\(inst.projectName)» продовжує.",
                          detail: t, projectPath: inst.projectPath,
                          taskID: task(forInstance: inst)?.id)
-                    toast = ToastMessage(text: "Answer sent — resuming \(inst.projectName)", kind: .success)
+                    toast = ToastMessage(text: String(format: String(localized: "Answer sent — %@ carries on"), inst.projectName),
+                                         kind: .success)
                 } else {
                     let detail = result.stderr.isEmpty ? result.stdout : result.stderr
-                    toast = ToastMessage(text: detail.isEmpty ? "Could not answer Claude." : detail,
+                    toast = ToastMessage(text: detail.isEmpty ? String(localized: "Could not answer Claude.") : detail,
                                          kind: .error)
                 }
-            } else {
-                await client.answerUserQuestion(slug: inst.slug, answer: t)
-                beginResuming(inst.projectPath)
+            } else if await client.answerUserQuestion(slug: inst.slug, answer: t) == .taken {
                 note(.answerSent, .info, "Відповідь надіслано — «\(inst.projectName)» продовжує.",
                      detail: t, projectPath: inst.projectPath,
                      taskID: task(forInstance: inst)?.id)
-                toast = ToastMessage(text: "Answer sent — resuming \(inst.projectName)", kind: .success)
+                toast = ToastMessage(text: String(format: String(localized: "Answer sent — %@ carries on"), inst.projectName),
+                                     kind: .success)
+            } else {
+                deliverLateAnswer(inst, answer: t)
             }
             await refresh()
         }
+    }
+
+    /// An answer that came after the run stopped waiting for it. At the deadline the hook took the
+    /// safe default — or, for what only the director may decide, left that part undone — and went
+    /// on; its question is gone, so there is nowhere for the answer to be read. It goes to the run's
+    /// chat instead, as his message, and the worker reads it like anything else he says: the
+    /// director's answer closes the blocker and continues that very run (AUTONOMY Р5).
+    func deliverLateAnswer(_ inst: SupervisorInstance, answer: String) {
+        let chat = conversations.chats.first { chat in
+            chat.session.flatMap { matchingInstance(for: $0) }?.slug == inst.slug
+        }
+        guard let chat else {
+            toast = ToastMessage(text: String(localized: "That question had already expired, and its run has no chat to take the answer."),
+                                 kind: .error)
+            return
+        }
+        let asked = inst.pendingQuestion?.summary ?? inst.pendingQuestion?.questions.first?.question
+        let about = asked.map { "«" + String($0.prefix(200)) + "»" } ?? ""
+        let text = String(format: String(localized: "A late answer to your question %@ (you had already gone on without it):"), about)
+            + "\n\n" + answer
+        sendDirectMessage(text, productID: chat.productID, chatID: chat.id)
+        note(.answerSent, .info, "Відповідь прийшла після дедлайну — надіслано в чат «\(inst.projectName)».",
+             detail: answer, projectPath: inst.projectPath, taskID: task(forInstance: inst)?.id)
+        toast = ToastMessage(text: String(localized: "The question had expired. The answer went to its chat."), kind: .success)
     }
 
     func watch(instance inst: SupervisorInstance) {
@@ -948,16 +1123,6 @@ final class AppModel {
         task.isDispatchable && !backlog.isBlocked(task)
     }
 
-    var agentUptimeHours: Double {
-        let cutoff = Date().addingTimeInterval(-24 * 3600)
-        return instances.reduce(0.0) { acc, inst in
-            guard let started = inst.startedAt, started > cutoff else { return acc }
-            let end = inst.active ? (inst.lastActivity ?? Date())
-                                  : (inst.finishedAt ?? inst.lastActivity ?? started)
-            return acc + max(0, end.timeIntervalSince(started))
-        } / 3600.0
-    }
-
     var completions: [Completion] {
         var out: [Completion] = []
         for d in queue.done {
@@ -982,20 +1147,12 @@ final class AppModel {
         queue.needsUser.count + instances.filter { $0.phase == .blocked }.count
     }
 
-    var decisionsWaiting: Int {
-        instances.filter { $0.awaitingUntil != nil }.count + queue.needsUser.count
-    }
-
     // MARK: Commands
 
     func runQueue()          { note(.queueRun, .info, "Запущено чергу."); let s = RunStrategy.standing.overridden(by: settings, claudeModels: claudeModels); perform("Queue started") { await self.client.queueRun(strategy: s) } }
-    func stopQueue()         { note(.queueStopped, .info, "Черга зупиниться після поточного."); perform("Queue will stop after current") { await self.client.queueStop() } }
-    func killRunner()        { note(.queueStopped, .info, "Раннер зупинено."); perform("Runner stopped") { await self.client.queueKillRunner() } }
     func stopAllWorkers()    { note(.workersStopped, .attention, "Зупиняю всіх воркерів."); perform("Stopping all workers") { await self.client.stopAll() } }
     func startNightShift(project: String) { note(.taskDispatched, .info, "Нічна зміна для «\(name(of: project) ?? project)».", projectPath: project); let s = RunStrategy.standing.overridden(by: settings, claudeModels: claudeModels); perform("Night shift started")  { await self.client.startNightShift(project: project, strategy: s) } }
     func stopNightShift(project: String)  { note(.workersStopped, .info, "Зупинено воркера «\(name(of: project) ?? project)».", projectPath: project); perform("Worker stopped")       { await self.client.stopNightShift(project: project) } }
-    func enqueue(project: String, task: String) { perform("Added to the queue") { await self.client.queueAdd(project: project, task: task) } }
-    func removeFromQueue(number: Int) { perform("Removed from queue")   { await self.client.queueRemove(number: number) } }
 
     func perform(_ success: String, _ op: @escaping () async -> CommandResult) {
         busy = true
@@ -1013,17 +1170,22 @@ final class AppModel {
     }
 }
 
-struct ToastMessage: Identifiable, Equatable {
-    enum Kind { case success, error, info }
-    let id = UUID()
-    var text: String
-    var kind: Kind
-}
-
 struct Completion: Identifiable, Equatable {
     let id: String
     var projectName: String
     var detail: String
     var outcome: QueueOutcome
     var time: Date
+}
+
+/// One Codex turn, as `AppModel.runCodexTurn` is asked for it.
+struct CodexTurnRequest {
+    var prompt: String
+    var threadID: String?
+    var cwd: URL
+    var effort: String
+    var model: String
+    var path: String
+    var register: ((CodexChatRunner) -> Void)?
+    var onProgress: (@Sendable ([ConversationBlock]) -> Void)?
 }

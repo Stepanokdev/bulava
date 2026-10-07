@@ -68,6 +68,42 @@ grep -q '<ol start="7">' "$index" && ok "a numbered item keeps its number" || ba
 grep -q 'class="attn"' "$index" && ok "what needs him is on the page" || bad "the attention block is missing"
 
 echo
+echo "===== it opens with the logo, and speaks the report's language ====="
+grep -q '<a class="brand" href="https://bulava.app">' "$index" && ok "bulava.app and its mark at the top, a link" \
+  || bad "no lockup at the top of the artefact"
+grep -q '<span class="plate"><svg' "$index" && ok "the mark is drawn, not named" || bad "the lockup has no mark"
+grep -q '<html lang="uk">' "$index" && ok "a Ukrainian report is marked Ukrainian" || bad "wrong lang on a Ukrainian report"
+grep -q '>Було<' "$index" && ok "and its frames say Було / Стало" || bad "the Ukrainian frame labels are gone"
+
+one_language() {   # $1=name $2=manifest → prints the index path
+  mkdir -p "$TMP/$1"; cp "$REPORT/after-1.png" "$REPORT/before-1.png" "$TMP/$1/"
+  printf '%s' "$2" > "$TMP/$1/report.json"
+  python3 "$BIN_DIR/artifact.py" "$TMP/$1" "$TMP/$1-out"
+}
+en="$(one_language en '{"language":"Ukrainian","title":"Export fix","summary":"The export button waits for the transcript.",
+  "attention":["Pick the release date"],
+  "sections":[{"ref":"1","title":"Export","status":"done","body":"It works.",
+               "items":[{"caption":"one frame","after":"after-1.png"}]}]}')"
+grep -q '<html lang="en">' "$en" && ok "written in English, marked English — whatever the setting said" \
+  || bad "an English report was marked as another language"
+for want in '>After<' '>Closed<' '>Needs your decision<' 'Work finished'; do
+  grep -q -- "$want" "$en" && ok "English: $want" || bad "English report is missing: $want"
+done
+grep -q 'Було\|Стало\|Закрито\|Потребує' "$en" && bad "Ukrainian words around an English report" \
+  || ok "no Ukrainian words around an English report"
+grep -q 'class="pair one"' "$en" && ok "a frame on its own is laid out alone" || bad "a single frame was not marked as one"
+grep -q '\.pair\.one \.shot img { width:auto; max-width:100%; max-height:' "$en" \
+  && ok "and it is never taller than the view" || bad "a single frame can still stand two windows tall"
+
+ru="$(one_language ru '{"title":"Экспорт","summary":"Кнопка ждёт расшифровку, это было неочевидно.",
+  "sections":[{"ref":"2","title":"Экспорт","status":"закрыто","body":"Работает.",
+               "items":[{"before":"before-1.png","after":"after-1.png"}]}]}')"
+grep -q '<html lang="ru">' "$ru" && ok "written in Russian, marked Russian" || bad "a Russian report was marked as another language"
+grep -q 'answer closed' "$ru" && grep -q '>Закрыто<' "$ru" && ok "«закрыто» is read as closed, and said in Russian" \
+  || bad "a Russian status was not understood"
+grep -q '>Было<' "$ru" && ok "Russian: Было / Стало" || bad "the Russian frame labels are missing"
+
+echo
 echo "===== it stands alone ====="
 for asset in before-1.png after-1.png notes.log; do
   [ -f "$DIR/$asset" ] && ok "$asset travelled with it" || bad "$asset was left behind"

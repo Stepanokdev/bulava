@@ -8,10 +8,13 @@ final class ChatTranscriptFeed {
     let chatID: UUID
     let productID: UUID
     let sessionID: String
-    private let transcript: URL
+    /// Part of what the feed is: the same session id can have a transcript in two folders — a
+    /// conversation moved back into its copy keeps its id — and the feed must follow the folder.
+    let transcript: URL
     private let store: ConversationStore
     private var reading = Reading()
     private var folding = false
+    private var stopped = false
     private var pump: Task<Void, Never>?
     private var lastPersist = Date.distantPast
 
@@ -37,6 +40,7 @@ final class ChatTranscriptFeed {
     }
 
     func stop() {
+        stopped = true
         pump?.cancel()
         pump = nil
         publish(persist: true)
@@ -70,6 +74,8 @@ final class ChatTranscriptFeed {
         folding = true
         defer { folding = false }
         let (next, changed) = await Self.foldOffMain(transcript: transcript, from: reading)
+        // Replaced while it was reading: what it read belongs to a transcript nobody follows now.
+        guard !stopped else { return }
         reading = next
         guard changed else { return }
         let persist = Date().timeIntervalSince(lastPersist) > 20

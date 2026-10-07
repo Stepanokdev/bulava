@@ -41,6 +41,13 @@ if [ -n "$RANGE" ]; then
     | jq -R -s 'split("\n")|map(select(length>0))|map(split(""))|map({sha:.[0],subject:.[1]})')"
   DIFFSTAT="$(git -C "$PROJ" diff --stat "$RANGE" 2>/dev/null | tail -1)"
   NUMSTAT="$(git -C "$PROJ" diff --numstat "$RANGE" 2>/dev/null)"
+  # Measured from a snapshot of the director's uncommitted work, the range from it to HEAD would
+  # show every one of their edits as reverted the moment the worker commits anything without them.
+  # What the run changed is the distance from that snapshot to what is on disk now.
+  if [ -f "$IDIR/base-snapshot" ]; then
+    DIFFSTAT="$(git -C "$PROJ" diff --stat "$BASE_SHA" 2>/dev/null | tail -1)"
+    NUMSTAT="$(git -C "$PROJ" diff --numstat "$BASE_SHA" 2>/dev/null)"
+  fi
 else
   COMMITS_JSON="[]"; DIFFSTAT=""; NUMSTAT=""
 fi

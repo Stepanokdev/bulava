@@ -85,4 +85,113 @@ nonisolated final class ComposerHeightTests: XCTestCase {
         let grown = Metrics.composerRestingHeight * 3
         XCTAssertGreaterThan(grown, Metrics.composerRestingHeight)
     }
+
 }
+
+/// Each chat of a product has a field of its own, and what finishes late finds its own chat.
+nonisolated final class ChatDraftSlotTests: XCTestCase {
+
+    @MainActor private func model() -> AppModel {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("bulava-draftslot-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        setenv("BULAVA_STATE_DIR", dir.path, 1)
+        return AppModel()
+    }
+
+    @MainActor func testTwoChatsOfOneProductKeepTheirOwnFields() {
+        let app = model()
+        let product = UUID()
+        let first = app.conversations.newChat(for: product)
+        let second = app.conversations.newChat(for: product)
+
+        app.conversations.open(first.id, for: product)
+        app.setDraftText("про перший", for: product)
+        app.conversations.open(second.id, for: product)
+        XCTAssertEqual(app.draftText(for: product), "", "the other chat's field is its own")
+        app.setDraftText("про другий", for: product)
+
+        app.conversations.open(first.id, for: product)
+        XCTAssertEqual(app.draftText(for: product), "про перший")
+        app.conversations.open(second.id, for: product)
+        XCTAssertEqual(app.draftText(for: product), "про другий")
+    }
+
+    @MainActor func testAFinishedTranscriptionGoesToTheChatItWasRecordedIn() {
+        let app = model()
+        let product = UUID()
+        let recordedIn = app.conversations.newChat(for: product)
+        let other = app.conversations.newChat(for: product)
+        app.conversations.open(recordedIn.id, for: product)
+        app.setDraftText("вже набране", for: product)
+        let slot = app.draftSlot(for: product)
+
+        // He moved on while the words were being read.
+        app.conversations.open(other.id, for: product)
+        app.setDraftText("інше", for: product)
+        app.appendToDraft("продиктоване", slot: slot)
+
+        XCTAssertEqual(app.draftText(for: product), "інше", "the open chat is left alone")
+        app.conversations.open(recordedIn.id, for: product)
+        XCTAssertEqual(app.draftText(for: product), "вже набране\nпродиктоване")
+    }
+
+    @MainActor func testATakenBackMessageReturnsToItsOwnChatWithItsFiles() {
+        let app = model()
+        let product = UUID()
+        let sentIn = app.conversations.newChat(for: product)
+        let other = app.conversations.newChat(for: product)
+        let file = Attachment(id: UUID(), kind: .file, filename: "plan.pdf", relativePath: "plan.pdf")
+        let entry = app.conversations.appendUser("Зроби звіт", productID: product,
+                                                   chatID: sentIn.id, attachments: [file])
+        app.conversations.open(sentIn.id, for: product)
+        app.setDraftText("і ще", for: product)
+
+        app.conversations.open(other.id, for: product)
+        app.setDraftText("чернетка іншого", for: product)
+        app.handBackToComposer(entry)
+
+        XCTAssertEqual(app.draftText(for: product), "чернетка іншого")
+        XCTAssertTrue(app.draftAttachments(for: product).isEmpty)
+        app.conversations.open(sentIn.id, for: product)
+        XCTAssertEqual(app.draftText(for: product), "Зроби звіт\nі ще",
+                       "the words come back, with what was half-typed kept")
+        XCTAssertEqual(app.draftAttachments(for: product).map { $0.filename }, ["plan.pdf"])
+    }
+
+    @MainActor func testSwitchingChatsWhileRecordingKeepsTheWordsInTheChatItStartedIn() {
+        let app = model()
+        let product = UUID()
+        let startedIn = app.conversations.newChat(for: product)
+        let movedTo = app.conversations.newChat(for: product)
+        app.conversations.open(startedIn.id, for: product)
+        app.beginDictation(for: product)                 // he presses the mic here…
+
+        app.conversations.open(movedTo.id, for: product) // …moves on while talking…
+        app.setDraftText("пише тут", for: product)
+        let slot = app.takeDictationSlot(for: product)   // …and stops the recording there
+        app.appendToDraft("сказане в першому", slot: slot)
+        let file = Attachment(id: UUID(), kind: .audio, filename: "note.m4a", relativePath: "note.m4a")
+        app.addDraftAttachment(file, slot: slot)          // or the recording, if unread
+
+        XCTAssertEqual(app.draftText(for: product), "пише тут")
+        XCTAssertTrue(app.draftAttachments(for: product).isEmpty)
+        app.conversations.open(startedIn.id, for: product)
+        XCTAssertEqual(app.draftText(for: product), "сказане в першому")
+        XCTAssertEqual(app.draftAttachments(for: product).map { $0.filename }, ["note.m4a"])
+        XCTAssertNil(app.dictationSlots[product], "the next recording starts from nothing")
+    }
+
+    @MainActor func testARecordingThatNeverStartedFixesNothing() {
+        let app = model()
+        let product = UUID()
+        let first = app.conversations.newChat(for: product)
+        let second = app.conversations.newChat(for: product)
+        app.conversations.open(first.id, for: product)
+        app.beginDictation(for: product)
+        app.cancelDictation(for: product)                 // the microphone was refused
+        app.conversations.open(second.id, for: product)
+        XCTAssertEqual(app.takeDictationSlot(for: product), second.id)
+    }
+}
+

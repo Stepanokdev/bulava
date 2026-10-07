@@ -35,17 +35,22 @@ tmux_isolate "$TMP/tmux"
 export SUPERVISOR_CLAUDE_CMD="cat"
 export SUPERVISOR_HANDSHAKE_WAIT=0
 export SUPERVISOR_STATE_DIR="$TMP/state"; mkdir -p "$SUPERVISOR_STATE_DIR"
+export HOME="$TMP/home"; mkdir -p "$HOME"
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 PROJ="$TMP/project"; mkdir -p "$PROJ/src"
 echo "hello" > "$PROJ/src/main.txt"
-( cd "$PROJ" && git init -q )
+( cd "$PROJ" && git init -q && git config user.name "The Director" && git config user.email director@example.com )
 # What earlier runs left behind, plus a real project file that must be treated normally.
 : > "$PROJ/AUDIT-20260623-1532.md"
 : > "$PROJ/REVIEW-DEBT.md"
 echo "notes" > "$PROJ/NOTES.md"
 
 echo "===== a run starts, and the litter stops being the worker's problem ====="
-out="$(cd "$PROJ" && SUPERVISOR_NO_ATTACH=1 bash "$BIN_DIR/night-shift.sh" start "$PROJ" --no-attach 2>&1)"
-case "$out" in *"checkpoint"*"не вдався"*) bad "the run was refused: $out" ;; *) ok "the run started" ;; esac
+# The director's own repository with nothing committed yet: its first commit is theirs, made because
+# they asked (`--dirty=commit`), and the harness's litter must stay out of it all the same.
+out="$(cd "$PROJ" && SUPERVISOR_NO_ATTACH=1 bash "$BIN_DIR/night-shift.sh" start "$PROJ" --no-attach --dirty=commit --message="first" 2>&1)"; rc=$?
+case "$out" in *"не вдався"*) bad "the run was refused: $out" ;;
+  *) [ "$rc" = 0 ] && ok "the run started" || bad "the run did not start ($rc): $out" ;; esac
 
 if find "$SUPERVISOR_STATE_DIR/instances" -name direct-chat -print -quit 2>/dev/null | grep -q .; then
   bad "a terminal start inherited Bulava's direct-chat review mode"

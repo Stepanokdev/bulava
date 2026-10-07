@@ -73,6 +73,24 @@ nonisolated final class ChatTranscriptFeedTests: XCTestCase {
         XCTAssertEqual(store.entries(inChat: chat.id).filter { $0.kind == .foreman }.count, 1)
     }
 
+    /// A feed replaced while it was reading — the conversation moved to its copy's transcript —
+    /// must not publish what it read from the old one afterwards.
+    @MainActor
+    func testAFeedStoppedWhileReadingPublishesNothing() async throws {
+        let transcript = directory.appendingPathComponent("session.jsonl")
+        try ([user("u1", "Question", second: 1), assistant("a1", "Answer from the old folder")]
+            .joined(separator: "\n") + "\n").write(to: transcript, atomically: true, encoding: .utf8)
+        let store = ConversationStore(fileURL: directory.appendingPathComponent("entries.json"),
+                                      chatsURL: directory.appendingPathComponent("chats.json"))
+        let productID = UUID(), chat = store.newChat(for: productID)
+        let feed = ChatTranscriptFeed(chatID: chat.id, productID: productID, sessionID: "session",
+                                      transcript: transcript, store: store)
+        feed.stop()
+        await feed.drain()
+        XCTAssertTrue(store.entries(inChat: chat.id).filter { $0.kind == .foreman }.isEmpty)
+        XCTAssertEqual(feed.transcript, transcript, "which transcript it follows is part of what it is")
+    }
+
     func testToolResultIsNotAUserPrompt() {
         XCTAssertNil(ChatTranscriptFeed.userPrompt(in: toolResult))
     }

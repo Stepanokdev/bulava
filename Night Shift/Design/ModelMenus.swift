@@ -12,6 +12,11 @@ struct ClaudeModelMenu: View {
     /// Settings rows sit on a grid and share one width; the composer sizes itself to the choice.
     var width: CGFloat?
 
+    /// The chat being chosen for; nil in Settings, where the choice is the default for new chats.
+    var chatID: UUID? = nil
+
+    private var current: ClaudeModelChoice { model.runChoices(for: chatID).claudeModel }
+
     @ViewBuilder var body: some View {
         if let width {
             menu.frame(width: width)
@@ -21,8 +26,8 @@ struct ClaudeModelMenu: View {
     }
 
     private var menu: some View {
-        Picker("", selection: Binding(get: { model.settings.claudeModel },
-                                      set: { model.chooseClaudeModel($0) })) {
+        Picker("", selection: Binding(get: { current },
+                                      set: { model.chooseClaudeModel($0, for: chatID) })) {
             // Automatic is a choice like any other, and it can say what it does: the CLI's own
             // settings name the model that answers when Bulava passes no `--model`, and the
             // catalogue names the service's default behind that.
@@ -50,10 +55,10 @@ struct ClaudeModelMenu: View {
             // A version pinned on a machine whose catalogue has since moved on is still what the
             // app is sending, and has to be shown as the current value — otherwise the menu reads
             // "Automatic" while the runs say otherwise.
-            if model.settings.claudeModel.isPinnedVersion,
-               model.claudeModels.model(id: model.settings.claudeModel.rawValue) == nil {
-                Text(verbatim: model.settings.claudeModel.rawValue)
-                    .tag(model.settings.claudeModel)
+            if current.isPinnedVersion,
+               model.claudeModels.model(id: current.rawValue) == nil {
+                Text(verbatim: current.rawValue)
+                    .tag(current)
             }
         }
         .labelsHidden()

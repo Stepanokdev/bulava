@@ -355,25 +355,6 @@ struct KeyHint: View {
     }
 }
 
-// MARK: - Meter
-
-struct Meter: View {
-    var fraction: Double
-    var tint: Color = Palette.accent
-
-    var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Palette.track)
-                Capsule()
-                    .fill(tint)
-                    .frame(width: max(4, geo.size.width * min(max(fraction, 0), 1)))
-            }
-        }
-        .frame(height: 4)
-    }
-}
-
 // MARK: - Responsive flow
 
 struct WrappingHStack: Layout {

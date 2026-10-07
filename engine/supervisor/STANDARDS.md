@@ -137,6 +137,59 @@ Bulava takes it — it is the process macOS allows to record the screen — and 
 fails it says why and produces NOTHING: report the absence, never a placeholder image. The commonest
 reason is that Bulava is not running, and then there is no screenshot to be had.
 
+## Showing a result on his phone — `$IDIR/phone-link`
+
+He often reads your answer on his phone, and a path to a file on the Mac is only text there. When
+you make him something to look at — a site, an HTML page, a report, a note (`.md`), a PDF, a
+picture or a video — put it in a folder of its own inside the project (`artifacts/…`, a build's
+`dist/`) and share it:
+
+    $IDIR/phone-link artifacts/2026-10-07-review/            # a site: its folder needs index.html
+    $IDIR/phone-link artifacts/notes/plan.md --title "План"  # one file; a note opens as a page
+
+It prints links, one per line; put the first in your answer. Bulava serves it on the home Wi-Fi
+only, and a link opens only what it was made for — never the project around it, never anything
+hidden. A whole project folder is refused, and so is anything outside this run's project. A dev
+server's `localhost:5173` means the phone itself to the phone: share the built output instead.
+Exit 3 means Bulava is not running; say so rather than inventing a link.
+
+## Browsers — `browser` and `accounts`
+
+When Bulava's browser is on, you have two browsers, and his own Chrome is not one of them:
+
+- **`browser`** — headless, a throwaway profile, yours alone. Everything that needs no sign-in:
+  localhost, a dev build, a public page, a screenshot of your own site.
+- **`accounts`** — Bulava's Chrome, which he signed in to once: consoles, analytics, stores,
+  dashboards. One run at a time has it. Use it only for what needs his sign-in, and let go when
+  done: `$IDIR/browser release`. If it answers "Could not connect … 423", another run has it:
+  `$IDIR/browser status` says who; do the work that does not need it and try again later — never
+  ask him to sign in for you or to open his own Chrome. "503" means he is signing in right now.
+  A site that is not signed in shows its sign-in page: say which site needs him, do not type
+  passwords. In a run without him, the sites he keeps for himself are closed (`status` lists them
+  as "only with him"); that is his decision, not an error to work around.
+
+Never read cookies, tokens or passwords out of a page into your answer or a file.
+
+## Asking him to choose among several things — `$IDIR/decide`
+
+When a report ends in forks for him — which of these to build, in what order, yes or no to each —
+do not end it with "answer 1–10 in the chat". Put the questions in a `decisions.json` beside the
+report and publish it:
+
+    $IDIR/decide artifacts/2026-10-07-plan/index.html    # or a .md note; decisions.json beside it
+
+    {"title": "Що робимо далі",
+     "items": [{"id": "leak", "title": "Закрити витік паролів", "detail": "одне-два речення",
+                "options": ["Беремо", "Пізніше", "Ні"], "recommended": "Беремо", "comment": true}]}
+
+Bulava draws each item beside the report — on the Mac and on his phone — with its options, your
+advice marked (never preselected) and a comment field. His answer comes into this chat as his
+message: every item with what he chose, or "not decided — do not start it, ask me". Treat an item
+left undecided exactly so. A second answer says it corrects the first; the newer one counts.
+Write the options and titles in his language, and keep `detail` short: the report is where the
+reasoning lives. Exit 3 (Bulava not running) or a refusal about the chat: ask in the chat in
+words instead. `$IDIR/decide --help` has the format.
+
 ## Finishing — declare your outcome (every run, no exceptions)
 When the task is REALLY done, declare HOW it finished — exactly once — via
 `report-outcome <result> "короткий підсумок"` (or the absolute `$IDIR/report-outcome`):

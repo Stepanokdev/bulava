@@ -176,31 +176,38 @@ nonisolated final class CodexChatRunner: @unchecked Sendable {
         cancelled.raise()
         guard let process, process.isRunning else { return }
         let pid = process.processIdentifier
-        Self.signalTree(pid, SIGTERM)
+        // The whole tree is named before anything is signalled. Once Codex itself exits, its
+        // children are re-parented and no longer answer to its pid — so the second, forceful pass
+        // used to be skipped exactly when it mattered, and a tool Codex had started kept running
+        // after Stop.
+        let tree = Self.descendants(of: pid)
+        for child in tree { kill(child, SIGTERM) }
         process.terminate()
         DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
-            guard process.isRunning else { return }
-            Self.signalTree(pid, SIGKILL)
-            kill(pid, SIGKILL)
+            for child in tree where kill(child, 0) == 0 { kill(child, SIGKILL) }
+            if process.isRunning { kill(pid, SIGKILL) }
         }
     }
 
-    private static func signalTree(_ pid: pid_t, _ signal: Int32) {
+    /// Every process below `pid`, deepest first.
+    nonisolated private static func descendants(of pid: pid_t) -> [pid_t] {
         let pgrep = Process()
         pgrep.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
         pgrep.arguments = ["-P", String(pid)]
         let pipe = Pipe()
         pgrep.standardOutput = pipe
         pgrep.standardError = FileHandle.nullDevice
-        guard (try? pgrep.run()) != nil else { return }
+        guard (try? pgrep.run()) != nil else { return [] }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         pgrep.waitUntilExit()
+        var out: [pid_t] = []
         for line in (String(data: data, encoding: .utf8) ?? "").split(separator: "\n") {
             if let child = pid_t(line.trimmingCharacters(in: .whitespaces)) {
-                signalTree(child, signal)
-                kill(child, signal)
+                out += descendants(of: child)
+                out.append(child)
             }
         }
+        return out
     }
 
     private func consume(_ data: Data) {

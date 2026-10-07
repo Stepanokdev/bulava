@@ -14,7 +14,6 @@ final class CaptureStore {
     var inbox: [CaptureItem] {
         items.filter { $0.status == .inbox }.sorted { $0.createdAt > $1.createdAt }
     }
-    var inboxCount: Int { items.filter { $0.status == .inbox }.count }
 
     func add(_ item: CaptureItem) { items.insert(item, at: 0); persist() }
 
@@ -31,13 +30,6 @@ final class CaptureStore {
     func dismiss(_ id: UUID) {
         guard let idx = items.firstIndex(where: { $0.id == id }) else { return }
         items[idx].status = .dismissed; persist()
-    }
-
-    func markCompiled(_ id: UUID, taskID: UUID) {
-        guard let idx = items.firstIndex(where: { $0.id == id }) else { return }
-        items[idx].status = .compiled
-        items[idx].linkedTaskID = taskID
-        persist()
     }
 
     // MARK: Attachments

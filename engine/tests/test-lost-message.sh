@@ -122,7 +122,7 @@ echo "===== resume demands the same confirmation as a fresh start ====="
 tmux kill-session -t "$(session_name "$(slug_for "$PRESALE")")" 2>/dev/null || true
 rm -rf "$(idir_for "$PRESALE")"
 out="$(cd "$PRESALE" && SUPERVISOR_CLAUDE_CMD="cat" SUPERVISOR_NO_ATTACH=1 \
-       SUPERVISOR_HANDSHAKE_WAIT=1 \
+       SUPERVISOR_HANDSHAKE_WAIT=1 SUPERVISOR_RESUME_HANDSHAKE_WAIT=1 \
        bash "$BIN_DIR/night-shift.sh" resume "$PRESALE" "some-session-id" - --no-attach 2>&1)"; rc=$?
 check "resume refuses without the confirmation"  '[ "$rc" != 0 ]'
 check "and rolls its own launch back"            '[ ! -d "$(idir_for "$PRESALE")" ]'

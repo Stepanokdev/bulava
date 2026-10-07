@@ -45,6 +45,9 @@ node_modules
 .budget_reduction_previews/
 outputs/
 *.mjs
+# …except the phone app's release scripts, which the README documents and a release needs: the
+# rule above silently kept every one of them out of the repository. Keys stay in bulava-mobile/secrets.
+!bulava-mobile/scripts/*.mjs
 
 # presentation material: chat transcripts and drafts of the talk. They drag along
 # fragments of other people's repositories and working conversations — their place is the disk,
