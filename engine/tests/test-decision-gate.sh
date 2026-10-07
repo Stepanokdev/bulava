@@ -131,7 +131,7 @@ escalation_wait 6   # he answers in this one, so leave room for the answer to be
 hook_pid=$!
 for _ in $(seq 1 80); do [ -f "$IDIR/ask-user.json" ] && break; sleep 0.1; done
 answered_at="$(date +%s)"
-printf '{"answer":"Show the price immediately, before signup."}' > "$IDIR/answer.json"
+printf '{"answer":"Show the price immediately, before signup.","id":"ANS-1"}' > "$IDIR/answer.json"
 wait "$hook_pid" 2>/dev/null
 picked_up=$(( $(date +%s) - answered_at ))
 if grep -q "Show the price immediately" "$TMP/answered.out"; then ok "his words reached the worker"
@@ -144,6 +144,11 @@ else bad "his answer sat unread for ${picked_up}s"; fi
 escalation_wait 1
 if grep -q "Директор" "$TMP/answered.out"; then ok "and are attributed to him"
 else bad "his answer is not attributed to him"; fi
+# Taken, and a receipt saying which answer: Bulava waits for it before telling him it went in, and
+# takes its file back to send to the chat when no receipt comes (the deadline passed meanwhile).
+if [ "$(jq -r .id "$IDIR/answer-taken.json" 2>/dev/null)" = ANS-1 ] && [ ! -e "$IDIR/answer.json" ] \
+   && ! ls "$IDIR"/answer.json.taken.* >/dev/null 2>&1; then ok "a receipt names the answer the hook took"
+else bad "no receipt for the answer, or its file was left behind"; fi
 
 echo "===== proxy unreachable: a dangerous question is refused, not guessed ====="
 stub ""

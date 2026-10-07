@@ -15,6 +15,9 @@ struct RunControl: View {
     /// rather than letting the pill quietly become untrue.
     let hasLiveClaudeSession: Bool
 
+    /// The chat whose choices these are. A choice made here is this chat's alone.
+    let chatID: UUID?
+
     @State private var open = false
     @State private var hovering = false
 
@@ -39,7 +42,7 @@ struct RunControl: View {
                 Color.clear
                     .frame(maxWidth: 192, maxHeight: 1)
                     .popover(isPresented: $open, arrowEdge: .bottom) {
-                        RunControlPanel(hasLiveClaudeSession: hasLiveClaudeSession)
+                        RunControlPanel(hasLiveClaudeSession: hasLiveClaudeSession, chatID: chatID)
                     }
                     .accessibilityHidden(true)
             }
@@ -61,11 +64,11 @@ struct RunControl: View {
                 }
                 HStack(spacing: 4) {
                     EngineGlyph(engine: engine, size: 10.5, tint: Palette.textSecondary)
-                    Text(verbatim: RunChoice.modelName(engine, model))
+                    Text(verbatim: RunChoice.modelName(engine, model, chatID))
                         .foregroundStyle(Palette.textSecondary)
                     // A model with no depth names none, and an empty label would still take its
                     // spacing — a gap in the pill where a word used to be.
-                    let depth = RunChoice.depthName(engine, model)
+                    let depth = RunChoice.depthName(engine, model, chatID)
                     if !depth.isEmpty {
                         Text(verbatim: depth)
                             .foregroundStyle(Palette.textFaint)
@@ -87,7 +90,7 @@ struct RunControl: View {
     private var spoken: String {
         mode.engines
             .map { engine in
-                [engine.name, RunChoice.modelName(engine, model), RunChoice.depthName(engine, model)]
+                [engine.name, RunChoice.modelName(engine, model, chatID), RunChoice.depthName(engine, model, chatID)]
                     .filter { !$0.isEmpty }
                     .joined(separator: " ")
             }
@@ -100,34 +103,36 @@ struct RunControl: View {
 /// The current choice, worded once and read by both the pill and the panel.
 nonisolated enum RunChoice {
 
-    @MainActor static func modelName(_ engine: Engine, _ model: AppModel) -> String {
+    @MainActor static func modelName(_ engine: Engine, _ model: AppModel, _ chatID: UUID? = nil) -> String {
+        let run = model.runChoices(for: chatID)
         switch engine {
         case .claude:
             // With no model chosen, the engine's name is the honest label: it says which side is
             // answering without claiming to know which Claude the subscription will hand over.
             // With one chosen, the version is what the pill says — a family resolved through the
             // catalogue, so "Opus" reads as the Opus it is actually about to run.
-            guard !model.settings.claudeModel.isAutomatic else { return Engine.claude.name }
-            return model.claudeModels.resolved(model.settings.claudeModel)?.name
-                ?? String(localized: model.settings.claudeModel.label)
+            guard !run.claudeModel.isAutomatic else { return Engine.claude.name }
+            return model.claudeModels.resolved(run.claudeModel)?.name
+                ?? String(localized: run.claudeModel.label)
         case .codex:
-            return model.codexModels.model(slug: model.settings.codexModel)?.shortLabel
+            return model.codexModels.model(slug: run.codexModel)?.shortLabel
                 ?? Engine.codex.name
         }
     }
 
-    @MainActor static func depthName(_ engine: Engine, _ model: AppModel) -> String {
+    @MainActor static func depthName(_ engine: Engine, _ model: AppModel, _ chatID: UUID? = nil) -> String {
+        let run = model.runChoices(for: chatID)
         switch engine {
         case .claude:
             // A model with no reasoning levels has no depth to name, and the pill says nothing
             // rather than naming one it does not send.
-            guard model.claudeModels.thinks(model.settings.claudeModel) else { return "" }
-            let depth = model.claudeModels.effort(model.settings.claudeEffort,
-                                                  for: model.settings.claudeModel)
+            guard model.claudeModels.thinks(run.claudeModel) else { return "" }
+            let depth = model.claudeModels.effort(run.claudeEffort,
+                                                  for: run.claudeModel)
             return String(localized: depth.label)
         case .codex:
-            let resolved = model.codexModels.effort(model.settings.codexEffort,
-                                                    forSlug: model.settings.codexModel)
+            let resolved = model.codexModels.effort(run.codexEffort,
+                                                    forSlug: run.codexModel)
             return String(localized: resolved.label)
         }
     }
@@ -139,8 +144,10 @@ private struct RunControlPanel: View {
 
     @Environment(AppModel.self) private var model
     let hasLiveClaudeSession: Bool
+    let chatID: UUID?
 
     private var mode: ChatEngineMode { model.settings.chatMode }
+    private var run: RunChoices { model.runChoices(for: chatID) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -234,11 +241,11 @@ private struct RunControlPanel: View {
     @ViewBuilder private func modelPicker(_ engine: Engine) -> some View {
         switch engine {
         case .claude:
-            ClaudeModelMenu()
+            ClaudeModelMenu(chatID: chatID)
 
         case .codex:
-            Picker("", selection: Binding(get: { model.settings.codexModel },
-                                          set: { model.chooseCodexModel($0) })) {
+            Picker("", selection: Binding(get: { run.codexModel },
+                                          set: { model.chooseCodexModel($0, for: chatID) })) {
                 Text("Automatic").tag("")
                 ForEach(model.codexModels.models) { candidate in
                     Text(verbatim: candidate.shortLabel).tag(candidate.slug)
@@ -246,9 +253,9 @@ private struct RunControlPanel: View {
                 // A model chosen on an older build, or on a machine whose catalogue has not been
                 // written yet, is still the current value and has to be shown as one — otherwise
                 // the popup reads "Automatic" while the app keeps sending the model.
-                if !model.settings.codexModel.isEmpty,
-                   model.codexModels.model(slug: model.settings.codexModel) == nil {
-                    Text(verbatim: model.settings.codexModel).tag(model.settings.codexModel)
+                if !run.codexModel.isEmpty,
+                   model.codexModels.model(slug: run.codexModel) == nil {
+                    Text(verbatim: run.codexModel).tag(run.codexModel)
                 }
             }
             .labelsHidden()
@@ -267,12 +274,12 @@ private struct RunControlPanel: View {
 
             switch engine {
             case .claude:
-                if model.claudeModels.thinks(model.settings.claudeModel) {
-                    let steps = model.claudeModels.levels(for: model.settings.claudeModel)
+                if model.claudeModels.thinks(run.claudeModel) {
+                    let steps = model.claudeModels.levels(for: run.claudeModel)
                     EffortSlider(count: steps.count,
-                                 index: steps.firstIndex(of: model.settings.claudeEffort) ?? 0,
+                                 index: steps.firstIndex(of: run.claudeEffort) ?? 0,
                                  label: depthLabel(engine)) { i in
-                        model.settings.claudeEffort = steps[i]
+                        model.updateRunChoices(for: chatID) { $0.claudeEffort = steps[i] }
                     }
                     .animation(Motion.expand, value: steps.count)
                 } else {
@@ -281,11 +288,11 @@ private struct RunControlPanel: View {
                     Spacer(minLength: 0)
                 }
             case .codex:
-                let steps = model.codexModels.levels(forSlug: model.settings.codexModel)
+                let steps = model.codexModels.levels(forSlug: run.codexModel)
                 EffortSlider(count: steps.count,
-                             index: steps.firstIndex(of: model.settings.codexEffort) ?? 0,
+                             index: steps.firstIndex(of: run.codexEffort) ?? 0,
                              label: depthLabel(engine)) { i in
-                    model.settings.codexEffort = steps[i]
+                    model.updateRunChoices(for: chatID) { $0.codexEffort = steps[i] }
                 }
             }
 
@@ -305,13 +312,13 @@ private struct RunControlPanel: View {
     private func depthLabel(_ engine: Engine) -> String {
         switch engine {
         case .claude:
-            return model.claudeModels.depthLabel(model.settings.claudeEffort,
-                                                 for: model.settings.claudeModel)
+            return model.claudeModels.depthLabel(run.claudeEffort,
+                                                 for: run.claudeModel)
         case .codex:
-            guard model.settings.codexEffort == .auto else {
-                return String(localized: model.settings.codexEffort.label)
+            guard run.codexEffort == .auto else {
+                return String(localized: run.codexEffort.label)
             }
-            let resolved = model.codexModels.automaticLevel(forSlug: model.settings.codexModel)
+            let resolved = model.codexModels.automaticLevel(forSlug: run.codexModel)
             return String(format: String(localized: "Automatic · %@"),
                           String(localized: resolved.label))
         }

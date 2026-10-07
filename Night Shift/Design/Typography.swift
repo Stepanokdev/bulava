@@ -2,14 +2,6 @@ import SwiftUI
 
 nonisolated enum Typo {
 
-    // MARK: Document
-
-    static let reportTitle   = Font.system(size: 31, weight: .semibold)
-
-    static let reportLede    = Font.system(size: 15, weight: .regular)
-
-    static let reportSection = Font.system(size: 17, weight: .semibold)
-
     // MARK: Screen
 
     static let screenTitle = Font.system(size: 24, weight: .semibold)
@@ -57,24 +49,12 @@ nonisolated enum Typo {
 
 extension View {
 
-    func reportTitleStyle() -> some View {
-        font(Typo.reportTitle).tracking(-1.1).lineSpacing(2)
-    }
-
     func screenTitleStyle() -> some View {
         font(Typo.screenTitle).tracking(-0.72)
     }
 
     func inviteTitleStyle() -> some View {
         font(Typo.inviteTitle).tracking(-0.55)
-    }
-
-    func reportSectionStyle() -> some View {
-        font(Typo.reportSection).tracking(-0.34)
-    }
-
-    func reportLedeStyle() -> some View {
-        font(Typo.reportLede).lineSpacing(6)
     }
 
     func messageStyle() -> some View {

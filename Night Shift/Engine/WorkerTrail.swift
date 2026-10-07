@@ -89,7 +89,7 @@ nonisolated enum WorkerTrail {
 
     static func pickTranscript(for task: BacklogTask) -> Pick {
 
-        let roots = [task.worktree, task.projectPath].compactMap { $0 }
+        let roots = ([task.worktree] + task.retiredWorktrees.map { Optional($0) } + [task.projectPath]).compactMap { $0 }
         guard !roots.isEmpty else { return .none }
 
         if let session = task.boundSessionID, !session.isEmpty {

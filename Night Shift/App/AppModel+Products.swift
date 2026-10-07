@@ -8,7 +8,10 @@ extension AppModel {
     var selectedProductID: UUID? { route.productID }
     var selectedProduct: Product? { products.product(id: selectedProductID) }
 
-    func open(product id: UUID) { navigate(to: .product(id)) }
+    func open(product id: UUID) {
+        conversations.leaveAutomationChat(for: id)
+        navigate(to: .product(id))
+    }
 
     // MARK: - Chats
 
@@ -57,6 +60,9 @@ extension AppModel {
     func openProducts() { navigate(to: .products) }
     func openPreflight() { navigate(to: .preflight) }
     func openSkills() { navigate(to: .skills) }
+    func openAutomations() { navigate(to: .automations) }
+    func openPipelines() { navigate(to: .pipelines) }
+    func openPipeline(_ id: String) { navigate(to: .pipeline(id)) }
 
     // MARK: - Getting a fresh machine ready
     //
@@ -79,25 +85,64 @@ extension AppModel {
         // engine's directory and rewriting Claude Code's hooks; a worker mid-turn would find the
         // scripts it is about to call replaced underneath it. The engine outlives the app on
         // purpose, so "the app just started" proves nothing — this looks for the processes.
-        if let busy = EngineBusy.reason(instances: await client.readInstances()) {
+        if var busy = EngineBusy.blocker(instances: await client.readInstances()) {
+            // Daemons an earlier run left behind are the engine's own, and nothing is working in
+            // them: somebody who pressed "Install" gets the install, not a sentence about them. An
+            // open session is different — somebody may be looking at it — so that one is asked
+            // about on the readiness screen, with a button.
+            if !quietly, busy.holders.isEmpty, busy.orphanSessions.isEmpty, !busy.leftovers.isEmpty {
+                await endLeftovers(busy)
+                if let still = await EngineBusy.waitUntilFree(
+                    check: { [client] in EngineBusy.blocker(instances: await client.readInstances()) },
+                    wait: { try? await Task.sleep(for: .milliseconds(250)) }, attempts: 12) {
+                    busy = still
+                } else {
+                    return await installEngineNow(quietly: quietly)
+                }
+            }
+            engineBlocker = busy
             if !quietly {
                 toast = ToastMessage(
+                    title: String(localized: "The engine was not updated"),
                     text: String(format: String(localized:
-                        "The engine cannot be replaced while %@. Try again when the work is done."), busy),
-                    kind: .error)
+                        "The engine cannot be replaced while %@. Try again when the work is done."), busy.text),
+                    kind: .error,
+                    key: "engine.install",
+                    actions: busy.holders.isEmpty && !busy.hasLeftovers ? []
+                        : [ToastAction(title: String(localized: "Show what is holding it")) { [weak self] in
+                            self?.openPreflight()
+                        }])
             }
             return false
         }
+        return await installEngineNow(quietly: quietly)
+    }
+
+    private func installEngineNow(quietly: Bool) async -> Bool {
 
         let outcome = await EngineInstaller.install()
         note(.taskEdited, outcome.ok ? .info : .problem,
              outcome.ok ? "Движок встановлено" : "Не вдалося встановити движок",
              detail: outcome.log)
-        if outcome.ok && quietly { return true }
-        toast = ToastMessage(text: outcome.ok
-                             ? String(localized: "The engine is ready — night-shift works in the terminal too.")
-                             : SkillsPanelBody.plainMessage(outcome.log),
-                             kind: outcome.ok ? .success : .error)
+        if !outcome.ok {
+            // Nothing here repairs it — the engine is the app's own — so it is only reported.
+            reportIncident(code: "engine.install_failed",
+                           message: String(SkillsPanelBody.plainMessage(outcome.log).suffix(800)),
+                           outcome: "not_attempted")
+        }
+        if outcome.ok && quietly { resolveToast(key: "engine.install"); return true }
+        // One key for the whole story, so "not updated" is replaced by "ready" where it stood.
+        toast = outcome.ok
+            ? ToastMessage(text: String(localized: "The engine is ready — night-shift works in the terminal too."),
+                           kind: .success, key: "engine.install")
+            : ToastMessage(title: String(localized: "The engine could not be installed"),
+                           // The installer's last word is usually the reason; all of it is
+                           // under Details, for a bug report.
+                           text: SkillsPanelBody.plainMessage(outcome.log)
+                               .split(whereSeparator: \.isNewline).last.map(String.init)
+                               ?? String(localized: "The installer stopped without saying why."),
+                           kind: .error, key: "engine.install",
+                           detail: outcome.log.isEmpty ? nil : outcome.log)
         return outcome.ok
     }
 
@@ -130,14 +175,6 @@ extension AppModel {
         // finished on its own, restarted under a new session, or been joined by a second run.
         await refreshEngineBlocker()
         let holders = engineBlocker?.holders ?? []
-        guard !holders.isEmpty else {
-            // Nothing identifiable holds it any more. Either it is free — in which case installing
-            // is exactly right — or a process with no run behind it does, and installEngine says so.
-            await installEngine()
-            await refreshEngineBlocker()
-            await refreshReadiness(force: true)
-            return
-        }
 
         for holder in holders {
             if let failure = await releaseProject(path: holder.projectPath, session: holder.session) {
@@ -149,10 +186,20 @@ extension AppModel {
             }
         }
         // Stopped is not the same as gone. The pump and the pipeline exit on their own next poll,
-        // and installing inside that gap is refused for a process already on its way out.
-        let stillHeld = await EngineBusy.waitUntilFree(
+        // and installing inside that gap is refused for a process already on its way out. What is
+        // left after that is left over for good — a daemon whose run is gone, a session nobody
+        // closed — and those are the engine's own, so they are ended rather than reported.
+        var stillHeld = await EngineBusy.waitUntilFree(
             check: { [client] in EngineBusy.blocker(instances: await client.readInstances()) },
-            wait: { try? await Task.sleep(for: .milliseconds(250)) })
+            wait: { try? await Task.sleep(for: .milliseconds(250)) },
+            attempts: holders.isEmpty ? 1 : 40)
+        if let held = stillHeld, held.holders.isEmpty, held.hasLeftovers {
+            await endLeftovers(held)
+            stillHeld = await EngineBusy.waitUntilFree(
+                check: { [client] in EngineBusy.blocker(instances: await client.readInstances()) },
+                wait: { try? await Task.sleep(for: .milliseconds(250)) },
+                attempts: 20)
+        }
         engineBlocker = stillHeld
         if let stillHeld {
             // Something else holds it — another product's work, a review, a process with no run
@@ -168,6 +215,19 @@ extension AppModel {
         await installEngine()
         await refreshEngineBlocker()
         await refreshReadiness(force: true)
+    }
+
+    /// Ends what an earlier run left behind: its daemons, checked again just before each signal,
+    /// and worker sessions no run accounts for.
+    private func endLeftovers(_ blocker: EngineBusy.Blocker) async {
+        let survivors = await EngineBusy.end(blocker.leftovers)
+        for session in blocker.orphanSessions {
+            _ = await client.killSession(session)
+        }
+        note(.taskEdited, survivors.isEmpty ? .info : .problem,
+             survivors.isEmpty ? "Залишки попередніх запусків зупинено" : "Не всі залишки зупинились",
+             detail: (blocker.leftovers.map { "\($0.name) (\($0.pid))" } + blocker.orphanSessions)
+                .joined(separator: ", "))
     }
 
     /// Why the work could not be stopped, in the words that say what to do next.
@@ -203,6 +263,12 @@ extension AppModel {
     }
 
     func signIn(command: String) {
+        runInTerminal(command)
+    }
+
+    /// The newer Codex, installed where the old one was, in a Terminal he can watch. The menu
+    /// picks up its models on the next refresh — no Bulava release involved.
+    func updateCodex(command: String) {
         runInTerminal(command)
     }
 
@@ -295,6 +361,9 @@ extension AppModel {
         for item in workItems.items(forProductID: id) where state(of: item) == .partial {
             states.append(.partial)
         }
+        // Runs of its automations count like any other work of the product: a question one of
+        // them is holding is a question waiting in this product, whether or not its chat is listed.
+        if let automation = automationState(forProductID: id) { states.append(automation) }
         guard !states.isEmpty else { return nil }
         let order: [WorkState] = [.needsAnswer, .stopped, .partial, .failed, .reportReady,
                                   .running, .paused, .planned]
@@ -353,86 +422,6 @@ extension AppModel {
                 a.priority != b.priority ? a.priority < b.priority : a.createdAt < b.createdAt
             }
         return live + queued
-    }
-
-    // MARK: - Keeping conversations in step with the work
-
-    func syncConversations() {
-        for task in backlog.tasks {
-            guard let productID = productID(for: task) else { continue }
-
-            let parent = workItems.item(forStreamID: task.id)
-            let isStreamOfPackage = parent?.isMultiStream == true
-
-            if !isFinished(task), task.dispatchedAt != nil || task.state != .ready, !isStreamOfPackage {
-                conversations.anchorTask(task.id, productID: productID, title: task.title)
-            }
-
-            if let parent, parent.isMultiStream {
-
-                if allStreamsSettled(parent), parent.reportAnnouncedAt == nil {
-                    workItems.markReportAnnounced(parent.id)
-
-                    postDelivery(forItem: parent, productID: productID)
-                    note(.reportReady, .good, "Звіт готовий: \(parent.title)",
-                         projectPath: task.projectPath, taskID: parent.id, link: .report(parent.id))
-                }
-            } else if Self.hasStopped(task), announcedReports.contains(task.id),
-                      let shown = conversations.lastReportAt(taskID: task.id),
-                      let written = Self.reportWrittenAt(settings.paths.reportDir(task8: task.reportKey)),
-                      written > shown.addingTimeInterval(60) {
-
-                Trace.note("report-updated", task: task.id, report: task.reportKey,
-                           detail: "written \(Trace.stamp(written)), card shown \(Trace.stamp(shown))")
-                conversations.postUpdatedReport(task.title, productID: productID, taskID: task.id)
-
-                deliveredArtifacts.remove(task.id)
-                postDelivery(for: task, productID: productID)
-                note(.reportReady, .good, "Звіт оновлено: \(task.title)",
-                     projectPath: task.projectPath, taskID: task.id, link: .report(task.id))
-            } else if Self.hasStopped(task), !announcedReports.contains(task.id) {
-
-                announcedReports.insert(task.id)
-                Trace.note("report", task: task.id, report: task.reportKey,
-                           detail: "state=\(task.state.rawValue) outcome=\(task.lastOutcome ?? "—")")
-                conversations.postReport(task.title, productID: productID, taskID: task.id)
-
-                postDelivery(for: task, productID: productID)
-                note(.reportReady, .good, "Звіт готовий: \(task.title)",
-                     projectPath: task.projectPath, taskID: task.id, link: .report(task.id))
-            }
-
-            if let instance = questionInstance(for: task), let question = instance.pendingQuestion {
-                conversations.postQuestion(question.headline, productID: productID, taskID: task.id,
-                                           decision: question.record)
-            } else if task.state != .blocked, conversations.hasOpenQuestion(taskID: task.id) {
-                conversations.resolveQuestion(taskID: task.id)
-            }
-        }
-    }
-
-    // MARK: - Blockers
-
-    func scanBlockers() async {
-        for product in products.products {
-            for projectID in product.allProjectIDs {
-                guard let project = projects.project(id: projectID) else { continue }
-                guard let note = await client.repoNote(projectPath: project.path, filename: "BLOCKED.md"),
-                      Self.isActiveBlocker(note),
-                      !isBlockerDismissed(projectID: project.id, note: note) else { continue }
-
-                if liveInstance(forProjectPath: project.path) != nil { continue }
-
-                let headline = note
-                    .split(separator: "\n")
-                    .first { !$0.trimmingCharacters(in: .whitespaces).isEmpty && !$0.hasPrefix("#") }
-                    .map(String.init) ?? String(localized: "Something is blocking this work.")
-
-                conversations.postEventOnce(
-                    String(format: String(localized: "Blocked in %@ — %@"), project.name, headline),
-                    productID: product.id, tone: .attention)
-            }
-        }
     }
 
     // MARK: - The product sheet
@@ -727,11 +716,6 @@ extension AppModel {
         var hasRealReason: Bool = true
     }
 
-    nonisolated static func reportWrittenAt(_ dir: URL) -> Date? {
-        let url = dir.appendingPathComponent("report.json")
-        return (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate]) as? Date
-    }
-
     nonisolated static func hasStopped(_ task: BacklogTask) -> Bool {
         switch task.state {
         case .review, .blocked, .failed: return true
@@ -768,81 +752,6 @@ extension AppModel {
                                        hasRealReason: explained))
         }
         return out
-    }
-
-    func surfacePendingDecisions() async {
-        for decision in await pendingDecisions() {
-            guard let task = backlog.task(id: decision.id),
-                  let productID = productID(for: task) else { continue }
-
-            guard !decision.needs.isEmpty, decision.hasRealReason else { continue }
-            let body = decision.needs
-                .map { String($0.prefix(700)) }
-                .joined(separator: "\n\n")
-            conversations.postEventOnce(
-                String(format: String(localized: "“%@” is waiting on you. What the worker itself said it needs:\n\n%@"),
-                       task.title, body),
-                productID: productID, tone: .attention, taskID: task.id)
-        }
-    }
-}
-
-// MARK: - Finishing what a silent worker left behind
-
-extension AppModel {
-
-    func surfaceUndeliveredWork(_ runs: [SupervisorInstance]? = nil) {
-        for inst in runs ?? instances {
-            guard let reason = inst.injectFailure else { continue }
-
-            let mine = backlog.tasks.first { task in
-                if let id = inst.injectFailureDispatchID, let bound = task.boundDispatchID { return bound == id }
-                return task.boundRunID == inst.runID && task.dispatchedAt != nil
-            }
-            guard let task = mine, task.state == .executing || task.state == .verifying else { continue }
-            guard !undeliveredSeen.contains(task.id) else { continue }
-            undeliveredSeen.insert(task.id)
-
-            Trace.note("undelivered", task: task.id, dispatch: inst.injectFailureDispatchID,
-                       project: inst.projectPath, detail: reason)
-            backlog.undoDispatch(task.id)
-            if let productID = productID(for: task) {
-                conversations.postEventOnce(
-                    String(format: String(localized: "“%@” did not reach the worker (%@). The session started and the task never arrived, so nothing was running. I have put it back — start it again."),
-                           task.title, reason),
-                    productID: productID, tone: .problem, taskID: task.id)
-            }
-            note(.taskStateChanged, .problem, "Задача не дійшла до воркера: «\(task.title)»",
-                 detail: reason, projectPath: task.projectPath, taskID: task.id, link: .task(task.id))
-        }
-    }
-
-    func resolveSilentlyFinishedRuns() async {
-
-        for task in backlog.tasks where [.executing, .verifying, .blocked].contains(task.state) {
-            guard task.externalBlocker == nil else { continue }
-            guard let inst = liveInstance(for: task), inst.stalled,
-                  inst.doneResult == nil, inst.pendingQuestion == nil else { continue }
-
-            guard let manifest = await client.reportManifest(task8: task.reportKey),
-                  manifest.hasContent else { continue }
-            guard backlog.task(id: task.id)?.state == task.state else { continue }
-
-            backlog.setState(task.id, .review)
-            if let productID = productID(for: task) {
-                conversations.postEventOnce(
-                    String(format: String(localized: "“%@” finished but never signed off. The report is on disk, so it is on your desk — nothing was merged."),
-                           task.title),
-                    productID: productID, tone: .attention, taskID: task.id)
-            }
-            note(.workerFinished, .attention,
-                 "Воркер не оголосив результат: «\(task.title)» — звіт на диску, ставлю на ревʼю",
-                 detail: "stalled + report present → .review (не approved: гейт приймання лишається)",
-                 projectPath: task.projectPath, taskID: task.id, link: .review(task.id))
-
-            _ = await client.stopNightShift(project: task.projectPath ?? "")
-            _ = await client.killSession("night-\(Slug.forPath(task.projectPath ?? ""))")
-        }
     }
 }
 
@@ -894,69 +803,46 @@ extension AppModel {
         guard item.isMultiStream else { openReport(tasks[0]); return }
         guard !preparingReport.contains(item.id) else { return }
         markPreparing(item.id)
-
-        let title = item.title
-        let productName = products.product(id: item.productID)?.name ?? ""
-        let key = String(item.id.uuidString.replacingOccurrences(of: "-", with: "").prefix(8)).lowercased()
-        let delivered = deliveredStreamCount(item)
-        let failed = failedStreamCount(item)
-        let unfinished = item.streams.count - delivered - failed
-        let missing = item.missingVariants
-
         Task {
-            var sections: [ReportHTML.ItemSection] = []
-            for (index, stream) in item.streams.enumerated() {
-                guard let task = backlog.task(id: stream.id) else { continue }
-                sections.append(await itemSection(number: index + 1, stream: stream, task: task))
-            }
-            let url = await client.renderItemReport(
-                itemKey: key, title: title, productName: productName, sections: sections,
-                delivered: delivered, failed: failed, unfinished: unfinished, missing: missing,
-                generatedAt: Fmt.stamp(Date()))
+            let url = await renderItemReport(item)
             clearPreparing(item.id)
             guard let url else {
                 toast = ToastMessage(text: String(localized: "Could not build the report"), kind: .error)
                 return
             }
-            reportViewer = ReportViewer(taskID: nil, itemID: item.id, title: title,
+            reportViewer = ReportViewer(taskID: nil, itemID: item.id, title: item.title,
                                         htmlURL: url, isVideo: false)
         }
     }
 
+    /// The one report of a piece of work with several streams, written to disk. The Mac's report
+    /// window and the phone both open what this returns.
+    func renderItemReport(_ item: WorkItem) async -> URL? {
+        let key = String(item.id.uuidString.replacingOccurrences(of: "-", with: "").prefix(8)).lowercased()
+        let delivered = deliveredStreamCount(item)
+        let failed = failedStreamCount(item)
+        var sections: [ReportHTML.ItemSection] = []
+        for (index, stream) in item.streams.enumerated() {
+            guard let task = backlog.task(id: stream.id) else { continue }
+            sections.append(await itemSection(number: index + 1, stream: stream, task: task))
+        }
+        return await client.renderItemReport(
+            itemKey: key, title: item.title, productName: products.product(id: item.productID)?.name ?? "",
+            sections: sections, delivered: delivered, failed: failed,
+            unfinished: item.streams.count - delivered - failed, missing: item.missingVariants,
+            generatedAt: Fmt.stamp(Date()))
+    }
+
     func openProductReport(productID: UUID) {
         guard let product = products.product(id: productID) else { return }
-
-        let finished = tasks(for: productID)
-            .filter { Self.hasStopped($0) || isFinished($0) }
-            .sorted { ($0.dispatchedAt ?? $0.createdAt) > ($1.dispatchedAt ?? $1.createdAt) }
-        guard !finished.isEmpty else {
+        guard hasFinishedWork(productID) else {
             toast = ToastMessage(text: String(localized: "Nothing has finished in this product yet"), kind: .info)
             return
         }
-        let key = "product-" + String(productID.uuidString.replacingOccurrences(of: "-", with: "").prefix(8)).lowercased()
         guard !preparingReport.contains(productID) else { return }
         markPreparing(productID)
-
-        let shown = Array(finished.prefix(20))
-        let openCount = openTasks(for: productID).count
-
         Task {
-            var sections: [ReportHTML.ItemSection] = []
-            for (index, task) in shown.enumerated() {
-                let stream = WorkItem.Stream(id: task.id, title: task.title,
-                                             projectName: name(of: task.projectPath) ?? "")
-                sections.append(await itemSection(number: index + 1, stream: stream, task: task))
-            }
-            let delivered = sections.filter { $0.outcome == .delivered }.count
-            let failed = sections.filter { $0.outcome == .failed }.count
-            let unfinished = sections.count - delivered - failed
-            let url = await client.renderItemReport(
-                itemKey: key,
-                title: String(format: String(localized: "%@ — everything done so far"), product.name),
-                productName: product.name, sections: sections,
-                delivered: delivered, failed: failed, unfinished: unfinished,
-                missing: max(0, finished.count - shown.count),
-                generatedAt: Fmt.stamp(Date()))
+            let url = await renderProductReport(productID: productID)
             clearPreparing(productID)
             guard let url else {
                 toast = ToastMessage(text: String(localized: "Could not build the report"), kind: .error)
@@ -966,8 +852,39 @@ extension AppModel {
                                         title: product.name, htmlURL: url, isVideo: false)
             note(.reportReady, .good, "Звіт по всій роботі: \(product.name)",
                  taskID: nil, link: .report(productID))
-            _ = openCount
         }
+    }
+
+    private func finishedWork(_ productID: UUID) -> [BacklogTask] {
+        tasks(for: productID)
+            .filter { Self.hasStopped($0) || isFinished($0) }
+            .sorted { ($0.dispatchedAt ?? $0.createdAt) > ($1.dispatchedAt ?? $1.createdAt) }
+    }
+
+    func hasFinishedWork(_ productID: UUID) -> Bool { !finishedWork(productID).isEmpty }
+
+    /// Everything a product has been through, as one report on disk — the newest twenty pieces.
+    func renderProductReport(productID: UUID) async -> URL? {
+        guard let product = products.product(id: productID) else { return nil }
+        let finished = finishedWork(productID)
+        guard !finished.isEmpty else { return nil }
+        let key = "product-" + String(productID.uuidString.replacingOccurrences(of: "-", with: "").prefix(8)).lowercased()
+        let shown = Array(finished.prefix(20))
+        var sections: [ReportHTML.ItemSection] = []
+        for (index, task) in shown.enumerated() {
+            let stream = WorkItem.Stream(id: task.id, title: task.title,
+                                         projectName: name(of: task.projectPath) ?? "")
+            sections.append(await itemSection(number: index + 1, stream: stream, task: task))
+        }
+        let delivered = sections.filter { $0.outcome == .delivered }.count
+        let failed = sections.filter { $0.outcome == .failed }.count
+        return await client.renderItemReport(
+            itemKey: key,
+            title: String(format: String(localized: "%@ — everything done so far"), product.name),
+            productName: product.name, sections: sections,
+            delivered: delivered, failed: failed, unfinished: sections.count - delivered - failed,
+            missing: max(0, finished.count - shown.count),
+            generatedAt: Fmt.stamp(Date()))
     }
 
     private func itemSection(number: Int, stream: WorkItem.Stream,
@@ -1128,6 +1045,27 @@ extension AppModel {
             return p.path
         }
         return nil
+    }
+
+    /// Where a product's slash commands come from: its primary folder first, then the others it
+    /// holds. One place, so the Mac's composer and the phone's offer the same list.
+    func slashCommandRoots(for productID: UUID) -> SlashCommandCatalog.Roots {
+        let product = products.product(id: productID)
+        let primaryPath = product?.defaultProjectID
+            .flatMap { projects.project(id: $0) }
+            .map { Slug.canonicalPath($0.path) }
+        var seen = Set<String>()
+        let added = (product?.resources ?? []).compactMap { resource -> URL? in
+            guard let projectID = resource.projectID,
+                  let project = projects.project(id: projectID) else { return nil }
+            let path = Slug.canonicalPath(project.path)
+            guard path != primaryPath, seen.insert(path).inserted else { return nil }
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        return SlashCommandCatalog.Roots(
+            primaryProject: primaryPath.map { URL(fileURLWithPath: $0, isDirectory: true) },
+            addedProjects: added.sorted { $0.path < $1.path }
+        )
     }
 
     func skillInventory(fast: Bool = false) async -> SkillInventory {

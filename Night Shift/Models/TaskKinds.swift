@@ -132,38 +132,6 @@ nonisolated enum TaskState: String, Codable, CaseIterable, Sendable {
     }
 }
 
-nonisolated enum TaskBucket: String, CaseIterable, Sendable {
-    case backlog, inProgress, needsAttention, review, done
-
-    init(_ s: TaskState) {
-        switch s {
-        case .ready: self = .backlog
-        case .researching, .planning, .executing, .verifying, .finalizing: self = .inProgress
-        case .blocked, .needsClarification, .failed: self = .needsAttention
-        case .review: self = .review
-        case .approved, .merged, .closed: self = .done
-        }
-    }
-    var label: String {
-        switch self {
-        case .backlog: "Backlog"; case .inProgress: "In progress"; case .needsAttention: "Needs you"
-        case .review: "Review"; case .done: "Done"
-        }
-    }
-    var icon: String {
-        switch self {
-        case .backlog: "tray"; case .inProgress: "bolt.fill"; case .needsAttention: "exclamationmark.circle"
-        case .review: "checkmark.circle"; case .done: "checkmark"
-        }
-    }
-    var tint: Color {
-        switch self {
-        case .backlog: Palette.textTertiary; case .inProgress: Palette.blue; case .needsAttention: Palette.orange
-        case .review: Palette.accentEmphasis; case .done: Palette.green
-        }
-    }
-}
-
 nonisolated enum BoardColumn: String, CaseIterable, Identifiable {
     case clarify, ready, inProgress, blocked, review, done
     var id: String { rawValue }

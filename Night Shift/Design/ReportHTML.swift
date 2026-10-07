@@ -32,7 +32,10 @@ nonisolated enum ReportHTML {
         header { margin-bottom:34px; }
         /* The mark keeps its own plate, exactly as it does in the app's sidebar: the lime
            needs something dark under it, and a logo that recolours itself is not a logo. */
-        .brand { display:flex; align-items:center; gap:9px; margin:0 0 22px; }
+        .brand {
+          display:flex; width:fit-content; align-items:center; gap:9px; margin:0 0 22px;
+          text-decoration:none; color:inherit;
+        }
         .brand .plate {
           width:24px; height:24px; border-radius:7px; background:var(--brand-field);
           display:flex; align-items:center; justify-content:center; flex:0 0 auto;
@@ -76,6 +79,14 @@ nonisolated enum ReportHTML {
         }
         .shot.after .tag { color:var(--accent-2); }
         .shot img { display:block; width:100%; height:auto; }
+        /* A frame on its own is shown whole. A phone screen stretched to the column's width stood
+           two windows tall, and what the report said under it could only be found by scrolling past
+           it; now it is at most as tall as the view, its panel as wide as the picture. A wide frame
+           — a desktop, a browser — never reaches that height and still takes the full width. Two
+           frames side by side already share the width and are left as they were. */
+        .pair.one { justify-items:start; }
+        .pair.one .shot { max-width:100%; }
+        .pair.one .shot img { width:auto; max-width:100%; max-height:min(72vh, 680px); }
         figcaption { color:var(--text-2); font-size:12.5px; line-height:1.5; margin-top:11px; }
 
         .media { margin:0; }
@@ -190,10 +201,10 @@ nonisolated enum ReportHTML {
 """
 
     static let brand: String = """
-        <div class="brand">
+        <a class="brand" href="https://bulava.app">
           <span class="plate">\(BulavaGlyph.svg(size: 14))</span>
           <span class="word">bulava<em>.app</em></span>
-        </div>
+        </a>
         """
 
     static func evidenceBody(_ m: ReportManifest, prefix: String = "") -> String {

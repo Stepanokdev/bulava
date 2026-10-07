@@ -2,7 +2,6 @@ import SwiftUI
 
 struct ProductInspector: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.openWindow) private var openWindow
     @State private var snapshot = ChatInspectorSnapshot.empty
     @State private var loading = true
     @State private var selectedChange: SelectedChange?
@@ -36,6 +35,7 @@ struct ProductInspector: View {
                         filePreview(selectedChange)
                     } else {
                         VStack(alignment: .leading, spacing: Metrics.sectionGap) {
+                            if let chatID { RunInspectorSection(chatID: chatID) }
                             resources(product)
                             if snapshot.changeCount > 0 { changes }
                             if let evidence = snapshot.evidence, shouldShow(evidence) {
@@ -56,6 +56,8 @@ struct ProductInspector: View {
         .scrollIndicators(.hidden)
         .background(Palette.chrome)
         .task(id: inspectionID) { await refreshLoop() }
+        .task(id: chatID) { await model.watchChatRun(chatID: chatID) }
+        .task { if model.pipelineRegistry == nil { await model.loadPipelineLibrary() } }
         .task(id: product?.id) { if let product { await model.findWorkspaceResources(in: product) } }
         .task(id: selectedChange?.id) { await loadSelectedDiff() }
         .animation(Motion.standard, value: selectedChange?.id)
@@ -153,7 +155,7 @@ struct ProductInspector: View {
                         .font(Typo.panelMeta)
                         .foregroundStyle(projectSkills.unused.isEmpty ? Palette.textFaint : Palette.orange)
                 }
-                Button { openWindow(id: "skills") } label: { Image(systemName: "square.grid.2x2") }
+                Button { model.openSkills() } label: { Image(systemName: "square.grid.2x2") }
                     .buttonStyle(.icon(size: 20, glyph: 10))
                     .help(Text("All skills on this machine"))
                 Button { toggleSkills(product) } label: {
@@ -407,7 +409,9 @@ struct ProductInspector: View {
                                     Text(index == 0 ? String(localized: "Latest report") : String(localized: "Report"))
                                         .font(Typo.panelRow)
                                         .foregroundStyle(Palette.textSecondary)
-                                    Text((path as NSString).lastPathComponent)
+                                    // Every report is an `index.html`; its folder says what and when.
+                                    Text(verbatim: ([ReportName.date(path).map(Fmt.stamp)].compactMap { $0 }
+                                                    + [ReportName.title(path)]).joined(separator: " · "))
                                         .font(Typo.panelMeta)
                                         .foregroundStyle(Palette.textFaint)
                                         .lineLimit(1)

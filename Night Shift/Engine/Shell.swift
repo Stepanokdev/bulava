@@ -117,6 +117,10 @@ private nonisolated final class ProcessRunner: @unchecked Sendable {
     private let collector = OutputCollector()
     private let completion: (CommandResult) -> Void
     private let lock = NSLock()
+    /// Held while a chunk is read off a pipe and stored, and while the end collects what is left.
+    /// Without it a chunk read at the moment the process ended was stored after the result had
+    /// been taken — `git rev-list --count` printed "1" and the caller got "".
+    private let readLock = NSLock()
     private var emitted = false
     private var selfRetain: ProcessRunner?
     private var timeoutItem: DispatchWorkItem?
@@ -164,17 +168,22 @@ private nonisolated final class ProcessRunner: @unchecked Sendable {
         process.standardError = errPipe
 
         let collector = self.collector
+        let readLock = self.readLock
         outPipe.fileHandleForReading.readabilityHandler = { [weak self] h in
+            readLock.lock()
             let d = h.availableData
+            if !d.isEmpty { collector.appendOut(d) }
+            readLock.unlock()
             guard !d.isEmpty else { return }
-            collector.appendOut(d)
             self?.bumpIdle()
             if let onChunk = self?.onChunk { onChunk(String(decoding: d, as: UTF8.self)) }
         }
         errPipe.fileHandleForReading.readabilityHandler = { [weak self] h in
+            readLock.lock()
             let d = h.availableData
+            if !d.isEmpty { collector.appendErr(d) }
+            readLock.unlock()
             guard !d.isEmpty else { return }
-            collector.appendErr(d)
             self?.bumpIdle()
         }
 
@@ -201,12 +210,16 @@ private nonisolated final class ProcessRunner: @unchecked Sendable {
     }
 
     private func finish(code: Int32, launched: Bool) {
-
+        // A reader already past `availableData` finishes storing its chunk before the rest is read
+        // and the result taken; one that starts after finds the pipe drained and stores nothing.
+        readLock.lock()
         outPipe.fileHandleForReading.readabilityHandler = nil
         errPipe.fileHandleForReading.readabilityHandler = nil
         let restOut = ((try? outPipe.fileHandleForReading.readToEnd()) ?? nil) ?? Data()
         let restErr = ((try? errPipe.fileHandleForReading.readToEnd()) ?? nil) ?? Data()
-        guard let (o, e) = collector.take(extraOut: restOut, extraErr: restErr) else { return }
+        let taken = collector.take(extraOut: restOut, extraErr: restErr)
+        readLock.unlock()
+        guard let (o, e) = taken else { return }
         lock.lock(); let how = endedBy; lock.unlock()
         emit(CommandResult(stdout: o.trimmedTail, stderr: e.trimmedTail,
                            exitCode: code, launched: launched, endedBy: how))

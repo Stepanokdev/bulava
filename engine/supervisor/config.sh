@@ -60,6 +60,11 @@ fi
 : "${SUPERVISOR_INJECT_CONFIRM_WAIT:=20}"      # s to confirm a task injection landed (fail-fast)
 
 : "${SUPERVISOR_HANDSHAKE_WAIT:=5}"            # s the launcher waits for the SessionStart run-id handshake
+# …and when it RESUMES a conversation, which first loads the whole transcript — tens of megabytes for a
+# long chat. 4 Oct: a 41 MB one was already on screen at its prompt when five seconds ran out with no
+# handshake, and the resume was rolled back as if Claude had never started. The same budget as a
+# revival, which resumes the same kind of session. 0 above switches both off.
+: "${SUPERVISOR_RESUME_HANDSHAKE_WAIT:=60}"
 : "${SUPERVISOR_REQUIRE_HANDSHAKE:=1}"         # 1 = abort/rollback the start when the hooks do not
 
 : "${SUPERVISOR_VERIFIER_ENABLED:=1}"
@@ -112,6 +117,8 @@ fi
 : "${SUPERVISOR_CLAUDE_MODEL:=}"         # "" = the CLI's own default
 : "${SUPERVISOR_CODEX_MODEL:=}"          # "" = the CLI's own default
 
+# Where a worker's language STARTS, before the person has written anything. After that it answers in
+# the language they write in (`worker_language_rule`, `task_language_line`); the app sends its own.
 : "${SUPERVISOR_REPORT_LANGUAGE:=Ukrainian}"   # Ukrainian | Russian | English
 
 : "${SUPERVISOR_RESUME_MAX_ATTEMPTS:=3}"
@@ -124,7 +131,7 @@ export SUPERVISOR_MAX_ROUNDS SUPERVISOR_MAX_ROUNDS_HARD SUPERVISOR_STALL_LIMIT \
   SUPERVISOR_MAX_CODEX_WAIT SUPERVISOR_IDLE_KILL_HOURS SUPERVISOR_STALE_DISABLE_HOURS \
   SUPERVISOR_WATCHDOG_POLL SUPERVISOR_IDLE_KILL_SECS SUPERVISOR_QUEUE_POLL \
   SUPERVISOR_PROMPT_WAIT SUPERVISOR_MAX_PROJECT_SECONDS SUPERVISOR_INJECT_CONFIRM_WAIT \
-  SUPERVISOR_HANDSHAKE_WAIT SUPERVISOR_REQUIRE_HANDSHAKE \
+  SUPERVISOR_HANDSHAKE_WAIT SUPERVISOR_RESUME_HANDSHAKE_WAIT SUPERVISOR_REQUIRE_HANDSHAKE \
   SUPERVISOR_SCOPE_GATE SUPERVISOR_BLOCK_DECISIONS SUPERVISOR_BOUNDED_REVIEW \
   SUPERVISOR_MAX_REMEDIATIONS SUPERVISOR_LEGACY_REPO_NOTES \
   SUPERVISOR_OUTCOME_PROTOCOL SUPERVISOR_OUTCOME_NUDGE_MAX SUPERVISOR_STALL_PARK_SECS \

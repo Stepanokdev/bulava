@@ -17,42 +17,6 @@ extension SupervisorClient {
         return (ids("undelivered.jsonl"), ids("undelivered-stuck.jsonl"))
     }
 
-    func repoNote(projectPath: String, filename: String, chars: Int = 1600) -> String? {
-        let url = URL(fileURLWithPath: projectPath).appendingPathComponent(filename)
-        guard let s = try? String(contentsOf: url, encoding: .utf8) else { return nil }
-        let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty { return nil }
-        return trimmed.count > chars ? "…" + String(trimmed.suffix(chars)) : trimmed
-    }
-
-    func clearParked(dirName: String) {
-        let url = paths.queueNeedsUser.appendingPathComponent(dirName)
-        try? FileManager.default.removeItem(at: url)
-    }
-
-    func checkPRMerged(number: String, repo: String, cwd: String?) async -> Bool? {
-        guard !repo.isEmpty, !number.isEmpty else { return nil }
-        let r = await Shell.run("gh pr view \"$1\" --repo \"$2\" --json state --jq .state 2>/dev/null || true",
-                                args: [number, repo], cwd: cwd.map { URL(fileURLWithPath: $0) }, timeout: 25)
-        let state = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        return state.isEmpty ? nil : (state == "MERGED")
-    }
-
-    func createWorktree(projectPath: String, taskID: String) async -> String? {
-        let script = """
-        proj="$1"; tid="$2"
-        ( cd "$proj" && git rev-parse --git-dir >/dev/null 2>&1 ) || { echo ""; exit 0; }
-        root="$(dirname "$proj")/.nightshift-worktrees"; mkdir -p "$root"
-        wt="$root/$(basename "$proj")-$tid"
-        if [ -d "$wt" ]; then echo "$wt"; exit 0; fi
-        br="night/task-$tid"
-        ( cd "$proj" && git worktree add -b "$br" "$wt" >/dev/null 2>&1 ) && echo "$wt" || echo ""
-        """
-        let r = await Shell.run(script, args: [projectPath, taskID], timeout: 60)
-        let wt = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        return wt.isEmpty ? nil : wt
-    }
-
     func projectGitInfo(_ path: String) async -> (remote: String?, defaultBranch: String?) {
         let script = """
         r="$(git remote get-url origin 2>/dev/null)"
@@ -95,6 +59,9 @@ extension SupervisorClient {
 
         Тільки те, що справді видно. Нічого не додумуй, не давай порад і не пропонуй рішень.
         Якщо файл не читається — скажи це одним рядком.
+
+        Пиши мовою, якою він написав своє повідомлення (якщо не написав нічого — мовою файлів), а не
+        мовою цих інструкцій.
         """
         let r = await Shell.run(
             "printf '%s' \"$1\" | env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN claude -p --tools 'Read' --strict-mcp-config 2>/dev/null",

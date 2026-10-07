@@ -31,13 +31,39 @@ while :; do
     case "$res" in needs-user|handoff|blocked) base="$NEEDS" ;; esac
     mkdir -p "$base"
     local dest="$base/${name}-${res}-$(ts)"
-    mv "$entry" "$dest" 2>/dev/null && printf '%s\n' "$res" > "$dest/result" 2>/dev/null
+    mv "$entry" "$dest" 2>/dev/null && printf '%s\n' "$res" > "$dest/result" 2>/dev/null && archived="$dest"
     [ -n "$fine" ] && printf '%s\n' "$fine" > "$dest/outcome" 2>/dev/null || true
   }
 
   if [ ! -d "$proj" ]; then log "dir gone, skipping: $proj"; archive "gone"; continue; fi
 
-  if ! "$NS" start "$proj" --no-attach >>"$LOG" 2>&1; then
+  "$NS" start "$proj" --no-attach > "$QDIR/start.out" 2>&1; start_rc=$?
+  cat "$QDIR/start.out" >> "$LOG" 2>/dev/null
+  if [ "$start_rc" = 78 ]; then
+    # The project's MCP servers are waiting on the director's answer, and at night nobody gives it.
+    log "HOLD $(basename "$proj"): MCP servers in .mcp.json not decided yet — waiting for the director"
+    archived=""; archive "needs-user"
+    [ -n "$archived" ] && cp "$QDIR/start.out" "$archived/why" 2>/dev/null
+    rm -f "$QDIR/start.out"; continue
+  fi
+  if [ "$start_rc" = 79 ]; then
+    # Big files the checkpoint would have to swallow, and only the director can say to leave them out.
+    log "HOLD $(basename "$proj"): files too big to checkpoint — waiting for the director"
+    archived=""; archive "needs-user"
+    [ -n "$archived" ] && cp "$QDIR/start.out" "$archived/why" 2>/dev/null
+    rm -f "$QDIR/start.out"; continue
+  fi
+  if [ "$start_rc" = 77 ]; then
+    # Uncommitted work in the folder, and the night has nobody to ask. It used to be committed as
+    # `night-shift` and the run went on; now the entry waits for the director, with the reason, and
+    # the rest of the queue carries on without it.
+    log "HOLD $(basename "$proj"): uncommitted changes in the folder — waiting for the director"
+    archived=""; archive "needs-user"
+    [ -n "$archived" ] && cp "$QDIR/start.out" "$archived/why" 2>/dev/null
+    rm -f "$QDIR/start.out"; continue
+  fi
+  rm -f "$QDIR/start.out"
+  if [ "$start_rc" != 0 ]; then
     log "night-shift start FAILED: $proj"; archive "startfail"; continue
   fi
 

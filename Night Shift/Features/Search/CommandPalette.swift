@@ -116,7 +116,7 @@ struct CommandPalette: View {
         switch result.kind {
         case .product:
             ProductMonogram(initials: result.initials, selected: false)
-        case .chat, .task, .report, .decision:
+        case .chat, .task, .report, .decision, .automation:
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(Palette.panelRaised)
                 .frame(width: 21, height: 21)
@@ -139,6 +139,10 @@ struct CommandPalette: View {
 
     private func activate(_ result: SearchResult) {
         close()
+        if let id = result.automationID {
+            model.navigate(to: .automation(id))
+            return
+        }
         if let path = result.reportPath {
             model.open(product: result.productID)
             model.openChatReport(path: path, title: result.title)
@@ -165,7 +169,7 @@ struct CommandPalette: View {
 
 struct SearchResult: Identifiable {
     enum Kind {
-        case product, chat, task, report, decision
+        case product, chat, task, report, decision, automation
 
         var labelKey: String {
             switch self {
@@ -174,6 +178,7 @@ struct SearchResult: Identifiable {
             case .task:     "Task"
             case .report:   "Report"
             case .decision: "Decision"
+            case .automation: "Automation"
             }
         }
 
@@ -184,6 +189,7 @@ struct SearchResult: Identifiable {
             case .task:     "circle.dotted"
             case .report:   "doc.text"
             case .decision: "flag"
+            case .automation: "clock.arrow.2.circlepath"
             }
         }
     }
@@ -197,6 +203,7 @@ struct SearchResult: Identifiable {
     var chatID: UUID? = nil
     var reportPath: String? = nil
     var initials: String = ""
+    var automationID: UUID? = nil
 }
 
 extension AppModel {
@@ -229,7 +236,17 @@ extension AppModel {
                                         initials: product.initials))
             }
 
-            for chat in conversations.chats where chat.productID == product.id {
+            // An automation by its name or what it does, and by what its runs said about
+            // themselves — the run summaries, not the transcripts of a year of runs.
+            for automation in automations.automations(for: product.id) {
+                let said = automations.runs(for: automation.id).compactMap(\.summary).joined(separator: " ")
+                guard (automation.name + " " + automation.brief + " " + said).lowercased().contains(query) else { continue }
+                out.append(SearchResult(id: "a-\(automation.id)", kind: .automation, title: automation.name,
+                                        subtitle: "\(product.name) · \(AutomationPresentation.triggerLine(automation.trigger))",
+                                        productID: product.id, automationID: automation.id))
+            }
+
+            for chat in conversations.chats where chat.productID == product.id && !chat.isAutomationRun {
                 let spoken = conversations.entries(inChat: chat.id).map(\.text).joined(separator: " ")
                 let matches = (chat.title + " " + chat.firstMessage + " " + spoken)
                     .lowercased().contains(query)

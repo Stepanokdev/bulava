@@ -97,20 +97,6 @@ nonisolated struct EngineGlyph: View {
     }
 }
 
-/// Both marks side by side, for the mode where Claude works and Codex reviews.
-nonisolated struct EnginePairGlyph: View {
-
-    var size: CGFloat = 11
-    var tint: Color = Palette.textSecondary
-
-    var body: some View {
-        HStack(spacing: 2) {
-            EngineGlyph(engine: .claude, size: size, tint: tint)
-            EngineGlyph(engine: .codex, size: size, tint: tint)
-        }
-    }
-}
-
 nonisolated extension ChatEngineMode {
 
     /// The engines this mode actually runs, in the order they run in.

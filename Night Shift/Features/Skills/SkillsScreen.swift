@@ -7,9 +7,9 @@ import SwiftUI
 /// THIS product has ever wanted it. So there was no way to answer either of the two questions he
 /// had: which of these belong to this project, and what did that number mean.
 ///
-/// A screen rather than a floating window, beside Memory, for the same reason Memory is one: a
-/// skill decided for one product is a fact about that product, and a corner of a window that has
-/// to be summoned is not where anyone looks.
+/// A screen rather than a floating window: a skill decided for one product is a fact about that
+/// product, and a corner of a window that has to be summoned is not where anyone looks. The old
+/// "Skills & MCP" window it replaced is gone; the inspector's button opens this screen.
 struct SkillsScreen: View {
     @Environment(AppModel.self) private var model
 

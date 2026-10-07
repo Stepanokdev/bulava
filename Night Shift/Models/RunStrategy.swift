@@ -12,7 +12,10 @@ nonisolated struct RunStrategy: Sendable, Equatable {
 
     var codexModel: String = ""
 
-    var reportLanguage: String = "Ukrainian"
+    /// Where the worker's language starts — `AppSettings.workLanguageName`, set by `overridden(by:)`.
+    /// Empty leaves it to the engine; it used to say "Ukrainian", which every run started without the
+    /// director's settings kept.
+    var reportLanguage: String = ""
 
     var workBranch: String = ""
 
@@ -74,6 +77,7 @@ nonisolated struct RunStrategy: Sendable, Equatable {
         out.claudeModel = settings.claudeModel.flagValue
         out.codexModel = Self.safeModelID(settings.codexModel)
         out.claudeEffort = claudeModels.supportedEffort(out.claudeEffort, for: settings.claudeModel)
+        out.reportLanguage = settings.workLanguageName
         return out
     }
 }

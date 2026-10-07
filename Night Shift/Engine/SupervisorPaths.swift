@@ -9,8 +9,7 @@ nonisolated struct SupervisorPaths: Sendable {
         if let env = ProcessInfo.processInfo.environment["SUPERVISOR_STATE_DIR"], !env.isEmpty {
             return SupervisorPaths(stateDir: URL(fileURLWithPath: env))
         }
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        return SupervisorPaths(stateDir: home.appendingPathComponent(".claude/supervisor"))
+        return SupervisorPaths(stateDir: AppChannel.current.defaultSupervisorStateDir())
     }
 
     var usageJSON: URL       { stateDir.appendingPathComponent("usage.json") }
@@ -18,9 +17,6 @@ nonisolated struct SupervisorPaths: Sendable {
     var workerEnvJSON: URL   { stateDir.appendingPathComponent("worker-environment.json") }
     var codexUsageJSON: URL  { stateDir.appendingPathComponent("codex-usage.json") }
     var nightModeFlag: URL   { stateDir.appendingPathComponent("night-mode") }
-    var supervisorLog: URL   { stateDir.appendingPathComponent("supervisor.log") }
-    var watchdogLog: URL     { stateDir.appendingPathComponent("watchdog.log") }
-    var codexLog: URL        { stateDir.appendingPathComponent("codex.log") }
     var decisionsJSONL: URL  { stateDir.appendingPathComponent("decisions.jsonl") }
 
     var instancesDir: URL    { stateDir.appendingPathComponent("instances") }
@@ -65,11 +61,8 @@ nonisolated struct SupervisorPaths: Sendable {
     var queueRunnerPID: URL  { queueDir.appendingPathComponent("runner.pid") }
     var queueStopFlag: URL   { queueDir.appendingPathComponent("stop") }
     var queueCurrent: URL    { queueDir.appendingPathComponent("current") }
-    var queueRunnerLog: URL  { queueDir.appendingPathComponent("runner.log") }
 
-    func auditedMarker(sid: String) -> URL { stateDir.appendingPathComponent("audited-\(sid)") }
     func auditState(sid: String) -> URL    { stateDir.appendingPathComponent("audit-state-\(sid)") }
-    func roundsFile(sid: String) -> URL    { stateDir.appendingPathComponent("rounds-\(sid)") }
 }
 
 enum OrchestratorHome {
@@ -88,12 +81,21 @@ enum OrchestratorHome {
             ? url : nil
     }
 
-    /// The development checkout, when this machine has one. Kept FIRST so that editing the engine
-    /// in the repository still changes what runs — on a machine without it, nothing here matches
-    /// and the installed copy answers instead.
+    /// The development checkout — for Bulava Dev only. Kept FIRST there so that editing the engine
+    /// in the repository changes what Dev runs.
+    ///
+    /// Production never runs it. It used to, on the one machine that has the checkout, and that
+    /// meant every uncommitted edit to the engine ran inside his real jobs the moment it was saved.
+    /// Production runs the engine it was built with, installed next to its data; a change reaches
+    /// it by building and installing a new production app.
     nonisolated static var development: URL? {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Developer/MyProjects/Night Shift/engine")
+        developmentCheckout(channel: AppChannel.current)
+    }
+
+    nonisolated static func developmentCheckout(channel: AppChannel,
+                                        home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL? {
+        guard channel.isDev else { return nil }
+        let url = home.appendingPathComponent("Developer/MyProjects/Night Shift/engine")
         return FileManager.default.fileExists(atPath: url.appendingPathComponent("bin/verify.sh").path)
             ? url : nil
     }

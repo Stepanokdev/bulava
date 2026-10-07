@@ -18,7 +18,6 @@ extension AppModel {
 
         let entryID = conversations.beginForemanTurn(productID: productID, at: asked.addingTimeInterval(0.001))
         foremanTurnEntries[key, default: []].append(entryID)
-        thinkingProductIDs.insert(productID)
 
         let cwd = foremanScope(productID)
         let onUpdate: @Sendable (ForemanSession.Update) -> Void = {
@@ -51,7 +50,6 @@ extension AppModel {
 
         case .turn(let blocks):
 
-            thinkingProductIDs.remove(productID)
             let due = Date().timeIntervalSince(foremanCheckpoint[key] ?? .distantPast) > 5
             conversations.updateBlocks(entryID: entryID, blocks: blocks,
                                        text: due ? Self.plainText(of: blocks) : nil,
@@ -62,7 +60,6 @@ extension AppModel {
             }
 
         case .finished(let blocks, let plainText, let failed):
-            thinkingProductIDs.remove(productID)
 
             conversations.updateBlocks(entryID: entryID, blocks: blocks,
                                        text: plainText, persist: true)
@@ -77,8 +74,6 @@ extension AppModel {
             }
 
         case .scopeViolation(let observed, let mcpServers):
-
-            thinkingProductIDs.remove(productID)
 
             for queued in foremanTurnEntries[key] ?? [] { conversations.dropIfEmpty(entryID: queued) }
             foremanTurnEntries[key] = nil
@@ -95,7 +90,6 @@ extension AppModel {
                  "Сесія бригадира піднялась із зайвими інструментами: \(extra)", taskID: nil)
 
         case .unavailable(let reason):
-            thinkingProductIDs.remove(productID)
             conversations.dropIfEmpty(entryID: entryID)
             foremanTurnEntries[key]?.removeFirst()
 
@@ -197,8 +191,9 @@ extension AppModel {
 
     Як відповідати:
     • Звертайся на «ти», прямо до неї — не в третій особі й не по імені.
-    • ЇЇ мовою, з першого слова (визнач мову з її повідомлень). Не перемикайся на англійську, \
-    навіть у короткій репліці перед тим, як щось подивитись.
+    • ЇЇ мовою, з першого слова: тією, якою вона сама пише (англійська, українська, російська — \
+    будь-яка), а не мовою цих інструкцій. Не перемикайся на іншу, навіть у короткій репліці перед \
+    тим, як щось подивитись.
     • У тебе є Read/Grep/Glob у теці цього продукту — якщо питання про код, ПОДИВИСЬ і відповідай \
     фактами з файлів, а не здогадами. Не питай дозволу подивитись, просто дивись.
     • Числа про стан зміни бери ТІЛЬКИ з блоку <стан зміни>. Ніколи не вигадуй їх.

@@ -68,7 +68,9 @@ actor SupervisorClient {
         snap.instances = readInstances()
 
         for index in snap.instances.indices
-            where snap.instances[index].workerStatus == "waiting"
+            where (snap.instances[index].workerStatus == "waiting"
+                   || snap.instances[index].permissionWaitSince != nil
+                   || snap.instances[index].screenWaitSince != nil)
                 && snap.instances[index].pendingQuestion == nil {
             let pane = await capturePane(session: snap.instances[index].session, lines: 160)
             snap.instances[index].pendingQuestion = TerminalQuestionParser.parse(pane)
@@ -160,7 +162,6 @@ actor SupervisorClient {
 
             let awaitingReason = readJSONString(awaitingURL, key: "reason")
             let reviewProgress = readReviewProgress(dir.appendingPathComponent("review-progress.json"))
-            let reviewVerdict = readReviewVerdict(dir.appendingPathComponent("reports/review.json"))
 
             let scopeViolations = readJSONNumber(dir.appendingPathComponent("scope-violation.json"), key: "count").map { Int($0) }
             let doneURL = dir.appendingPathComponent("done")
@@ -175,7 +176,6 @@ actor SupervisorClient {
             let offline = fm.fileExists(atPath: offlineURL.path)
             let offlineSince = offline ? (readOfflineSince(offlineURL) ?? modifiedDate(offlineURL)) : nil
 
-            let injected = readInjectFailure(dir.appendingPathComponent("inject-failed"))
             let dispatch = readDispatch(dir.appendingPathComponent("dispatch.json"))
             let finishedDispatches = readFinishedDispatches(dir.appendingPathComponent("dispatches"))
             let runID = readTrimmed(dir.appendingPathComponent("run-id"))
@@ -232,7 +232,7 @@ actor SupervisorClient {
             // answer has to name on the way back.
             let codexDecision = readCodexDecision(dir)
 
-            let inst = SupervisorInstance(
+            var inst = SupervisorInstance(
                 slug: slug,
                 projectPath: project,
                 session: session,
@@ -251,7 +251,6 @@ actor SupervisorClient {
                 awaitingUntil: awaiting.map { Date(timeIntervalSince1970: $0) },
                 awaitingReason: awaitingReason,
                 reviewProgress: reviewProgress,
-                reviewVerdict: reviewVerdict,
                 auditState: auditState,
                 reviewActive: reviewActive,
                 reviewStage: reviewStage,
@@ -269,6 +268,8 @@ actor SupervisorClient {
                 failedMessageIDs: failed.ids,
                 codexArtifacts: codexArtifacts,
                 pendingFiles: pendingFiles,
+                owesWork: owesWork(dir, slug: slug, pendingFiles: pendingFiles),
+                directorStopped: fm.fileExists(atPath: dir.appendingPathComponent("director-stopped").path),
                 peerClaude: peerClaude,
                 peerCodex: peerCodex,
                 hasPlan: fm.fileExists(atPath: dir.appendingPathComponent("plan.md").path),
@@ -283,13 +284,29 @@ actor SupervisorClient {
                 frozenRecovery: frozen,
                 offline: offline,
                 offlineSince: offlineSince,
-                injectFailure: injected?.reason,
-                injectFailureDispatchID: injected?.dispatch,
                 dispatch: dispatch,
                 finishedDispatches: finishedDispatches)
+            inst.permissionWaitSince = readJSONNumber(dir.appendingPathComponent("permission-wait.json"), key: "at")
+                .map { Date(timeIntervalSince1970: $0) }
+            inst.screenWaitSince = readJSONNumber(dir.appendingPathComponent("screen-wait.json"), key: "at")
+                .map { Date(timeIntervalSince1970: $0) }
             result.append(inst)
         }
         return result.sorted { ($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast) }
+    }
+
+    /// The engine's `instance_owes_work`, read the same way: the markers of a limit, a review, a
+    /// resume, a held dispatch, messages accepted and not delivered.
+    private func owesWork(_ dir: URL, slug: String, pendingFiles: Int) -> Bool {
+        let fm = FileManager.default
+        if ["paused-for-limit.json", "review-pending", "resume-pending"]
+            .contains(where: { fm.fileExists(atPath: dir.appendingPathComponent($0).path) }) { return true }
+        func nonEmpty(_ url: URL) -> Bool {
+            ((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > 0
+        }
+        if nonEmpty(dir.appendingPathComponent("dispatch-held.json")) { return true }
+        if nonEmpty(paths.stateDir.appendingPathComponent("undelivered/\(slug)/undelivered.jsonl")) { return true }
+        return pendingFiles > 0
     }
 
     /// A frozen turn the watchdog is restarting (`hung-recovery.json`, still open), or one it gave
@@ -679,17 +696,6 @@ actor SupervisorClient {
                               chat: obj["chat"] as? Bool ?? false)
     }
 
-    private func readInjectFailure(_ url: URL) -> (reason: String, dispatch: String?)? {
-        guard fm.fileExists(atPath: url.path) else { return nil }
-        guard let data = try? Data(contentsOf: url),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return (String(localized: "The task never reached the worker"), nil)
-        }
-        let reason = (obj["reason"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (reason?.isEmpty == false ? reason! : String(localized: "The task never reached the worker"),
-                obj["dispatch"] as? String)
-    }
-
     private func readFinishedDispatches(_ dir: URL) -> [DispatchRecord] {
         guard let names = try? fm.contentsOfDirectory(atPath: dir.path) else { return [] }
         var out: [DispatchRecord] = []
@@ -704,12 +710,64 @@ actor SupervisorClient {
         return out.sorted { ($0.finishedAt ?? .distantPast) < ($1.finishedAt ?? .distantPast) }
     }
 
-    func answerUserQuestion(slug: String, answer: String) {
+    /// What became of an answer handed to the engine's hook.
+    nonisolated enum HookAnswer: Equatable, Sendable {
+        /// The hook took it: the worker goes on with it.
+        case taken
+        /// Nothing took it — the question had ended, or ended while the answer was on its way.
+        case late
+    }
+
+    /// How long an answer waits for the hook's receipt. The hook looks five times a second for
+    /// its first half minute and every two seconds after that. Tests shorten it.
+    var answerPickup: Duration = .seconds(6)
+    func setAnswerPickup(_ wait: Duration) { answerPickup = wait }
+
+    /// Hands the director's answer to the hook holding the question, and says whether it took it.
+    ///
+    /// At its deadline the hook takes the safe default and removes `ask-user.json`. An answer
+    /// written after that was read by nobody — and so was one written a moment before it, between
+    /// the hook's last look and its deadline, while the app had already said "sent". So the answer
+    /// carries an id, the hook claims it by renaming the file and leaves a receipt naming that id
+    /// (`answer-taken.json`), and the app waits for the receipt. With no receipt it takes the file
+    /// back by renaming it itself. Of two renames of one file only one succeeds, so the answer is
+    /// the hook's or the chat's (`AppModel.deliverLateAnswer`) — never lost, never both.
+    func answerUserQuestion(slug: String, answer: String) async -> HookAnswer {
         let dir = paths.instanceDir(slug: slug)
-        guard fm.fileExists(atPath: dir.path) else { return }
-        let payload: [String: Any] = ["answer": answer, "answered_at": Date().timeIntervalSince1970]
-        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
-        try? data.write(to: dir.appendingPathComponent("answer.json"), options: .atomic)
+        let ask = dir.appendingPathComponent("ask-user.json")
+        let file = dir.appendingPathComponent("answer.json")
+        let receipt = dir.appendingPathComponent("answer-taken.json")
+        guard fm.fileExists(atPath: ask.path) else { return .late }
+        let id = UUID().uuidString
+        let payload: [String: Any] = ["answer": answer, "answered_at": Date().timeIntervalSince1970, "id": id]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              (try? data.write(to: file, options: .atomic)) != nil else { return .late }
+
+        let clock = ContinuousClock()
+        let deadline = clock.now + answerPickup
+        while !receiptNames(id, receipt) {
+            if fm.fileExists(atPath: ask.path), clock.now < deadline {
+                try? await Task.sleep(for: .milliseconds(100))
+                continue
+            }
+            // The question is gone, or the hook did not look in time: the file is taken back if it
+            // is still there. If it is not, the hook got there first — its receipt follows the
+            // rename by a moment.
+            let back = dir.appendingPathComponent("answer.withdrawn-\(id).json")
+            if (try? fm.moveItem(at: file, to: back)) != nil {
+                try? fm.removeItem(at: back)
+                return .late
+            }
+            for _ in 0..<20 where !receiptNames(id, receipt) { try? await Task.sleep(for: .milliseconds(50)) }
+            return receiptNames(id, receipt) ? .taken : .late
+        }
+        return .taken
+    }
+
+    private func receiptNames(_ id: String, _ receipt: URL) -> Bool {
+        guard let data = try? Data(contentsOf: receipt),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        return obj["id"] as? String == id
     }
 
     func writeAskUserConfig(enabled: Bool, waitSeconds: Int) {
@@ -746,23 +804,6 @@ actor SupervisorClient {
     }
 
     // MARK: - Findings channel (§8.4 / §10.3)
-
-    func ingestFindings(slug: String, projectPath: String) -> [Finding] {
-        let url = paths.instanceDir(slug: slug).appendingPathComponent("findings.jsonl")
-        guard let raw = try? String(contentsOf: url, encoding: .utf8) else { return [] }
-        var out: [Finding] = []
-        for line in raw.split(separator: "\n", omittingEmptySubsequences: true) {
-            guard let d = line.data(using: .utf8),
-                  let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
-                  let text = (obj["text"] as? String), !text.isEmpty else { continue }
-            let cls = (obj["class"] as? String) ?? "finding"
-            out.append(Finding(cls: cls,
-                               text: text,
-                               cwd: (obj["cwd"] as? String) ?? projectPath,
-                               timestamp: obj["ts"] as? String))
-        }
-        return out
-    }
 
     func reviewReason(slug: String) -> String? {
         let url = paths.instanceDir(slug: slug)
@@ -841,12 +882,6 @@ actor SupervisorClient {
 
     // MARK: - tmux
 
-    func tmuxSessions() async -> Set<String> {
-        let r = await Shell.run("tmux list-sessions -F '#{session_name}' 2>/dev/null || true", timeout: 10)
-        guard r.launched else { return [] }
-        return Set(r.stdout.split(separator: "\n").map(String.init).filter { !$0.isEmpty })
-    }
-
     @discardableResult
     func reapAbandonedTemporarySessions() async -> Int {
         let result = await Shell.run(
@@ -906,6 +941,67 @@ actor SupervisorClient {
         await Shell.run("\(nightShiftCmd) allow-git \"$1\" 2>&1", args: [projectPath], timeout: 60)
     }
 
+    /// The folder's uncommitted work, as a start would ask about it. Read-only on the engine's side:
+    /// no index refresh and no lock, so it is safe to call while the director works in another tool.
+    func dirtyState(projectPath: String) async -> DirtyTree? {
+        let r = await Shell.run("\(nightShiftCmd) dirty-state \"$1\" 2>/dev/null", args: [projectPath], timeout: 30)
+        guard r.launched, r.exitCode == 0 else { return nil }
+        return DirtyTree.parse(r.stdout)
+    }
+
+    /// What «Commit as me» would commit, staged in a throwaway index and checked for secrets — and,
+    /// only when nothing looked like one, the diff for a model to title (`night-shift commit-preview`).
+    func commitPreview(projectPath: String) async -> CommitPreview? {
+        let r = await Shell.run("\(nightShiftCmd) commit-preview \"$1\" 2>/dev/null", args: [projectPath], timeout: 60)
+        guard r.launched, r.exitCode == 0 else { return nil }
+        return CommitPreview.parse(r.stdout)
+    }
+
+    /// The files the last start in this folder could not checkpoint (exit 79), as the engine wrote
+    /// them down at that moment — not counted again, so the answer goes to the list on the screen.
+    func heavyFiles(projectPath: String) async -> HeavyFiles? {
+        let r = await Shell.run("\(nightShiftCmd) heavy-state \"$1\" 2>/dev/null", args: [projectPath], timeout: 30)
+        guard r.launched, r.exitCode == 0 else { return nil }
+        return HeavyFiles.parse(r.stdout)
+    }
+
+    /// Leave that list's untracked files out of checkpoints here. The engine applies it to its own
+    /// record of the list; tracked files are reported back, and no file is moved or deleted.
+    @discardableResult
+    func leaveOutOfCheckpoints(projectPath: String, rule: HeavyFilesRule) async -> CommandResult {
+        await Shell.run("\(nightShiftCmd) heavy-exclude \"$1\" \"$2\" 2>&1",
+                        args: [projectPath, rule.rawValue], timeout: 30)
+    }
+
+    /// The project's own MCP servers (`.mcp.json`) that Claude has not been told about yet — the
+    /// ones it would stop to ask about before its session starts.
+    func pendingMcpServers(projectPath: String) async -> [String]? {
+        let r = await Shell.run("\(nightShiftCmd) mcp-state \"$1\" 2>/dev/null", args: [projectPath], timeout: 30)
+        guard r.launched, r.exitCode == 0,
+              let line = r.stdout.split(whereSeparator: \.isNewline).last,
+              let data = String(line).data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let pending = object["pending"] as? [String] else { return nil }
+        return pending
+    }
+
+    /// The director's answer about those servers. Kept by the engine and handed to each worker in
+    /// its settings; nothing is written into the project.
+    @discardableResult
+    func decideMcp(projectPath: String, enable: Bool) async -> CommandResult {
+        await Shell.run("\(nightShiftCmd) mcp-decide \"$1\" \"$2\" 2>&1",
+                        args: [projectPath, enable ? "enable" : "skip"], timeout: 30)
+    }
+
+    /// His answers about one folder's MCP servers, given again for its copy. Approvals are kept per
+    /// exact path, so a fresh copy would otherwise stop at the start to ask them again — at night,
+    /// where nobody answers. Nothing decided means nothing written.
+    @discardableResult
+    func carryMcpDecisions(from source: String, to copy: String) async -> CommandResult {
+        await Shell.run("\(nightShiftCmd) mcp-carry \"$1\" \"$2\" 2>&1",
+                        args: [source, copy], timeout: 30)
+    }
+
     @discardableResult
     func startNightShift(project: String, strategy: RunStrategy = .standing) async -> CommandResult {
         await Shell.run("\(nightShiftCmd) start \"$1\" --no-attach 2>&1", args: [project],
@@ -923,9 +1019,17 @@ actor SupervisorClient {
         return e
     }
 
+    /// The questions a start can stop on that this build answers with buttons: 76 (git here), 77
+    /// (uncommitted work), 78 (a project's MCP servers) and 79 (files too big to checkpoint). The
+    /// engine is updated on its own and can be newer than the app; for a question this list does not
+    /// name it tells the reader the app is out of date, in words, and for one it does name it never
+    /// prints a terminal's flags either.
+    nonisolated static let questionsAnswered = "dirty mcp git heavy"
+
     static func launchEnv(_ strategy: RunStrategy) -> [String: String] {
         var env = effortEnv(claude: strategy.claudeEffort, codex: strategy.codexEffort,
                             claudeModel: strategy.claudeModel, codexModel: strategy.codexModel)
+        env["SUPERVISOR_APP_ANSWERS"] = questionsAnswered
 
         if !strategy.reportLanguage.isEmpty {
             env["SUPERVISOR_REPORT_LANGUAGE"] = strategy.reportLanguage
@@ -945,12 +1049,15 @@ actor SupervisorClient {
     func dispatchConcurrent(project: String, task: String, runspec: RunSpec? = nil,
                             strategy: RunStrategy = .standing,
                             reportKey: String? = nil,
-                            dispatchID: String? = nil) async -> CommandResult {
+                            dispatchID: String? = nil,
+                            dirty: DirtyTreeChoice? = nil) async -> CommandResult {
         guard let dispatchCmd else {
             return CommandResult(stdout: "", stderr: "concurrent dispatch unavailable", exitCode: -1, launched: false)
         }
 
-        let env = Self.launchEnv(strategy)
+        var env = Self.launchEnv(strategy)
+        // Reaches `night-shift start` through dispatch.sh's environment, for this one start.
+        if let dirty { env.merge(dirty.env) { _, new in new } }
 
         var keyArgs = reportKey.map { "--report-key \"\($0)\" " } ?? ""
         if let dispatchID, !dispatchID.isEmpty { keyArgs += "--dispatch-id \"\(dispatchID)\" " }
@@ -1004,28 +1111,6 @@ actor SupervisorClient {
 
         await Shell.run("\(nightQueueCmd) run 2>&1",
                         extraEnv: Self.launchEnv(strategy), timeout: 30)
-    }
-
-    @discardableResult
-    func queueStop() async -> CommandResult {
-        await Shell.run("\(nightQueueCmd) stop 2>&1", timeout: 30)
-    }
-
-    @discardableResult
-    func queueRemove(number: Int) async -> CommandResult {
-        await Shell.run("\(nightQueueCmd) remove \"$1\" 2>&1", args: [String(number)], timeout: 30)
-    }
-
-    @discardableResult
-    func queueClear() async -> CommandResult {
-        await Shell.run("\(nightQueueCmd) clear 2>&1", timeout: 30)
-    }
-
-    @discardableResult
-    func queueKillRunner() async -> CommandResult {
-        await Shell.run("""
-        pid=$(cat "$1" 2>/dev/null); [ -n "$pid" ] && kill "$pid" 2>/dev/null; echo ok
-        """, args: [paths.queueRunnerPID.path], timeout: 15)
     }
 
     // MARK: - Small file readers
@@ -1082,28 +1167,6 @@ actor SupervisorClient {
                               previousFindings: (o["prev_findings"] as? NSNumber)?.intValue,
                               stall: (o["stall"] as? NSNumber)?.intValue,
                               stallLimit: (o["stall_limit"] as? NSNumber)?.intValue)
-    }
-
-    func readReviewVerdictForTesting(_ url: URL) -> ReviewVerdict? { readReviewVerdict(url) }
-
-    private func readReviewVerdict(_ url: URL) -> ReviewVerdict? {
-        guard let d = try? Data(contentsOf: url),
-              let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return nil }
-        let text = (o["findings"] as? String) ?? ""
-
-        let body = text.split(separator: "\n", omittingEmptySubsequences: false)
-            .drop { line in
-                let l = line.trimmingCharacters(in: .whitespaces).uppercased()
-                return l.isEmpty || l.hasPrefix("STATE:") || l.hasPrefix("VERDICT:")
-            }
-            .joined(separator: "\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return ReviewVerdict(state: (o["state"] as? String) ?? "",
-                             verdict: (o["verdict"] as? String) ?? "",
-                             disposition: (o["disposition"] as? String) ?? "",
-                             round: (o["round"] as? NSNumber)?.intValue ?? 0,
-                             findings: body,
-                             at: (o["ts"] as? String) ?? "")
     }
 
     private func readJSONString(_ url: URL, key: String) -> String? {

@@ -153,10 +153,8 @@ nonisolated final class SkillsPanelRenderTests: XCTestCase {
     }
 
     @MainActor func testTheLibraryWithServers() {
-        check(VStack(alignment: .leading, spacing: 11) {
-            SkillStats(inventory: inventory(), mcp: servers())
-            SkillLibraryContent(inventory: inventory(), mcp: servers())
-        }, "library-with-mcp", minHeight: 300, width: 560)
+        check(SkillLibraryContent(inventory: inventory(), mcp: servers()),
+              "library-with-mcp", minHeight: 300, width: 560)
     }
 
     @MainActor func testTheShelfBeforeTheNumbers() {
@@ -192,10 +190,7 @@ nonisolated final class SkillsPanelRenderTests: XCTestCase {
     }
 
     @MainActor func testTheLibraryGroupsByScope() {
-        check(VStack(alignment: .leading, spacing: 11) {
-            SkillStats(inventory: inventory())
-            SkillLibraryContent(inventory: inventory())
-        }, "library", minHeight: 200, width: 560)
+        check(SkillLibraryContent(inventory: inventory()), "library", minHeight: 200, width: 560)
     }
 
     @MainActor func testTheLibraryWithNothingMatchingTheFilter() {

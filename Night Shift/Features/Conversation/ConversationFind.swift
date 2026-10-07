@@ -1,5 +1,4 @@
 import SwiftUI
-import MarkdownUI
 
 // MARK: - A place the phrase can be shown in
 
@@ -32,8 +31,8 @@ nonisolated struct FindPlace: Identifiable, Equatable, Sendable {
     /// This place is folded away by default, so arriving at it has to open it.
     var opensBlock: Bool
 
-    /// The occurrence is inside rendered Markdown, where the leaf that holds it — a paragraph, a
-    /// heading, a code block — puts down its own anchor.
+    /// The occurrence is inside rendered Markdown, where the text view that holds it puts down
+    /// its own anchor, at the height the phrase is drawn at.
     var inProse: Bool = false
 
     /// Stable across a rebuild, which is what keeps the reader on the same result while an answer
@@ -73,8 +72,8 @@ nonisolated enum ConversationFind {
         return "find.block.\(entry.uuidString).\(block)"
     }
 
-    /// The anchor a single occurrence inside rendered Markdown puts down, laid by the paragraph
-    /// that holds it.
+    /// The anchor a single occurrence inside rendered Markdown puts down, laid by the text view
+    /// that holds it at the height the phrase is drawn at.
     static func proseAnchor(entry: UUID, block: String?, occurrence: Int) -> String {
         "\(anchor(entry: entry, block: block))@\(occurrence)"
     }
@@ -107,16 +106,22 @@ nonisolated enum ConversationFind {
     ///
     /// Searching the source instead was wrong in both directions: `**фраза**` was never found
     /// because of the asterisks between the letters, and `http` matched link destinations the
-    /// reader cannot see and could never be shown. This runs the same parser that draws the
-    /// prose, so the index and the page agree on what the words are.
+    /// reader cannot see and could never be shown. This is the very document `MarkdownProse`
+    /// draws — the words of its text views, without the list markers the renderer adds — so the
+    /// index and the page agree on what the words are, and on which occurrence is which.
     ///
-    /// Memoised because it is asked for every block of the thread on every keystroke, and again
-    /// on every chunk of a streaming answer.
+    /// Remembered by `ProseDocument`, because it is asked for every block of the thread on every
+    /// keystroke, and again on every chunk of a streaming answer.
+    ///
+    /// Kept apart from the documents themselves, in a memo of plain strings big enough for a long
+    /// thread: Find asks for every block of a thousand messages, the document cache holds a few
+    /// hundred, and a cache smaller than the question rebuilt every answer of the thread on every
+    /// chunk of a streaming one — over a second of the main thread each time.
     static func displayedText(ofMarkdown markdown: String) -> String {
-        if let cached = ProsePlainText.shared.value(for: markdown) { return cached }
-        let rendered = MarkdownContent(markdown).renderPlainText()
-        ProsePlainText.shared.store(rendered, for: markdown)
-        return rendered
+        if let known = DisplayedTextMemo.shared.value(for: markdown) { return known }
+        let shown = ProseDocument.make(markdown).displayed
+        DisplayedTextMemo.shared.store(shown, for: markdown)
+        return shown
     }
 
     /// Where the phrase appears in the thread, in the order it is read.
@@ -130,56 +135,72 @@ nonisolated enum ConversationFind {
     /// reduced to displayed words by `explainedText`. It is passed in rather than read here
     /// because explanations live in a store of their own, beside the conversation rather than in
     /// it, and this index is a pure function of what is on the page.
+    ///
+    /// Each message's places are remembered against the message as it was and the phrase, so a
+    /// streaming answer re-reads that answer alone — the thousand above it have not changed.
     static func places(in entries: [ConversationEntry], query: String,
                        explained: [UUID: String] = [:]) -> [FindPlace] {
         guard !query.isEmpty else { return [] }
         var out: [FindPlace] = []
-
         for entry in entries {
-            switch entry.kind {
-
-            // A question card is assembled out of the decision it carries, not out of `blocks`.
-            case .question:
-                let count = mentions(in: questionText(entry), query: query)
-                if count > 0 {
-                    out.append(FindPlace(entryID: entry.id, blockID: nil, mark: .whole,
-                                         mentions: count, opensBlock: false))
-                }
-
-            case .user, .foreman, .codex:
-                let blocks = entry.blocks.renderable
-                if !blocks.isEmpty {
-                    for block in blocks {
-                        out += places(for: block, in: entry.id, query: query)
-                    }
-                } else if entry.kind == .user {
-                    // His own message is an ordinary `Text` the app builds, so every occurrence
-                    // can be marked where it stands.
-                    for occurrence in ranges(in: entry.text, query: query).indices {
-                        out.append(FindPlace(entryID: entry.id, blockID: nil,
-                                             mark: .range(occurrence: occurrence),
-                                             mentions: 1, opensBlock: false))
-                    }
-                } else {
-                    out += prosePlaces(entryID: entry.id, blockID: nil,
-                                       markdown: entry.text, query: query)
-                }
-
-            // `visibleEntries(inChat:)` never hands these over — they are not on screen.
-            case .task, .report, .decision, .event:
+            let panel = explained[entry.id]
+            if let known = EntryPlacesMemo.shared.value(for: entry, query: query, explained: panel) {
+                out += known
                 continue
             }
+            let found = places(in: entry, query: query, explained: panel)
+            EntryPlacesMemo.shared.store(found, for: entry, query: query, explained: panel)
+            out += found
+        }
+        return out
+    }
 
-            // The explanation panel is drawn under everything else in the turn, so it is read —
-            // and found — last. One `.whole` result for the whole panel rather than one per
-            // paragraph: the reader can fold it away, and a jump has to land on something that
-            // is on screen.
-            if let text = explained[entry.id] {
-                let count = mentions(in: text, query: query)
-                if count > 0 {
-                    out.append(FindPlace(entryID: entry.id, blockID: explainBlock, mark: .whole,
-                                         mentions: count, opensBlock: true))
+    private static func places(in entry: ConversationEntry, query: String,
+                               explained panel: String?) -> [FindPlace] {
+        var out: [FindPlace] = []
+        switch entry.kind {
+
+        // A question card is assembled out of the decision it carries, not out of `blocks`.
+        case .question:
+            let count = mentions(in: questionText(entry), query: query)
+            if count > 0 {
+                out.append(FindPlace(entryID: entry.id, blockID: nil, mark: .whole,
+                                     mentions: count, opensBlock: false))
+            }
+
+        case .user, .foreman, .codex:
+            let blocks = entry.blocks.renderable
+            if !blocks.isEmpty {
+                for block in blocks {
+                    out += places(for: block, in: entry.id, query: query)
                 }
+            } else if entry.kind == .user {
+                // His own message is an ordinary `Text` the app builds, so every occurrence
+                // can be marked where it stands.
+                for occurrence in ranges(in: entry.text, query: query).indices {
+                    out.append(FindPlace(entryID: entry.id, blockID: nil,
+                                         mark: .range(occurrence: occurrence),
+                                         mentions: 1, opensBlock: false))
+                }
+            } else {
+                out += prosePlaces(entryID: entry.id, blockID: nil,
+                                   markdown: entry.text, query: query)
+            }
+
+        // `visibleEntries(inChat:)` never hands these over — they are not on screen.
+        case .task, .report, .decision, .event:
+            return []
+        }
+
+        // The explanation panel is drawn under everything else in the turn, so it is read —
+        // and found — last. One `.whole` result for the whole panel rather than one per
+        // paragraph: the reader can fold it away, and a jump has to land on something that
+        // is on screen.
+        if let text = panel {
+            let count = mentions(in: text, query: query)
+            if count > 0 {
+                out.append(FindPlace(entryID: entry.id, blockID: explainBlock, mark: .whole,
+                                     mentions: count, opensBlock: true))
             }
         }
         return out
@@ -211,8 +232,8 @@ nonisolated enum ConversationFind {
             .joined(separator: "\n")
     }
 
-    /// One result per occurrence in what the Markdown puts on screen. The paragraph that holds
-    /// each one marks the phrase itself and lays down its own anchor; see `MarkdownProse`.
+    /// One result per occurrence in what the Markdown puts on screen. The text that holds each
+    /// one marks the phrase itself and lays down its own anchor; see `MarkdownProse`.
     private static func prosePlaces(entryID: UUID, blockID: String?,
                                     markdown: String, query: String) -> [FindPlace] {
         let shown = displayedText(ofMarkdown: markdown)
@@ -253,42 +274,6 @@ nonisolated enum ConversationFind {
         // said. Searching them would fill the counter with results nobody was looking for.
         case .activity, .file, .gallery:
             return []
-        }
-    }
-}
-
-// MARK: - What the Markdown puts on screen, remembered
-
-/// A small memo of Markdown source → the words it draws.
-///
-/// Running cmark over the whole thread on every keystroke, and again on every chunk of a
-/// streaming answer, is the one thing in this feature that could be felt. Answers do not change
-/// once they are finished, so the same source is asked for over and over and the answer is always
-/// the same.
-nonisolated private final class ProsePlainText: @unchecked Sendable {
-    static let shared = ProsePlainText()
-
-    /// Enough for a long thread; past that the oldest half goes, which is cheaper than tracking
-    /// use order for something that costs a millisecond to recompute.
-    private static let capacity = 600
-
-    private let lock = NSLock()
-    private var memo: [String: String] = [:]
-    private var order: [String] = []
-
-    func value(for source: String) -> String? {
-        lock.lock(); defer { lock.unlock() }
-        return memo[source]
-    }
-
-    func store(_ rendered: String, for source: String) {
-        lock.lock(); defer { lock.unlock() }
-        if memo.updateValue(rendered, forKey: source) == nil {
-            order.append(source)
-            if order.count > Self.capacity {
-                for key in order.prefix(Self.capacity / 2) { memo[key] = nil }
-                order.removeFirst(Self.capacity / 2)
-            }
         }
     }
 }
@@ -409,9 +394,9 @@ nonisolated struct FindMark: Equatable, Sendable {
     /// What a piece of rendered Markdown needs in order to mark the phrase inside itself, or nil
     /// when nothing is being searched for.
     ///
-    /// The whole prose's displayed words come along, because a paragraph on its own cannot tell
-    /// WHICH occurrence in the answer it is holding, and that is what decides whether it draws
-    /// the one the reader is standing on.
+    /// `MarkdownProse` numbers the occurrences across the whole answer itself — its document is
+    /// the very text `displayedText` returns — so `activeOccurrence` is all it needs to draw the
+    /// one the reader is standing on.
     func prose(entry: UUID, block: String? = nil, markdown: String) -> ProseFind? {
         guard searching else { return nil }
         let shown = ConversationFind.displayedText(ofMarkdown: markdown)
@@ -438,28 +423,6 @@ nonisolated struct ProseFind: Equatable, Sendable {
     /// Which occurrence in `displayed` the reader was taken to, or nil when the one they are on
     /// is somewhere else in the thread.
     var activeOccurrence: Int?
-
-    /// How many occurrences come before this leaf, so a paragraph knows which of the answer's
-    /// results it is holding.
-    ///
-    /// Returns nil when the leaf cannot be placed: two paragraphs word for word the same, with
-    /// a different number of results before each, cannot tell which of them this one is. It then
-    /// marks its own matches without claiming any of them is the active one — a quieter answer
-    /// than pointing at the wrong line.
-    func occurrencesBefore(leaf: String) -> Int? {
-        guard !leaf.isEmpty else { return nil }
-        var counts: Set<Int> = []
-        var from = displayed.startIndex
-        while from < displayed.endIndex,
-              let at = displayed.range(of: leaf, range: from..<displayed.endIndex) {
-            counts.insert(ConversationFind.mentions(in: String(displayed[..<at.lowerBound]),
-                                                    query: query))
-            if counts.count > 1 { return nil }
-            from = at.upperBound > at.lowerBound ? at.upperBound
-                                                 : displayed.index(after: at.lowerBound)
-        }
-        return counts.first
-    }
 }
 
 private struct FindMarkKey: EnvironmentKey {
@@ -545,5 +508,50 @@ extension View {
     /// lands on the paragraph rather than on the top of a three-page answer.
     func findAnchor(entry: UUID, block: String? = nil) -> some View {
         id(ConversationFind.anchor(entry: entry, block: block))
+    }
+}
+
+// MARK: - Remembered
+
+/// What a piece of Markdown shows, as plain words — see `ConversationFind.displayedText`.
+nonisolated private final class DisplayedTextMemo: @unchecked Sendable {
+    static let shared = DisplayedTextMemo()
+    private static let capacity = 8_000
+    private let lock = NSLock()
+    private var memo: [String: String] = [:]
+
+    func value(for markdown: String) -> String? {
+        lock.lock(); defer { lock.unlock() }
+        return memo[markdown]
+    }
+
+    func store(_ shown: String, for markdown: String) {
+        lock.lock(); defer { lock.unlock() }
+        if memo.count >= Self.capacity { memo.removeAll(keepingCapacity: true) }
+        memo[markdown] = shown
+    }
+}
+
+/// One message's results for one phrase, kept with the message they were read from: a message
+/// that has changed since — the answer still streaming — is not one they belong to.
+nonisolated private final class EntryPlacesMemo: @unchecked Sendable {
+    static let shared = EntryPlacesMemo()
+    private static let capacity = 8_000
+    private struct Key: Hashable { var entry: UUID; var query: String }
+    private struct Kept { var entry: ConversationEntry; var explained: String?; var places: [FindPlace] }
+    private let lock = NSLock()
+    private var memo: [Key: Kept] = [:]
+
+    func value(for entry: ConversationEntry, query: String, explained: String?) -> [FindPlace]? {
+        lock.lock(); defer { lock.unlock() }
+        guard let kept = memo[Key(entry: entry.id, query: query)],
+              kept.explained == explained, kept.entry == entry else { return nil }
+        return kept.places
+    }
+
+    func store(_ places: [FindPlace], for entry: ConversationEntry, query: String, explained: String?) {
+        lock.lock(); defer { lock.unlock() }
+        if memo.count >= Self.capacity { memo.removeAll(keepingCapacity: true) }
+        memo[Key(entry: entry.id, query: query)] = Kept(entry: entry, explained: explained, places: places)
     }
 }

@@ -235,8 +235,8 @@ if [ "$decision" = "ask" ] && [ -n "$IDIR" ] && [ -d "$IDIR" ]; then
     [ "$_degraded_wait" -lt "$ASK_WAIT" ] && ASK_WAIT="$_degraded_wait"
   fi
   if [ "${ASK_ENABLE:-1}" = 1 ] && [ "${ASK_WAIT:-0}" -gt 0 ]; then
-    ASKFILE="$IDIR/ask-user.json"; ANSFILE="$IDIR/answer.json"
-    rm -f "$ANSFILE"
+    ASKFILE="$IDIR/ask-user.json"; ANSFILE="$IDIR/answer.json"; TAKEN="$IDIR/answer-taken.json"
+    rm -f "$ANSFILE" "$TAKEN"
     ask_session="$(cat "$IDIR/session" 2>/dev/null || true)"
     shaped="$(echo "$questions" | jq -c '[.[] | {
       question:(.question//""), header:(.header//""), multiSelect:(.multiSelect//false),
@@ -276,9 +276,16 @@ if [ "$decision" = "ask" ] && [ -n "$IDIR" ] && [ -d "$IDIR" ]; then
     started="$(date +%s)"
     deadline=$(( started + ASK_WAIT ))
     while [ "$(date +%s)" -lt "$deadline" ]; do
-      if [ -f "$ANSFILE" ]; then
-        user_answer="$(jq -r '.answer // empty' "$ANSFILE" 2>/dev/null)"
-        rm -f "$ANSFILE" "$ASKFILE" "$AWAITING"; trap - EXIT
+      # Claimed by renaming it, not merely read. At the deadline Bulava may be taking the very same
+      # file back to send the answer to the chat instead, and of two renames of one file only one
+      # succeeds: an answer is the hook's or the chat's, never lost between them and never both.
+      # The receipt names the answer taken, so Bulava knows it was this one and not an older file.
+      claimed="$ANSFILE.taken.$$"
+      if [ -f "$ANSFILE" ] && mv "$ANSFILE" "$claimed" 2>/dev/null; then
+        user_answer="$(jq -r '.answer // empty' "$claimed" 2>/dev/null)"
+        jq -nc --arg id "$(jq -r '.id // empty' "$claimed" 2>/dev/null)" --argjson at "$(date +%s)" \
+          '{id:$id, taken_at:$at}' > "$TAKEN.tmp" 2>/dev/null && mv -f "$TAKEN.tmp" "$TAKEN"
+        rm -f "$claimed" "$ASKFILE" "$AWAITING"; trap - EXIT
         if [ -n "$user_answer" ]; then
           echo "$(date '+%F %T') DIRECTOR DECIDED: $(echo "$user_answer" | head -c 300)" >> "$LOG"
           answer="🌙 Директор (Іван) вирішив особисто:

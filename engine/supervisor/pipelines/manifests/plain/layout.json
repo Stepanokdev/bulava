@@ -1,0 +1,8 @@
+{
+  "schema": "bulava.layout/1",
+  "nodes": {
+    "chat": { "x": 0, "y": 0 }, "compose": { "x": 230, "y": 0 },
+    "deliver": { "x": 0, "y": 200 }, "scope": { "x": 230, "y": 200 }, "verify": { "x": 460, "y": 200 },
+    "review": { "x": 690, "y": 200 }, "report": { "x": 920, "y": 160 }, "merge": { "x": 920, "y": 260 }
+  }
+}

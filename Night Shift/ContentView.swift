@@ -38,7 +38,10 @@ struct RootView: View {
             let inspectorWidth = showsInspector ? Metrics.inspectorWidth : 0
 
             ZStack(alignment: .trailing) {
-                DetailSurface()
+                // The route is handed in, not read again inside: the screen and the window title
+                // then come from one reading of it. Read separately, they were seen to disagree —
+                // the title on the new screen, the old conversation still under it.
+                DetailSurface(route: model.route)
                     .frame(width: max(0, geometry.size.width - inspectorWidth),
                            height: geometry.size.height)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -62,7 +65,6 @@ struct RootView: View {
 
         func body(content: Content) -> some View {
             content
-                .overlay(alignment: .bottom) { ToastLayer() }
                 .overlay { if model.searchPresented { CommandPalette() } }
                 .overlay { galleryLayer }
                 .overlay { reportLayer }
@@ -71,7 +73,9 @@ struct RootView: View {
                     WebPreview(url: item.url) { model.webPreview = nil }
                 }
                 .modifier(Sheets())
-                .animation(Motion.snappy, value: model.toast)
+                // Above the report and the gallery: a card that says a save failed must not be
+                // hidden by the very document whose save failed.
+                .overlay(alignment: .topTrailing) { ToastStackView().zIndex(11) }
                 .animation(Motion.surface, value: model.reportViewer)
         }
 
@@ -99,6 +103,11 @@ struct RootView: View {
 
         func body(content: Content) -> some View {
             content
+                .sheet(item: Binding(get: { model.automationEditor },
+                                     set: { model.automationEditor = $0 })) { request in
+                    // A new request while the sheet is up is a new form, not the last one's state.
+                    AutomationEditor(request: request).id(request.id)
+                }
                 .sheet(item: Binding(get: { model.productSheet },
                                      set: { if $0 == nil { model.productSheet = nil } })) { mode in
                     AddProductSheet(mode: mode)
@@ -129,31 +138,8 @@ struct RootView: View {
                 } message: { ask in
                     Text(verbatim: ask.folder)
                 }
-        }
-    }
-
-    private struct ToastLayer: View {
-        @Environment(AppModel.self) private var model
-
-        var body: some View {
-            if let toast = model.toast {
-                ToastView(toast: toast)
-                    .padding(.bottom, 26)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-
-                    .onTapGesture {
-                        withAnimation(Motion.snappy) {
-                            if model.toast?.id == toast.id { model.toast = nil }
-                        }
-                    }
-                    .task(id: toast.id) {
-                        guard toast.kind != .error else { return }
-                        try? await _Concurrency.Task.sleep(for: .seconds(3.2))
-                        withAnimation(Motion.snappy) {
-                            if model.toast?.id == toast.id { model.toast = nil }
-                        }
-                    }
-            }
+                .modifier(DirtyTreePrompts())
+                .modifier(McpPrompts())
         }
     }
 
@@ -164,6 +150,10 @@ struct RootView: View {
         case .product: model.selectedProduct?.name ?? String(localized: "Bulava")
         case .products: String(localized: "Products")
         case .skills: String(localized: "Skills")
+        case .automations: String(localized: "Automations")
+        case .automation(let id): model.automations.automation(id: id)?.name ?? String(localized: "Automations")
+        case .pipelines: String(localized: "Pipelines")
+        case .pipeline(let id): model.pipelineName(id)
         case .preflight: String(localized: "Ready to work")
         }
     }
@@ -177,6 +167,8 @@ struct RootView: View {
 
     @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
+            PhoneLinkButton()
+
             Button {
                 model.searchPresented = true
             } label: {
@@ -214,11 +206,12 @@ struct RootView: View {
 
 private struct DetailSurface: View {
     @Environment(AppModel.self) private var model
+    let route: Route
 
     var body: some View {
         ZStack {
             Palette.content.ignoresSafeArea()
-            switch model.route {
+            switch route {
             case .product(let id):
                 if model.products.product(id: id) != nil {
                     ConversationView(productID: id)
@@ -230,6 +223,20 @@ private struct DetailSurface: View {
                 AllProductsView()
             case .skills:
                 SkillsScreen()
+            case .automations:
+                AutomationsScreen()
+            case .automation(let id):
+                if model.automations.automation(id: id) != nil {
+                    AutomationDetailScreen(automationID: id)
+                        .id(id)
+                } else {
+                    AutomationsScreen()
+                }
+            case .pipelines:
+                PipelineLibraryScreen()
+            case .pipeline(let id):
+                PipelineEditorScreen(pipelineID: id)
+                    .id(id)
             case .preflight:
                 PreflightView()
             }
@@ -290,54 +297,6 @@ private struct ProductMenu: View {
         .menuIndicator(.hidden)
         .frame(width: Metrics.iconButton)
         .help(Text("Product actions"))
-    }
-}
-
-// MARK: - Toast
-
-struct ToastView: View {
-    let toast: ToastMessage
-
-    private var tint: Color {
-        switch toast.kind {
-        case .success: Palette.green
-        case .error: Palette.red
-        case .info: Palette.blue
-        }
-    }
-
-    private var symbol: String {
-        switch toast.kind {
-        case .success: "checkmark.circle.fill"
-        case .error: "exclamationmark.triangle.fill"
-        case .info: "info.circle.fill"
-        }
-    }
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: symbol)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(tint)
-            Text(toast.text)
-                .font(Typo.control)
-                .foregroundStyle(Palette.text)
-                .lineLimit(2)
-            if toast.kind == .error {
-                Text("Click to dismiss")
-                    .font(Typo.panelMeta)
-                    .foregroundStyle(Palette.textFaint)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(
-            Capsule(style: .continuous)
-                .fill(Palette.panel)
-                .overlay(Capsule(style: .continuous).strokeBorder(Palette.lineStrong, lineWidth: 1))
-        )
-        .floatingShadow()
-        .frame(maxWidth: 480)
     }
 }
 

@@ -38,6 +38,15 @@ nonisolated struct UsageWindow: Sendable, Equatable {
         let f = DateFormatter(); f.dateFormat = "HH:mm"
         return f.string(from: resetsAt)
     }
+
+    /// The share used as the sidebar shows it, 0…100 — or nil while there is nothing to show:
+    /// nothing used and no reset known, or a reset already passed, after which it starts over.
+    /// The phone is sent the same (`LinkProjection.limits`).
+    func shownPercent(now: Date = Date()) -> Int? {
+        guard usedPercent > 0 || resetsAt != nil else { return nil }
+        if let resetsAt, resetsAt <= now { return nil }
+        return min(100, max(0, Int(usedPercent.rounded())))
+    }
 }
 
 nonisolated struct UsageSnapshot: Sendable, Equatable {
@@ -49,6 +58,16 @@ nonisolated struct UsageSnapshot: Sendable, Equatable {
 
     static let empty = UsageSnapshot(fiveHour: UsageWindow(usedPercent: 0, resetsAt: nil),
                                      sevenDay: nil, plan: nil, updatedAt: nil, present: false)
+
+    /// The tightest of the windows shown — what the folded line in the sidebar gives.
+    func tightestShown(now: Date = Date()) -> Int? {
+        [fiveHour.shownPercent(now: now), sevenDay?.shownPercent(now: now)].compactMap { $0 }.max()
+    }
+
+    /// Read so long ago — over half an hour, or never — that the meters are dimmed.
+    func isStale(now: Date = Date()) -> Bool {
+        updatedAt.map { now.timeIntervalSince($0) > 1800 } ?? true
+    }
 
     // MARK: Decoding from the engine's JSON
 

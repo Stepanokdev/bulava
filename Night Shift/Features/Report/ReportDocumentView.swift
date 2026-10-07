@@ -14,6 +14,8 @@ struct ReportDocumentView: View {
     @State private var loading = true
 
     @State private var partID: UUID?
+    /// The report asks him to decide (`decisions.json` beside it): the choices are drawn beside it.
+    @State private var asksToDecide = false
 
     private var item: WorkItem? { model.workItems.item(id: viewer.itemID) }
     private var parts: [BacklogTask] { item.map { model.deliveredParts(of: $0) } ?? [] }
@@ -28,11 +30,19 @@ struct ReportDocumentView: View {
         VStack(spacing: 0) {
             toolbar
             if let blocker, !blocker.isEmpty { gateBanner(blocker) }
-            ReportWebView(url: viewer.htmlURL) { web = $0 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            HStack(spacing: 0) {
+                ReportWebView(url: viewer.htmlURL) { web = $0 }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if asksToDecide, !viewer.isVideo {
+                    DecisionPanel(report: viewer.htmlURL)
+                }
+            }
         }
         .background(Palette.content)
-        .task(id: viewer.htmlURL) { await load() }
+        .task(id: viewer.htmlURL) {
+            asksToDecide = DecisionSet.load(besides: viewer.htmlURL) != nil
+            await load()
+        }
         .task(id: task?.id) { await load() }
     }
 
@@ -102,12 +112,12 @@ struct ReportDocumentView: View {
                         action.perform(model)
                         if action.emphasis == .primary { model.closeReport() }
                     } label: {
-                        Label { Text(action.titleKey) } icon: { Image(systemName: action.symbol) }
+                        Label { Text(action.title) } icon: { Image(systemName: action.symbol) }
                             .labelStyle(.titleAndIcon)
                     }
                     .buttonStyle(.bulava(action.emphasis == .primary ? .primary : .secondary))
                     .disabled(action.disabledReason != nil)
-                    .help(action.disabledReason.map { Text($0) } ?? Text(action.titleKey))
+                    .help(action.disabledReason.map { Text($0) } ?? Text(action.title))
                 }
             }
         }
@@ -161,9 +171,40 @@ struct ReportDocumentView: View {
 
     // MARK: - PDF
 
+    /// The whole report on paper. Its pictures load lazily and a report may reveal parts of itself
+    /// as they scroll into view; the PDF used to be taken of the page as it stood, so a report never
+    /// scrolled to the end came out with empty frames. Every picture is loaded and decoded first —
+    /// that needs no scrolling — then the page is walked to the end, what the director had to do by
+    /// hand, for anything shown only once scrolled to, and put back where it was.
     private func exportPDF() {
         guard let web else { return }
         exporting = true
+        web.callAsyncJavaScript(Self.everythingOnPaper, arguments: [:], in: nil, in: .defaultClient) { _ in
+            renderPDF(web)
+        }
+    }
+
+    nonisolated static let everythingOnPaper = """
+    const root = document.scrollingElement || document.documentElement;
+    const start = root.scrollTop;
+    const pause = ms => new Promise(done => setTimeout(done, ms));
+    const decodeAll = async () => {
+        const pictures = Array.from(document.images);
+        for (const p of pictures) p.loading = 'eager';
+        await Promise.race([Promise.all(pictures.map(p => p.decode().catch(() => null))), pause(8000)]);
+        return pictures.length;
+    };
+    await decodeAll();
+    const step = Math.max(240, Math.floor(window.innerHeight * 0.8));
+    for (let y = 0; y < root.scrollHeight; y += step) { root.scrollTop = y; await pause(16); }
+    root.scrollTop = root.scrollHeight;
+    await pause(16);
+    const count = await decodeAll();
+    root.scrollTop = start;
+    return count;
+    """
+
+    private func renderPDF(_ web: WKWebView) {
         web.createPDF(configuration: WKPDFConfiguration()) { result in
             exporting = false
             guard case .success(let data) = result else {

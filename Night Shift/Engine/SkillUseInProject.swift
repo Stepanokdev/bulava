@@ -53,10 +53,15 @@ nonisolated struct SkillUseInProject: Sendable, Equatable {
             return []
         }
         let worktreeMark = "nightshift-worktrees"
+        // Bulava's own copies: `…-Library-Developer-Bulava-copies-pocket-ledger-3cc6def7`, named
+        // after the repository with its spaces turned into dashes.
+        let copiesMark = "-Library-Developer-Bulava-copies-"
+        let copyName = "-" + String(WorkCopies.sanitized(folder).map { $0.isLetter || $0.isNumber ? $0 : "-" }) + "-"
         return names.filter { name in
             if name == own { return true }
             // `…--nightshift-worktrees-pocket-ledger-3CC6DEF7`: a worktree of this repository.
-            return name.contains(worktreeMark) && name.contains("-\(folder)-")
+            if name.contains(worktreeMark) && name.contains("-\(folder)-") { return true }
+            return name.contains(copiesMark) && name.contains(copyName)
         }
         .sorted()
         .map { base.appendingPathComponent($0, isDirectory: true) }

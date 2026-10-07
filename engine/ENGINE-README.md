@@ -12,7 +12,7 @@ already pay for.
   past decisions and is not supposed to). The answer goes back to Claude as the final word.
 - **Does not let it stop with the work unfinished.** A Stop hook runs a Codex review against
   SPEC.md / the requirements. `VERDICT: FAIL` → Claude gets the list of defects and carries on.
-  Three rounds per session by default; what is left over goes to `REVIEW-DEBT.md`.
+  Three rounds per session by default; what is left over goes to the run's `review-debt.md`.
 - **Understands the phase (it does not block pauses).** If Claude is handing the turn back to
   you — asking a question, waiting for a login or a decision, in a validation or planning phase —
   the gate recognises that and **lets the stop through without a FAIL** (the cheap pre-check does
@@ -43,7 +43,7 @@ already pay for.
   looks irreversible is not done at all — the run ends as `blocked`, naming the one action that
   would unblock it. The status bar shows both: `5h: 42% | Cx: 5%`.
 - **Nothing finishes without Codex — and a threshold decides who waits.** A spent window no
-  longer writes the work off into `REVIEW-DEBT.md`: the gate parks the run and leaves the review
+  longer writes the work off as review debt: the gate parks the run and leaves the review
   as debt (`review-pending`). Less than a day to the reset — we wait in silence and the watchdog
   resumes the work itself. A day or more, an unknown reset, or a pause already over a day in total
   — and a `codex-decision.json` card comes up with two buttons: keep waiting, or carry on with
@@ -129,6 +129,19 @@ already pay for.
   does not spin in an "attempt → wall" loop. And no resume goes in blind: if the marker belongs to
   another run or to work that has already finished, it is simply removed — an old watchdog cannot
   type "carry on" into somebody else's task.
+- **A run that died while it owed work comes back as it was.** A run's tmux session and its
+  watchdog can die together — the whole process tree at once, nothing written. One parked on a
+  limit or owing a review then stayed parked for ever: the watchdog only slept beside a missing
+  session, a dead watchdog noticed nothing, and a message to it went through `resume`, which deletes
+  the instance and starts a new run, the owed review with it. `night-shift.sh revive <dir>` brings
+  it back IN PLACE — the same directory, run id and Claude conversation, a new generation, a
+  watchdog — and deletes nothing. It refuses a run the director stopped, one replaced by another
+  run, and one whose Claude is still running (by conversation id or its own system-prompt file),
+  and takes one lock per run outside the instance. It is asked for by a surviving watchdog whose
+  session vanished, by `worker-send.sh` before it would ever `resume` a run that owes work, and by
+  the app when the watchdog itself is gone. What counts as owing work is `instance_owes_work`: a
+  limit marker, `review-pending`, `resume-pending`, a held dispatch, messages accepted and not
+  delivered. The SessionStart sweep of stale instances leaves those alone too.
 - **A quality bar (anti-AI).** `supervisor/STANDARDS.md` is injected into the system prompt of
   every night session (`--append-system-prompt-file`): for UI, design skills are mandatory and a
   templated AI look is forbidden; for prose, `humanizer`. The review gate fails work that ignores
@@ -199,14 +212,11 @@ do not rely on a fixed name `night`).
 Terminal commands (symlinks in `~/.local/bin`, installed by `install.sh`):
 `night-shift`, `deep-audit`, `night-queue`. Inside Claude: `/night`, `/deep-audit`, `/queue`.
 
-**Migrating from the old single-session mode:** if an old `night` session is still around (from
-before the update), it works as legacy. To move to the new model:
-`night-shift stop --all` → `tmux kill-session -t night` → `night-shift start` in each project.
-
 The best results come when the project has a `SPEC.md` (the review compares against it). In the
-morning, look at: `DECISIONS.md` (decisions taken for you), `BACKLOG.md`, `BLOCKED.md`,
-`REVIEW-DEBT.md` (what was not accepted after three rounds),
-`~/.claude/supervisor/supervisor.log`.
+morning, look at the run's report and its folder, not the repository: what was not accepted after
+three rounds is `review-debt.md`, what stopped the run is `blocked.md`, and the decisions taken for
+you are in the run's `decisions.md` — all beside the report, never committed into the project —
+plus `~/.claude/supervisor/supervisor.log`.
 
 ## The project queue (the night pipeline)
 
@@ -231,9 +241,6 @@ Commands: `add <dir> [task]` · `list` · `remove <n>` · `clear` · `run` · `s
 `~/.claude/supervisor/queue/done/` with their result (`passed` / `debt` / `timeout`). Each project
 leaves its own night branch, its `AUDIT-*.md` and its lessons, exactly like an ordinary night
 shift.
-
-**Migrate first** from the old single-session mode if it is still active:
-`night-shift stop --all && tmux kill-session -t night`.
 
 ## Deep audit (a fresh pair of eyes)
 

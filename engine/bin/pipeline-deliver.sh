@@ -78,6 +78,7 @@ case "$rc" in
   0)
     # Committed. From here a withdrawal can only honestly answer "already read".
     printf '%s outcome=delivered\n' "$(date '+%F %T.000')" >> "$PHASE.log" 2>/dev/null || true
+    run_event "$IDIR" "${PIPE_STAGE:-deliver}" delivered "Сесія підтвердила, що отримала бриф" '{"node_role":"agent"}'
     [ -n "$MSG_ID" ] && { mark_delivered "$IDIR" "$MSG_ID"; thread_delivered "$IDIR" "$MSG_ID"; }
     # The director's own words just continued the work. A generic "carry on" behind them would
     # arrive as a second message about nothing.
@@ -101,6 +102,7 @@ case "$rc" in
       exit 7
     fi
     printf '%s outcome=parked rc=%s\n' "$(date '+%F %T.000')" "$rc" >> "$PHASE.log" 2>/dev/null || true
+    run_event "$IDIR" "${PIPE_STAGE:-deliver}" parked "Бриф не дійшов — він у черзі повторної доставки" "$(jq -nc --argjson rc "$rc" '{node_role:"agent", rc:$rc}')"
     cleanup_handoff
     park_undelivered "$IDIR" "$PROMPT" "$MSG_ID"
     jq -nc --arg at "$(date '+%F %T')" --argjson rc "$rc" --arg s "$SESSION" --arg d "${PIPE_DISPATCH_ID:-}" \

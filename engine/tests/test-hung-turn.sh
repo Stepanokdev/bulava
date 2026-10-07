@@ -334,6 +334,24 @@ printf '{"type":"user","uuid":"u-new","timestamp":"%s","message":{"role":"user",
 worker_owes_answer "$SESSION" "$IDIR" && ok "one asked of this process still is" \
   || bad "a question this process was given was not seen as owed"
 
+echo "===== a question the director stopped binds nobody ====="
+# What happened: a prompt went in, Stop came four seconds later, Claude Code wrote no interruption,
+# and the two messages he sent next sat in the queue for good.
+new_instance; start_worker answer
+: > "$IDIR/handshake-ok"; touch -t "$(date -v-1M '+%Y%m%d%H%M.%S')" "$IDIR/handshake-ok"
+printf '{"type":"user","uuid":"u-stopped","timestamp":"%s","message":{"role":"user","content":"зупинене питання"}}\n' \
+  "$(date -u -v-5S '+%Y-%m-%dT%H:%M:%S.000Z')" >> "$TX"
+worker_owes_answer "$SESSION" "$IDIR" && ok "before Stop the question is owed" \
+  || bad "an unanswered question of this process was not seen as owed"
+: > "$IDIR/director-stopped"
+worker_owes_answer "$SESSION" "$IDIR" && bad "a question he stopped still held his next messages back" \
+  || ok "after his Stop nothing is owed, so the next message can be typed"
+printf '{"type":"user","uuid":"u-after","timestamp":"%s","message":{"role":"user","content":"нове після стопу"}}\n' \
+  "$(date -u -v+1M '+%Y-%m-%dT%H:%M:%S.000Z')" >> "$TX"
+worker_owes_answer "$SESSION" "$IDIR" && ok "a question asked after the Stop is owed again" \
+  || bad "a Stop excused a question asked after it"
+rm -f "$IDIR/director-stopped"
+
 echo "===== what is never a hang ====="
 not_a_hang() {   # $1=label, then a setup already applied
   make_still

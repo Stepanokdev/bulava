@@ -24,30 +24,75 @@ import re
 import shutil
 import sys
 
-STATUS_WORDS = {
-    "closed": ("Закрито", "closed"), "partial": ("Частково", "partial"),
-    "not_closed": ("Не закрито", "notclosed"), "blocked": ("Заблоковано", "blocked"),
-    "n/a": ("Не застосовується", "na"), "unknown": ("Без вердикту", "unknown"),
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import brand  # noqa: E402  (needs the path above)
+import language  # noqa: E402
+
+# The page's own words, in the language the report is written in. They were Ukrainian whatever the
+# report said, so a report written in English or Russian — for someone who talks to Bulava in it —
+# still came out with «Було», «Стало» and «Закрито» around its text.
+WORDS = {
+    "en": {
+        "closed": "Closed", "partial": "Partly", "not_closed": "Not closed", "blocked": "Blocked",
+        "n/a": "Not applicable", "unknown": "No verdict",
+        "before": "Before", "after": "After", "attention": "Needs your decision",
+        "eyebrow": "Work finished · run report", "title": "Work report",
+        "empty": "This run left no written report and captured nothing.",
+        "footer": "Built by the night-shift engine. This folder is ignored by git.",
+    },
+    "uk": {
+        "closed": "Закрито", "partial": "Частково", "not_closed": "Не закрито", "blocked": "Заблоковано",
+        "n/a": "Не застосовується", "unknown": "Без вердикту",
+        "before": "Було", "after": "Стало", "attention": "Потребує твого рішення",
+        "eyebrow": "Робота зроблена · артефакт прогону", "title": "Звіт про роботу",
+        "empty": "Цей прогін не залишив ні тексту звіту, ні кадрів.",
+        "footer": "Артефакт зібрано рушієм night-shift. Ця тека ігнорується git.",
+    },
+    "ru": {
+        "closed": "Закрыто", "partial": "Частично", "not_closed": "Не закрыто", "blocked": "Заблокировано",
+        "n/a": "Не применимо", "unknown": "Без вердикта",
+        "before": "Было", "after": "Стало", "attention": "Требует твоего решения",
+        "eyebrow": "Работа сделана · отчёт прогона", "title": "Отчёт о работе",
+        "empty": "Этот прогон не оставил ни текста отчёта, ни кадров.",
+        "footer": "Собрано движком night-shift. Эта папка игнорируется git.",
+    },
 }
+
+STATUS_CLASS = {"closed": "closed", "partial": "partial", "not_closed": "notclosed",
+                "blocked": "blocked", "n/a": "na", "unknown": "unknown"}
+
+
+def language_of(m):
+    """The language the report is written in: what its own text shows, else what the manifest says.
+
+    The text wins because it is what the reader reads — a manifest can carry the setting while the
+    worker, rightly, wrote in the language the director wrote to it in.
+    """
+    parts = [m.get("title"), m.get("summary"), m.get("body")]
+    parts += [x for s in (m.get("sections") or []) for x in (s.get("title"), s.get("body"))]
+    return language.of_text(" ".join(str(p) for p in parts if p), m.get("language"))
 
 
 def status_of(raw):
-    """Read a status the way a worker would write it, in either language, or admit it does not know.
+    """Read a status the way a worker would write it, in any of the three languages, or admit it does
+    not know. Returns the key.
 
     An unrecognised word must never render as done: a report that upgrades itself is worse than one
     that says nothing.
     """
     s = (raw or "").strip().lower()
-    if s in STATUS_WORDS:
-        return STATUS_WORDS[s]
-    for needle, key in (("частков", "partial"), ("partial", "partial"),
+    if s in STATUS_CLASS:
+        return s
+    for needle, key in (("частков", "partial"), ("частич", "partial"), ("partial", "partial"),
                         ("заблок", "blocked"), ("block", "blocked"),
-                        ("не закри", "not_closed"), ("не зробл", "not_closed"), ("not clos", "not_closed"),
-                        ("не застос", "n/a"), ("n/a", "n/a"), ("not app", "n/a"),
-                        ("закри", "closed"), ("зробл", "closed"), ("done", "closed"), ("clos", "closed")):
+                        ("не закри", "not_closed"), ("не закры", "not_closed"), ("не зробл", "not_closed"),
+                        ("не сдел", "not_closed"), ("not clos", "not_closed"),
+                        ("не застос", "n/a"), ("не примен", "n/a"), ("n/a", "n/a"), ("not app", "n/a"),
+                        ("закри", "closed"), ("закры", "closed"), ("зробл", "closed"), ("сдел", "closed"),
+                        ("done", "closed"), ("clos", "closed")):
         if needle in s:
-            return STATUS_WORDS[key]
-    return STATUS_WORDS["unknown"]
+            return key
+    return "unknown"
 
 
 def esc(s):
@@ -165,17 +210,17 @@ def prose(text):
     return '<div class="prose">' + "".join(out) + "</div>"
 
 
-def frames(items, present):
+def frames(items, present, words):
     """Before/after figures. A named-but-missing file renders nothing rather than a broken image."""
     out = ""
     for item in items or []:
         before, after = item.get("before"), item.get("after")
         shots = ""
         if before in present:
-            shots += ('<div class="shot"><div class="shot-head"><span class="tag">Було</span></div>'
+            shots += (f'<div class="shot"><div class="shot-head"><span class="tag">{esc(words["before"])}</span></div>'
                       f'<img src="{esc(before)}" loading="lazy"></div>')
         if after in present:
-            shots += ('<div class="shot after"><div class="shot-head"><span class="tag">Стало</span></div>'
+            shots += (f'<div class="shot after"><div class="shot-head"><span class="tag">{esc(words["after"])}</span></div>'
                       f'<img src="{esc(after)}" loading="lazy"></div>')
         if not shots:
             continue
@@ -206,24 +251,26 @@ def build(report_dir, out_dir, title_fallback=""):
             shutil.copy2(src, os.path.join(out_dir, name))
             present.add(name)
 
-    title = (m.get("title") or title_fallback or "Звіт про роботу").strip()
+    lang = language_of(m)
+    words = WORDS[lang]
+    title = (m.get("title") or title_fallback or words["title"]).strip()
     summary = (m.get("summary") or "").strip()
 
     attention = [a for a in (m.get("attention") or []) if str(a).strip()]
     attn_html = ""
     if attention:
         rows = "".join(f"<li>{inline(esc(a))}</li>" for a in attention)
-        attn_html = f'<div class="attn"><p class="head">Потребує твого рішення</p><ul>{rows}</ul></div>'
+        attn_html = f'<div class="attn"><p class="head">{esc(words["attention"])}</p><ul>{rows}</ul></div>'
 
     claimed = set()
     answers = ""
     for s in m.get("sections") or []:
-        word, cls = status_of(s.get("status"))
+        key = status_of(s.get("status"))
         head = ". ".join(x for x in [str(s.get("ref") or "").strip(), (s.get("title") or "").strip()] if x)
-        answers += f'<section class="answer {cls}">'
-        answers += f'<h2><span class="num">{inline(esc(head))}</span><span class="chip">{esc(word)}</span></h2>'
+        answers += f'<section class="answer {STATUS_CLASS[key]}">'
+        answers += f'<h2><span class="num">{inline(esc(head))}</span><span class="chip">{esc(words[key])}</span></h2>'
         answers += prose(s.get("body") or "")
-        shots = frames(s.get("items"), present)
+        shots = frames(s.get("items"), present, words)
         if shots:
             answers += f'<div class="proof">{shots}</div>'
         for item in s.get("items") or []:
@@ -242,15 +289,14 @@ def build(report_dir, out_dir, title_fallback=""):
                   f'{poster}><source src="{esc(video)}"></video></figure>')
     loose = [i for i in (m.get("items") or [])
              if not ({i.get("before"), i.get("after")} - {None}) <= claimed]
-    media += frames(loose, present)
+    media += frames(loose, present, words)
 
-    css_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                            "supervisor", "artifact.css")
-    with open(css_path, encoding="utf-8") as fh:
+    engine = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(engine, "supervisor", "artifact.css"), encoding="utf-8") as fh:
         css = fh.read()
 
     page = f"""<!doctype html>
-<html lang="uk">
+<html lang="{lang}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -262,7 +308,8 @@ def build(report_dir, out_dir, title_fallback=""):
 <body>
 <div class="wrap">
   <header>
-    <p class="eyebrow">Робота зроблена · артефакт прогону</p>
+    {brand.lockup()}
+    <p class="eyebrow">{esc(words["eyebrow"])}</p>
     <h1>{esc(title)}</h1>
     {f'<p class="summary">{inline(esc(summary))}</p>' if summary else ''}
   </header>
@@ -270,8 +317,8 @@ def build(report_dir, out_dir, title_fallback=""):
   {answers}
   {body}
   {media}
-  {'' if (answers or body or media) else '<p class="empty">Цей прогін не залишив ні тексту звіту, ні кадрів.</p>'}
-  <footer>Артефакт зібрано рушієм night-shift. Ця тека ігнорується git.</footer>
+  {'' if (answers or body or media) else f'<p class="empty">{esc(words["empty"])}</p>'}
+  <footer>{esc(words["footer"])}</footer>
 </div>
 </body>
 </html>

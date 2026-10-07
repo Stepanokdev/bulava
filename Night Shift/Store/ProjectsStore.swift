@@ -53,15 +53,6 @@ final class ProjectsStore {
         persist()
     }
 
-    func rescan(_ id: UUID) {
-        guard let idx = projects.firstIndex(where: { $0.id == id }) else { return }
-        let detected = ProjectScanner.detect(path: projects[idx].path)
-        projects[idx].kind = detected.kind
-        projects[idx].stacks = detected.stacks
-        projects[idx].buildCommand = Project.defaultBuildCommand(for: detected.kind)
-        persist()
-    }
-
     func setGitInfo(_ id: UUID, remote: String?, defaultBranch: String?) {
         guard let idx = projects.firstIndex(where: { $0.id == id }) else { return }
         var changed = false

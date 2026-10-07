@@ -47,10 +47,12 @@ final class VoiceRecorder {
 
     func start() async -> StartFailure? {
         guard phase == .idle else { return .alreadyRecording }
-        guard await requestMic() else { return .permissionDenied }
+        guard await Self.requestMic() else { return .permissionDenied }
 
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("nightshift-voice-\(UUID().uuidString).m4a")
+        // Into a folder of Bulava's own, not the temporary one: a recording is the only copy of
+        // what he said until its words are in the field, and it has to outlive a crash in between.
+        let url = Self.recordingsFolder
+            .appendingPathComponent("dictation-\(UUID().uuidString).m4a")
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
             AVSampleRateKey: 44100,
@@ -91,6 +93,12 @@ final class VoiceRecorder {
         phase = .idle
     }
 
+    nonisolated static var recordingsFolder: URL {
+        let folder = AppSupport.root.appendingPathComponent("recordings", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
+    }
+
     private func startMeter() {
         elapsed = 0
         meterTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
@@ -127,7 +135,7 @@ final class VoiceRecorder {
     /// - Parameter language: `uk`, `ru`, `en` — his own dictation setting, never guessed.
     func transcribe(url: URL, language: String, timeout: TimeInterval = 30) async -> String? {
         #if canImport(WhisperKit)
-        if WhisperTranscriber.isReadyOffline(language: language) {
+        if await WhisperTranscriber.shared.isReadyOffline(language: language) {
             phase = .transcribing
             let text = await WhisperTranscriber.shared.transcribe(url: url, language: language) {
                 [weak self] stage in
@@ -157,15 +165,6 @@ final class VoiceRecorder {
     }
 
     #if canImport(WhisperKit)
-    /// Download the dictation model now, so the first sentence he dictates is not the download.
-    func prepareDictation(language: String) async -> Bool {
-        phase = .transcribing
-        defer { phase = .idle }
-        return await WhisperTranscriber.shared.install(language: language) { [weak self] stage in
-            Task { @MainActor in self?.phase = .transcribing(note: Self.note(for: stage)) }
-        }
-    }
-
     nonisolated private static func note(for stage: WhisperTranscriber.Stage) -> String? {
         switch stage {
         case .idle, .listening: nil
@@ -179,18 +178,34 @@ final class VoiceRecorder {
                                  timeout: TimeInterval = 30) async -> String? {
         phase = .transcribing
         defer { phase = .idle; recognitionTask = nil }
-        guard await requestSpeech() else { return nil }
+        guard await Self.requestSpeech() else { return nil }
         guard let recognizer = Self.recognizer(for: language), recognizer.isAvailable else {
             return nil
         }
+        return await Self.recognize(url: url, with: recognizer, timeout: timeout) { [weak self] task in
+            Task { @MainActor in self?.recognitionTask = task }
+        }
+    }
 
+    /// The recognition itself, deliberately outside the main actor.
+    ///
+    /// Speech calls its handler on a queue of its own, and a closure written inside this
+    /// main-actor class is main-actor code: Swift checks that on entry and stops the app when the
+    /// check fails. Results go to a background queue, too — a long recording produces a partial
+    /// result per word, and each one used to be handled on the main thread.
+    @concurrent nonisolated private static func recognize(url: URL, with recognizer: SFSpeechRecognizer,
+                                              timeout: TimeInterval,
+                                              started: @escaping @Sendable (SFSpeechRecognitionTask) -> Void) async -> String? {
         let request = SFSpeechURLRecognitionRequest(url: url)
         request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
         request.taskHint = .dictation
+        request.shouldReportPartialResults = false
+        let queue = OperationQueue()
+        queue.qualityOfService = .userInitiated
+        recognizer.queue = queue
 
         return await withCheckedContinuation { (cont: CheckedContinuation<String?, Never>) in
             let box = ResumeOnce()
-
             let task = recognizer.recognitionTask(with: request) { result, error in
                 if error != nil {
                     box.resume(cont, with: nil); return
@@ -199,7 +214,7 @@ final class VoiceRecorder {
                 let s = result.bestTranscription.formattedString.trimmingCharacters(in: .whitespacesAndNewlines)
                 box.resume(cont, with: s.isEmpty ? nil : s)
             }
-            recognitionTask = task
+            started(task)
             nonisolated(unsafe) let cancelTask = task
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
                 if box.resume(cont, with: nil) { cancelTask.cancel() }
@@ -214,7 +229,7 @@ final class VoiceRecorder {
     /// failed and fell through to the interface language, which is how Ukrainian speech came back
     /// as English text. The language is matched here, and the region is whichever one this Mac
     /// happens to ship for it.
-    private static func recognizer(for language: String) -> SFSpeechRecognizer? {
+    nonisolated private static func recognizer(for language: String) -> SFSpeechRecognizer? {
         let wanted = Locale(identifier: language).language.languageCode?.identifier
             ?? String(language.prefix(2))
         let supported = SFSpeechRecognizer.supportedLocales()
@@ -237,7 +252,12 @@ final class VoiceRecorder {
 
     // MARK: Permissions
 
-    private func requestMic() async -> Bool {
+    // Both are `nonisolated` for the reason `recognize` is: macOS answers a permission request on
+    // a background queue, and a closure that inherited this class's main actor stopped the whole
+    // app the first time dictation fell back to Apple's recogniser on a Mac that had never been
+    // asked. That was the crash after a long recording.
+
+    @concurrent nonisolated private static func requestMic() async -> Bool {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized: return true
         case .notDetermined:
@@ -248,7 +268,7 @@ final class VoiceRecorder {
         }
     }
 
-    private func requestSpeech() async -> Bool {
+    @concurrent nonisolated private static func requestSpeech() async -> Bool {
         switch SFSpeechRecognizer.authorizationStatus() {
         case .authorized: return true
         case .notDetermined:

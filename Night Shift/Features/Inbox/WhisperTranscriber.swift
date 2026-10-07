@@ -1,5 +1,6 @@
 #if canImport(WhisperKit)
 import Foundation
+import OSLog
 import WhisperKit
 
 /// Dictation, on this machine, in the language he actually spoke.
@@ -29,7 +30,11 @@ actor WhisperTranscriber {
     private var loaded: String?
 
     /// True when dictation can answer without touching the network.
-    static func isReadyOffline(language: String) -> Bool {
+    ///
+    /// An actor method, not a static one, on purpose: the answer comes from listing a folder in
+    /// ~/Documents, and asked from the main thread a slow disk — or macOS stopping that read to
+    /// ask whether Bulava may open Documents at all — held the whole window still until it came.
+    func isReadyOffline(language: String) -> Bool {
         !WhisperModels.choose(language: language).needsDownload
     }
 
@@ -41,17 +46,22 @@ actor WhisperTranscriber {
         stage?(.listening)
         defer { stage?(.idle) }
         do {
+            // Split at the pauses and decoded side by side. Without it a long dictation is read
+            // one thirty-second window after another, and three minutes of speech took minutes.
             let options = DecodingOptions(
                 task: .transcribe,          // never .translate: he dictates, he does not ask for English
                 language: language,
                 detectLanguage: false,
                 skipSpecialTokens: true,
-                withoutTimestamps: true)
+                withoutTimestamps: true,
+                concurrentWorkerCount: 4,
+                chunkingStrategy: .vad)
             let results = try await pipe.transcribe(audioPath: url.path, decodeOptions: options)
             let text = results.map(\.text).joined(separator: " ")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             return text.isEmpty ? nil : text
         } catch {
+            Log.lifecycle.error("whisper transcription failed: \(error.localizedDescription, privacy: .public)")
             return nil
         }
     }

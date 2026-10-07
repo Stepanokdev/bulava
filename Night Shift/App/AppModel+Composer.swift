@@ -30,7 +30,6 @@ extension AppModel {
     func beginAskingChanges(_ task: BacklogTask) { primeComposer(.changes(taskID: task.id)) }
     func beginAnswering(_ task: BacklogTask) { primeComposer(.answer(taskID: task.id)) }
     func beginFollowUp(_ task: BacklogTask) { primeComposer(.followUp(taskID: task.id)) }
-    func resetComposerIntent() { composerIntent = .newTask }
 
     func focusComposer() { primeComposer(.newTask) }
 
@@ -39,38 +38,94 @@ extension AppModel {
         composerFocusRequest = UUID()
     }
 
+    // MARK: - Drafts belong to a chat
+    //
+    // A draft is keyed by the chat it is written in — the product's own id only while the product
+    // has no chat yet. Keyed by product, two chats of one product shared one field, and anything
+    // that finished late — a transcription, "Stop and edit" handing a message back — landed in
+    // whichever of them was open by then.
+
+    /// Where the field of this product's open chat keeps its words and files.
+    func draftSlot(for productID: UUID) -> UUID {
+        conversations.currentChatID(for: productID) ?? productID
+    }
+
+    /// The slot of the chat an entry belongs to.
+    func draftSlot(for entry: ConversationEntry) -> UUID { entry.chatID ?? draftSlot(for: entry.productID) }
+
+    // MARK: - Dictation
+
+    /// Fix which chat a recording belongs to: the one open when he pressed the mic. Its words —
+    /// or the recording itself, when they cannot be read — go there however he moves around
+    /// while recording or while it is being read.
+    func beginDictation(for productID: UUID) {
+        dictationSlots[productID] = draftSlot(for: productID)
+    }
+
+    /// The chat the recording that just stopped belongs to; the open one if nothing was fixed.
+    func takeDictationSlot(for productID: UUID) -> UUID {
+        defer { dictationSlots[productID] = nil }
+        return dictationSlots[productID] ?? draftSlot(for: productID)
+    }
+
+    func cancelDictation(for productID: UUID) { dictationSlots[productID] = nil }
+
     // MARK: - Text drafts
 
-    func draftText(for productID: UUID) -> String { composerDrafts[productID] ?? "" }
+    func draftText(slot: UUID) -> String { composerDrafts[slot] ?? "" }
+
+    func setDraftText(_ text: String, slot: UUID) {
+        if text.isEmpty { composerDrafts[slot] = nil } else { composerDrafts[slot] = text }
+    }
+
+    func draftText(for productID: UUID) -> String { draftText(slot: draftSlot(for: productID)) }
 
     func setDraftText(_ text: String, for productID: UUID) {
-        if text.isEmpty { composerDrafts[productID] = nil } else { composerDrafts[productID] = text }
+        setDraftText(text, slot: draftSlot(for: productID))
+    }
+
+    /// Adds words to whatever is already in that chat's field, on a line of their own.
+    func appendToDraft(_ addition: String, slot: UUID) {
+        let current = draftText(slot: slot)
+        setDraftText(current.isEmpty ? addition : current + "\n" + addition, slot: slot)
+        composerFocusRequest = UUID()
     }
 
     func takeDraftText(for productID: UUID) -> String {
-        defer { composerDrafts[productID] = nil }
-        return composerDrafts[productID] ?? ""
+        let slot = draftSlot(for: productID)
+        defer { composerDrafts[slot] = nil }
+        return composerDrafts[slot] ?? ""
     }
 
     // MARK: - Attachment drafts
 
+    func draftAttachments(slot: UUID) -> [Attachment] { composerAttachments[slot] ?? [] }
+
     func draftAttachments(for productID: UUID) -> [Attachment] {
-        composerAttachments[productID] ?? []
+        draftAttachments(slot: draftSlot(for: productID))
     }
 
-    func addDraftAttachment(_ attachment: Attachment, to productID: UUID) {
-        composerAttachments[productID, default: []].append(attachment)
+    func addDraftAttachment(_ attachment: Attachment, slot: UUID) {
+        composerAttachments[slot, default: []].append(attachment)
         composerFocusRequest = UUID()
     }
 
-    func removeDraftAttachment(_ attachmentID: UUID, from productID: UUID) {
-        composerAttachments[productID]?.removeAll { $0.id == attachmentID }
-        if composerAttachments[productID]?.isEmpty == true { composerAttachments[productID] = nil }
+    func addDraftAttachment(_ attachment: Attachment, to productID: UUID) {
+        addDraftAttachment(attachment, slot: draftSlot(for: productID))
+    }
+
+    func removeDraftAttachment(_ attachmentID: UUID, slot: UUID) {
+        composerAttachments[slot]?.removeAll { $0.id == attachmentID }
+        if composerAttachments[slot]?.isEmpty == true { composerAttachments[slot] = nil }
+    }
+
+    func takeDraftAttachments(slot: UUID) -> [Attachment] {
+        defer { composerAttachments[slot] = nil }
+        return composerAttachments[slot] ?? []
     }
 
     func takeDraftAttachments(for productID: UUID) -> [Attachment] {
-        defer { composerAttachments[productID] = nil }
-        return composerAttachments[productID] ?? []
+        takeDraftAttachments(slot: draftSlot(for: productID))
     }
 
     func importDroppedFile(_ url: URL, into productID: UUID) {
@@ -285,7 +340,7 @@ extension AppModel {
         guard let path = task.projectPath else { return }
         note(.workersStopped, .info, "Ставлю на паузу «\(task.title)».", projectPath: path, taskID: task.id)
         if let productID = productID(for: task) {
-            conversations.postEvent("Задачу поставлено на паузу — зупиниться після поточного кроку.",
+            conversations.postEvent(String(localized: "The task is paused — it stops after the current step."),
                                     productID: productID, tone: .neutral, taskID: task.id)
         }
         perform(String(localized: "Pausing after the current step")) {
@@ -312,18 +367,55 @@ extension AppModel {
 
 extension AppModel {
 
-    func answerUnboundQuestion(entry: ConversationEntry, text: String) {
-        conversations.appendUser(text, productID: entry.productID, chatID: entry.chatID)
-
-        let holding = entry.chatID
+    /// The run waiting on this card's question, if one still is.
+    private func questionHolder(for entry: ConversationEntry) -> SupervisorInstance? {
+        entry.chatID
             .flatMap { conversations.chat(id: $0)?.session }
             .flatMap { matchingInstance(for: $0) }
             // Written as a `map` over the question rather than a comparison against `nil`: Swift
             // 6.4 calls that comparison ambiguous here, and the whole target stopped compiling.
             .flatMap { instance -> SupervisorInstance? in instance.pendingQuestion.map { _ in instance } }
+            // Or the run still being started for it, waiting on a screen of Claude's own.
+            ?? startingInstance(for: entry.chatID)
+    }
+
+    /// The phone's way in: the same answer, waited for. Returns nil once it went in, or why not.
+    ///
+    /// A screen of Claude's own is answered with keys, and the keys can be refused — the screen moved
+    /// on, or the answer is not one of its choices. The Mac says so in a toast; the phone was told
+    /// "sent", showed the answer as a message, and nothing reached Claude (6 Oct: four answers to a
+    /// permission dialog, each a bubble, none a keypress). Now the phone hears the reason, and the
+    /// chat gets the answer only once Claude did.
+    func answerUnboundQuestionWaiting(entry: ConversationEntry, text: String) async -> String? {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let holding = questionHolder(for: entry), let pending = holding.pendingQuestion,
+              pending.source == .terminal, pending.reasonCode != "codex_unavailable", !t.isEmpty else {
+            answerUnboundQuestion(entry: entry, text: text)
+            return nil
+        }
+        let result = await client.answerTerminalQuestion(session: holding.session, expected: pending, answer: t)
+        guard result.ok else {
+            let detail = (result.stderr.isEmpty ? result.stdout : result.stderr)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return detail.isEmpty ? String(localized: "Could not answer Claude.") : detail
+        }
+        conversations.appendUser(t, productID: entry.productID, chatID: entry.chatID)
+        if let productID = task(forInstance: holding)?.productID { products.worked(productID) }
+        note(.answerSent, .info, "Відповідь надіслано — «\(holding.projectName)» продовжує.",
+             detail: t, projectPath: holding.projectPath, taskID: task(forInstance: holding)?.id)
+        await refresh()
+        return nil
+    }
+
+    func answerUnboundQuestion(entry: ConversationEntry, text: String) {
+        conversations.appendUser(text, productID: entry.productID, chatID: entry.chatID)
+
+        let holding = questionHolder(for: entry)
         guard let holding else {
-            postForemanText("Той воркер уже не чекає на відповідь — прибрав питання.",
-                            productID: entry.productID)
+            // Into the question's own chat: the answer may have come from the phone, and the chat
+            // open on the Mac can be a different one.
+            conversations.appendForeman(String(localized: "That worker is no longer waiting for an answer — the question is gone."),
+                                        productID: entry.productID, chatID: entry.chatID)
             conversations.remove(entryID: entry.id)
             return
         }

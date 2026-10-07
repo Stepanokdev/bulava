@@ -6,7 +6,6 @@ struct Composer: View {
     @Environment(AppModel.self) private var model
     let productID: UUID
 
-    @State private var text = ""
     @State private var voice = VoiceRecorder()
     @State private var editorHeight: CGFloat = GrowingMessageEditor.minimumHeight
     @State private var focused = false
@@ -14,9 +13,24 @@ struct Composer: View {
     @State private var commandSelection = 0
     @State private var autocompleteDismissed = false
 
+    /// The words in the field ARE the product's draft, not a copy of it.
+    ///
+    /// The field used to keep its own `@State` and read the draft only when it appeared, so
+    /// anything else that wrote the draft — "Stop and edit" handing the message back, a
+    /// transcription finishing — went into a store the open field never looked at again. The
+    /// message left the thread and its words turned up nowhere.
+    /// The open chat's own field. Each chat keeps its words and files apart from the others.
+    private var slot: UUID { model.draftSlot(for: productID) }
+    private var text: String { model.draftText(slot: slot) }
+    private var textBinding: Binding<String> {
+        let slot = slot
+        return Binding(get: { model.draftText(slot: slot) },
+                       set: { model.setDraftText($0, slot: slot) })
+    }
+
     private var product: Product? { model.products.product(id: productID) }
     private var chatID: UUID? { model.conversations.currentChatID(for: productID) }
-    private var attachments: [Attachment] { model.draftAttachments(for: productID) }
+    private var attachments: [Attachment] { model.draftAttachments(slot: slot) }
     private var isSending: Bool { chatID.map { model.sendingChatIDs.contains($0) } ?? false }
     private var isWorking: Bool { model.isDirectChatBusy(chatID) }
     private var isStopping: Bool { chatID.map { model.stoppingChatIDs.contains($0) } ?? false }
@@ -51,7 +65,6 @@ struct Composer: View {
             )
             .onChange(of: model.composerFocusRequest) { _, _ in focused = true }
             .onChange(of: text) { previous, next in
-                model.setDraftText(next, for: productID)
                 commandSelection = 0
                 autocompleteDismissed = false
                 if SlashCommandQuery(previous) == nil, SlashCommandQuery(next) != nil {
@@ -63,9 +76,6 @@ struct Composer: View {
                 _Concurrency.Task { await reloadSlashCommands() }
             }
             .task(id: commandRootsKey) { await reloadSlashCommands() }
-
-            .onAppear { text = model.draftText(for: productID) }
-            .onChange(of: productID) { _, id in text = model.draftText(for: id) }
     }
 
     // MARK: - Field
@@ -93,7 +103,7 @@ struct Composer: View {
             if !attachments.isEmpty { attachmentChips }
 
             ZStack(alignment: .topLeading) {
-                GrowingMessageEditor(text: $text,
+                GrowingMessageEditor(text: textBinding,
                                      height: $editorHeight,
                                      focused: $focused,
                                      onSend: send,
@@ -139,7 +149,11 @@ struct Composer: View {
                 .buttonStyle(.icon(size: 28, glyph: 13))
                 .help(Text("Attach files"))
 
-            RunControl(hasLiveClaudeSession: hasLiveClaudeSession)
+            RunControl(hasLiveClaudeSession: hasLiveClaudeSession, chatID: chatID)
+
+            if model.settings.chatMode.usesClaude {
+                PipelinePicker(chatID: chatID)
+            }
 
             sessionLabel
                 .layoutPriority(-1)
@@ -187,9 +201,7 @@ struct Composer: View {
 
     private var sessionLabel: some View {
         HStack(spacing: 5) {
-            Image(systemName: "folder")
-                .font(.system(size: 9, weight: .medium))
-            Text(primaryProjectName)
+            WhereItWorksControl(productID: productID, chatID: chatID, folderName: primaryProjectName)
             if isWorking {
                 Text("·")
                 Text(model.directWaitReason(for: chatID))
@@ -214,21 +226,7 @@ struct Composer: View {
         return model.projects.project(id: id)
     }
 
-    private var commandRoots: SlashCommandCatalog.Roots {
-        let primaryPath = primaryProject.map { Slug.canonicalPath($0.path) }
-        var seen = Set<String>()
-        let added = (product?.resources ?? []).compactMap { resource -> URL? in
-            guard let projectID = resource.projectID,
-                  let project = model.projects.project(id: projectID) else { return nil }
-            let path = Slug.canonicalPath(project.path)
-            guard path != primaryPath, seen.insert(path).inserted else { return nil }
-            return URL(fileURLWithPath: path, isDirectory: true)
-        }
-        return SlashCommandCatalog.Roots(
-            primaryProject: primaryPath.map { URL(fileURLWithPath: $0, isDirectory: true) },
-            addedProjects: added.sorted { $0.path < $1.path }
-        )
-    }
+    private var commandRoots: SlashCommandCatalog.Roots { model.slashCommandRoots(for: productID) }
 
     private var commandRootsKey: String {
         ([commandRoots.primaryProject?.path ?? "-"] + commandRoots.addedProjects.map(\.path))
@@ -253,7 +251,7 @@ struct Composer: View {
                     AttachmentThumb(attachment: attachment, compact: true)
                         .overlay(alignment: .topTrailing) {
                             Button {
-                                model.removeDraftAttachment(attachment.id, from: productID)
+                                model.removeDraftAttachment(attachment.id, slot: slot)
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
                                     .font(.system(size: 12))
@@ -320,9 +318,8 @@ struct Composer: View {
     private func send() {
         guard canSend, !isSending else { return }
         let body = text
-        let files = model.takeDraftAttachments(for: productID)
-        text = ""
-        model.setDraftText("", for: productID)
+        let files = model.takeDraftAttachments(slot: slot)
+        model.setDraftText("", slot: slot)
 
         editorHeight = GrowingMessageEditor.minimumHeight
         model.send(body, attachments: files)
@@ -349,7 +346,7 @@ struct Composer: View {
 
     private func completeCommand(_ index: Int) {
         guard matchingCommands.indices.contains(index) else { return }
-        text = matchingCommands[index].invocation + " "
+        model.setDraftText(matchingCommands[index].invocation + " ", slot: slot)
         focused = true
     }
 
@@ -374,8 +371,13 @@ struct Composer: View {
     }
 
     private func startVoice() {
+        // Before anything is awaited: the permission question can take as long as he likes, and
+        // the chat on screen when he pressed the mic is the one the words are for.
+        let product = productID
+        model.beginDictation(for: product)
         _Concurrency.Task {
             guard let failure = await voice.start() else { return }
+            if failure != .alreadyRecording { model.cancelDictation(for: product) }
             switch failure {
             case .alreadyRecording:
                 break
@@ -393,26 +395,34 @@ struct Composer: View {
 
     private func stopVoice() {
         guard let result = voice.stop() else { return }
+        // The words belong to the chat the recording was started in — fixed when he pressed the
+        // mic, not now: he may have moved to another chat while talking, and again while the
+        // words are read.
+        let recordedIn = model.takeDictationSlot(for: productID)
         _Concurrency.Task {
             let transcript = await voice.transcribe(url: result.url, language: dictationLanguage)
             if let transcript, !transcript.isEmpty {
                 // Dictation is typing with your voice. Attaching the recording as well — which
                 // it used to do every time — sends the agent an audio file nobody asked for
                 // beside the words it already has.
-                text = text.isEmpty ? transcript : text + "\n" + transcript
+                model.appendToDraft(transcript, slot: recordedIn)
+                try? FileManager.default.removeItem(at: result.url)
             } else if var attachment = model.capture.importFile(from: result.url) {
                 // Only when the words could not be read: the recording is then the only thing
                 // that survived, and throwing it away would lose what he said.
                 attachment.durationSeconds = result.duration
                 attachment.kind = .audio
-                model.addDraftAttachment(attachment, to: productID)
+                model.addDraftAttachment(attachment, slot: recordedIn)
                 model.toast = ToastMessage(text: String(localized: "Kept the recording — could not transcribe it"),
                                            kind: .info)
+                try? FileManager.default.removeItem(at: result.url)
             } else {
-                model.toast = ToastMessage(text: String(localized: "Could not make out the dictation"),
+                // Neither the words nor a copy: the original stays where it was recorded, which is
+                // a folder of Bulava's own and not a temporary one, and he is told where.
+                NSWorkspace.shared.activateFileViewerSelecting([result.url])
+                model.toast = ToastMessage(text: String(localized: "Could not make out the dictation. The recording is kept in Finder."),
                                            kind: .error)
             }
-            try? FileManager.default.removeItem(at: result.url)
         }
     }
 
@@ -637,7 +647,11 @@ private struct GrowingMessageEditor: NSViewRepresentable {
         textView.setAccessibilityLabel(String(localized: "Message Night Shift…"))
         scrollView.documentView = textView
 
-        DispatchQueue.main.async { context.coordinator.updateHeight(of: textView, in: scrollView) }
+        // A narrower or wider window rewraps the same words onto a different number of lines.
+        scrollView.contentView.postsFrameChangedNotifications = true
+        context.coordinator.observeWidth(of: scrollView)
+
+        context.coordinator.scheduleHeight(of: textView, in: scrollView)
         return scrollView
     }
 
@@ -650,7 +664,11 @@ private struct GrowingMessageEditor: NSViewRepresentable {
         if textView.string != text {
             textView.string = text
             textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
-            context.coordinator.updateHeight(of: textView, in: scrollView)
+            textView.scrollRangeToVisible(textView.selectedRange())
+            // Not here and now: this runs while SwiftUI is drawing, and a height written during
+            // that pass can be dropped. That is how a long dictation landed in a field that stayed
+            // one line tall.
+            context.coordinator.scheduleHeight(of: textView, in: scrollView)
         }
         if focused, textView.window?.firstResponder !== textView {
             DispatchQueue.main.async { textView.window?.makeFirstResponder(textView) }
@@ -661,7 +679,38 @@ private struct GrowingMessageEditor: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: GrowingMessageEditor
 
+        private var widthObserver: NSObjectProtocol?
+        private var lastWidth: CGFloat = 0
+
         init(parent: GrowingMessageEditor) { self.parent = parent }
+
+        isolated deinit {
+            if let widthObserver { NotificationCenter.default.removeObserver(widthObserver) }
+        }
+
+        func observeWidth(of scrollView: NSScrollView) {
+            widthObserver = NotificationCenter.default.addObserver(
+                forName: NSView.frameDidChangeNotification, object: scrollView.contentView,
+                queue: .main) { [weak self, weak scrollView] _ in
+                MainActor.assumeIsolated {
+                    guard let self, let scrollView,
+                          let textView = scrollView.documentView as? NSTextView else { return }
+                    let width = scrollView.contentView.bounds.width
+                    guard abs(width - self.lastWidth) > 0.5 else { return }
+                    self.lastWidth = width
+                    self.scheduleHeight(of: textView, in: scrollView)
+                }
+            }
+        }
+
+        /// The height, on the next turn of the main loop — after the layout that set the text has
+        /// given the text view its real width.
+        func scheduleHeight(of textView: NSTextView, in scrollView: NSScrollView) {
+            DispatchQueue.main.async { [weak self, weak textView, weak scrollView] in
+                guard let self, let textView, let scrollView else { return }
+                self.updateHeight(of: textView, in: scrollView)
+            }
+        }
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? MessageTextView,

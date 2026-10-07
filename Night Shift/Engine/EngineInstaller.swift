@@ -180,8 +180,12 @@ nonisolated enum EngineInstaller {
     }
 
     /// An rsync of this engine that outlived the app that started it.
+    ///
+    /// The process has to BE rsync and be copying into this directory. Matching the command line
+    /// as text also caught any process that merely mentioned such a copy — a reviewer reading
+    /// this very file, say — and refused the install for it.
     static func writerStillRunning(in target: URL) -> Bool {
-        EngineBusy.processExists("rsync.*\(target.path)")
+        !EngineProcesses.writers(into: target, in: ProcessTable.snapshot()).isEmpty
     }
 
     /// What the readiness screen needs to say about the engine, in one value.
@@ -196,7 +200,22 @@ nonisolated enum EngineInstaller {
     static func state() -> State {
         if let dev = OrchestratorHome.development { return .development(dev) }
         if OrchestratorHome.installedIsStale { return .stale(OrchestratorHome.installed) }
+        if OrchestratorHome.isEngine(at: OrchestratorHome.installed) { return .ready(OrchestratorHome.installed) }
+        // An app that carries an engine installs it rather than adopting whatever the terminal
+        // command happens to point at. That used to read as "ready": a checkout somebody linked
+        // once, or an old install from before the app carried its own, answered for this build —
+        // and on the machine the engine is written on, every unsaved edit ran in his real jobs.
+        if OrchestratorHome.bundled != nil { return .notInstalled }
         if let home = OrchestratorHome.detect() { return .ready(home) }
-        return OrchestratorHome.bundled == nil ? .unavailable : .notInstalled
+        return .unavailable
+    }
+
+    /// Bulava Dev's worker settings: hooks from the checkout it runs, written into its own state
+    /// folder (SUPERVISOR_STATE_DIR, set on the process by `AppChannel`) — and nothing global.
+    @discardableResult
+    static func writeWorkerSettings(engine: URL) async -> Bool {
+        let run = await Shell.run("cd \"$1\" && /bin/bash ./install.sh --worker-settings-only 2>&1",
+                                  args: [engine.path], timeout: 60)
+        return run.exitCode == 0
     }
 }

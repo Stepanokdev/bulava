@@ -20,14 +20,24 @@ nonisolated enum EngineBusy {
     /// afternoon rather than about the code. The decision and the observation are separated so the
     /// first can be checked on its own.
     struct Probe: Sendable {
-        var strayProcess: @Sendable () -> String?
-        var workerSession: @Sendable () -> Bool
+        /// The engine's daemons still running out of the directory an install would replace.
+        var strayProcess: @Sendable () -> [Leftover]
+        /// Worker sessions in tmux that no run on disk accounts for.
+        var workerSession: @Sendable () -> [String]
 
         /// What production uses: the processes and sessions actually on this Mac.
         static let machine = Probe(strayProcess: { EngineBusy.strayProcess() },
-                                   workerSession: { EngineBusy.liveWorkerSession() })
+                                   workerSession: { EngineBusy.liveWorkerSessions() })
         /// A machine with nothing of the engine's running on it.
-        static let quiet = Probe(strayProcess: { nil }, workerSession: { false })
+        static let quiet = Probe(strayProcess: { [] }, workerSession: { [] })
+    }
+
+    /// A process of the engine's that outlived its run: no instance on disk owns it any more, and
+    /// its script lives in the directory an install would replace. It is the engine's own and is
+    /// doing nothing for anybody, so — unlike a run — it can be ended without asking whose it is.
+    struct Leftover: Equatable, Sendable {
+        var pid: Int32
+        var name: String
     }
 
     /// The work holding the engine, when it can be named and stopped.
@@ -54,8 +64,15 @@ nonisolated enum EngineBusy {
         /// no instance behind it. Offering to "stop" one of those would be offering to stop
         /// something the app cannot see the shape of.
         var holders: [Holder] = []
+        /// Processes left over from earlier runs — the one thing that used to block the install with
+        /// no button at all. Ending them is safe and is what the wall now offers.
+        var leftovers: [Leftover] = []
+        /// Open worker sessions in tmux that no run holding the engine accounts for.
+        var orphanSessions: [String] = []
 
         var holder: Holder? { holders.first }
+        /// Something the app can end by itself, whoever (if anyone) is listed as working.
+        var hasLeftovers: Bool { !leftovers.isEmpty || !orphanSessions.isEmpty }
     }
 
     /// Nil when the engine is genuinely idle. Otherwise one short line saying what is using it,
@@ -75,6 +92,8 @@ nonisolated enum EngineBusy {
             Holder(name: $0.projectName, projectPath: $0.projectPath, session: $0.session)
         }
         func held(_ inst: SupervisorInstance, _ format: String) -> Blocker {
+            // Leftovers are not listed beside a live run: its own watchdog runs out of the same
+            // directory and would read as one. They are looked for again once the run is stopped.
             Blocker(text: String(format: format, inst.projectName), holders: holders)
         }
         if let inst = instances.first(where: { $0.workerStatus == "busy" }) {
@@ -91,14 +110,26 @@ nonisolated enum EngineBusy {
         }
         // Instances are read from disk, so a run whose folder was removed leaves nothing above to
         // find — and its processes can still be alive. This session found one such pump running
-        // forty minutes after its run had been torn down. Nothing here can be offered as a button:
-        // there is no run left to stop, only a process to be told about.
-        if let stray = probe.strayProcess() {
+        // forty minutes after its run had been torn down.
+        //
+        // Only processes running the engine being REPLACED count. The question used to be "is
+        // anything on this Mac called watchdog.sh", and on the machine the engine is written on the
+        // answer was seven watchdogs leaked by test runs into temporary folders, plus a reviewer
+        // whose prompt quoted the word — none of them touching this engine, all of them refusing
+        // the install, with no button, for a day.
+        let leftovers = probe.strayProcess()
+        // Sessions of runs that are holding the engine were dealt with above; any other open one
+        // still has a Claude sitting in it with the old hooks, so it holds the engine too — and it
+        // can be closed, which is what stopping a run does to its session anyway.
+        let sessions = probe.workerSession()
+        if let first = leftovers.first {
             return Blocker(text: String(format: String(localized: "a %@ from an earlier run is still going"),
-                                        stray))
+                                        first.name),
+                           leftovers: leftovers, orphanSessions: sessions)
         }
-        if probe.workerSession() {
-            return Blocker(text: String(localized: "a worker session is still open in tmux"))
+        if !sessions.isEmpty {
+            return Blocker(text: String(localized: "a worker session is still open in tmux"),
+                           orphanSessions: sessions)
         }
         return nil
     }
@@ -124,39 +155,47 @@ nonisolated enum EngineBusy {
         return last
     }
 
-    /// The engine's own long-running programs, by name, wherever they came from.
-    private static func strayProcess() -> String? {
-        for name in ["watchdog.sh", "message-pump.sh", "pipeline.sh"] where processExists(name) {
-            return name
-        }
-        return nil
+    /// The engine's own long-running programs, running out of the directory an install replaces.
+    private static func strayProcess() -> [Leftover] {
+        EngineProcesses.daemons(of: OrchestratorHome.installed, in: ProcessTable.snapshot())
     }
 
-    /// Visible to the tests, which prove it answers both yes and no about a process they
-    /// start and stop themselves — an injected probe is worth nothing if the real one is blind.
-    static func processExists(_ needle: String) -> Bool {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-        p.arguments = ["-f", needle]
-        let out = Pipe(); p.standardOutput = out; p.standardError = Pipe()
-        do { try p.run() } catch { return false }
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
-        return !data.isEmpty
+    /// Ends leftovers: asked to stop, then told to, and each one checked again just before —
+    /// a pid is a number the system hands out again, and the process behind it a moment from now
+    /// may be somebody else's.
+    ///
+    /// Returns what is still alive afterwards.
+    @discardableResult
+    static func end(_ leftovers: [Leftover], engine: URL = OrchestratorHome.installed,
+                    grace: TimeInterval = 3) async -> [Leftover] {
+        func stillOurs(_ l: Leftover) -> Bool {
+            guard let argv = ProcessTable.arguments(of: l.pid) else { return false }
+            return !EngineProcesses.daemons(of: engine, in: [ProcessTable.Entry(pid: l.pid, argv: argv)]).isEmpty
+        }
+        let mine = leftovers.filter(stillOurs)
+        for l in mine { kill(l.pid, SIGTERM) }
+        let deadline = Date().addingTimeInterval(grace)
+        var alive = mine
+        while !alive.isEmpty, Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(150))
+            alive = alive.filter(stillOurs)
+        }
+        for l in alive where stillOurs(l) { kill(l.pid, SIGKILL) }
+        try? await Task.sleep(for: .milliseconds(150))
+        return alive.filter(stillOurs)
     }
 
     /// A worker lives in a tmux session named after its run. One still open means a Claude is
     /// sitting in it, whether or not anything else can see the run any more.
-    private static func liveWorkerSession() -> Bool {
+    private static func liveWorkerSessions() -> [String] {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/bash")
-        p.arguments = ["-lc", "tmux list-sessions -F '#S' 2>/dev/null | grep -c '^night-' || true"]
+        p.arguments = ["-lc", "tmux list-sessions -F '#S' 2>/dev/null | grep '^night-' || true"]
         let out = Pipe(); p.standardOutput = out; p.standardError = Pipe()
-        do { try p.run() } catch { return false }
+        do { try p.run() } catch { return [] }
         let data = out.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
-        let n = Int(String(data: data, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? "0") ?? 0
-        return n > 0
+        return (String(data: data, encoding: .utf8) ?? "")
+            .split(whereSeparator: \.isNewline).map(String.init).filter { !$0.isEmpty }
     }
 }

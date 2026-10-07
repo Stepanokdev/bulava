@@ -8,6 +8,8 @@ final class TestDrive {
     private let reply: URL
     private var consumed = 0
     private var timer: Task<Void, Never>?
+    /// Windows a picture was asked for; kept so they stay open.
+    private var previews: [NSWindow] = []
 
     static func make() -> TestDrive? {
         guard let path = ProcessInfo.processInfo.environment["BULAVA_TEST_INBOX"], !path.isEmpty else {
@@ -121,6 +123,62 @@ final class TestDrive {
             }
             note("tapped \(action) on “\(task.title.prefix(70))”")
 
+        case "route":
+            // {"do":"route","to":"automations"} · {"do":"route","to":"automation","name":"…"}
+            // · {"do":"route","to":"run","name":"…"} opens the newest run of that automation.
+            let to = (obj["to"] as? String) ?? ""
+            let named = (obj["name"] as? String) ?? ""
+            let automation = model.automations.automations.first { $0.name == named }
+            switch to {
+            case "automations": model.navigate(to: .automations)
+            case "skills": model.navigate(to: .skills)
+            case "pipelines": model.navigate(to: .pipelines)
+            case "pipeline":
+                // {"do":"route","to":"pipeline","name":"<pipeline id>"}
+                guard !named.isEmpty else { note("route: pipeline needs a name (its id)"); return }
+                // With "ask", the editor opens on its chat and sends that request first.
+                if let ask = obj["ask"] as? String, !ask.isEmpty { model.pendingPipelineRequests[named] = ask }
+                model.navigate(to: .pipeline(named))
+            case "automation":
+                guard let automation else { note("route: no automation named \(named)"); return }
+                model.navigate(to: .automation(automation.id))
+            case "run":
+                guard let automation, let run = model.automations.runs(for: automation.id)
+                    .first(where: { $0.chatID != nil }) else { note("route: no run with a chat for \(named)"); return }
+                model.openRunChat(run)
+            case "run-now":
+                guard let automation else { note("route: no automation named \(named)"); return }
+                model.runAutomationNow(automation.id)
+            case "merge":
+                guard let automation, let run = model.automations.runs(for: automation.id)
+                    .first(where: { $0.result == .changes && $0.handoff == .waiting }) else {
+                    note("route: nothing waiting to merge for \(named)"); return
+                }
+                Task { note("merge: " + ((await model.mergeRun(run.id)) ?? "ok")) }
+            case "editor":
+                // {"do":"route","to":"editor","template":"parity"} — the form, filled from a template;
+                // {"do":"route","to":"editor","close":true} puts it away.
+                let wanted = obj["template"] as? String
+                let template = AutomationTemplate.all().first { $0.id == wanted }
+                // A named template that does not exist says so, instead of quietly opening a blank form.
+                if let wanted, template == nil { note("route: no template \(wanted)"); return }
+                let request = AutomationEditorRequest.new(productID: model.products.sorted.first?.id, template: template)
+                if obj["close"] as? Bool == true {
+                    model.automationEditor = nil
+                } else if model.automationEditor != nil {
+                    model.automationEditor = nil
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(700))
+                        model.automationEditor = request
+                    }
+                } else {
+                    model.automationEditor = request
+                }
+            default:
+                note("route: needs automations|automation|skills|pipelines|pipeline|run|editor"); return
+            }
+            note("route: \(to) \(named)")
+
         case "inspector":
             guard let product = resolveProduct(productName, model) else { return }
             model.open(product: product.id)
@@ -142,6 +200,50 @@ final class TestDrive {
             model.settings.interfaceLanguage = lang
             LanguageBundle.adopt(lang)
             note("language: \(want)")
+
+        case "chat-report":
+            // A chat's report opened the way a click on it in a chat opens it — with the choices
+            // beside it when the report asks to decide something.
+            guard let path = obj["path"] as? String else { note("chat-report: needs path"); return }
+            model.openChatReport(path: path, title: (obj["title"] as? String) ?? "Report")
+            note("chat-report: \(path)")
+
+        case "settings":
+            // The Settings scene has no model action of its own: the app menu's "Settings…" opens
+            // it, as a person would.
+            NSApp.activate(ignoringOtherApps: true)
+            if let menu = NSApp.mainMenu?.items.first?.submenu,
+               let index = menu.items.firstIndex(where: { $0.keyEquivalent == "," }) {
+                menu.performActionForItem(at: index)
+                note("settings: opened")
+            } else {
+                note("settings: no Settings… item in the app menu")
+            }
+
+        case "browser-site":
+            // A site in Bulava's browser, as if added in Settings — without opening Chrome.
+            guard let url = obj["url"] as? String, let site = model.browser.addSite(url) else {
+                note("browser-site: needs a site's url"); return
+            }
+            model.browser.setWithoutMe(site.id, (obj["withoutMe"] as? Bool) ?? false)
+            note("browser-site: \(site.host)")
+
+        case "browser-settings":
+            // The Settings section of Bulava's browser in a window of its own, for a picture of it:
+            // in Settings it sits far down a long scroll.
+            let view = AccountBrowserSection(browser: model.browser)
+                .environment(model)
+                .padding(20)
+                .frame(width: 620)
+                .background(Palette.window)
+            let window = NSWindow(contentViewController: NSHostingController(rootView: view))
+            window.title = String(localized: "Bulava's browser")
+            window.makeKeyAndOrderFront(nil)
+            // The only window left on screen, so a capture of this app's window is this one.
+            for other in NSApp.windows where other !== window && other.isVisible { other.orderOut(nil) }
+            NSApp.activate(ignoringOtherApps: true)
+            previews.append(window)
+            note("browser-settings: shown")
 
         case "learning":
 
@@ -214,9 +316,29 @@ final class TestDrive {
             guard let path = obj["path"] as? String, !path.isEmpty else { note("shot: needs a path"); return }
             let what = (obj["what"] as? String) ?? "feed"
             let dark = (obj["theme"] as? String) == "dark"
+            // The window drawn by the app itself: no Screen Recording grant, so a fixture build
+            // nobody has granted anything can still show what it looks like.
+            if what == "drawn" {
+                // A window covered by other apps' windows is not redrawn at all, so it is brought
+                // up for a moment — never made key, never taking the keyboard — drawn, and sent back.
+                guard let window = NSApp.windows.first(where: { $0.isVisible && $0.frame.width > 400 }) else {
+                    note("shot: no visible window to draw"); return
+                }
+                window.orderFrontRegardless()
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .milliseconds(450))
+                    guard let self else { return }
+                    self.note(self.drawOwnWindow(to: path))
+                    window.orderBack(nil)
+                }
+                return
+            }
             note(capture(to: path, what: what, dark: dark,
                          report: (obj["report"] as? String) ?? "",
                          taskRef: (obj["task"] as? String) ?? "", model))
+
+        case "probe":
+            probe(obj, model)
 
         default:
             note("unknown action: \(verb)")
@@ -242,8 +364,10 @@ final class TestDrive {
         case .signIn(let c)?:   "sign in: " + c
         case .installEngine?:   "install the engine"
         case .trustFolders?:    "trust the folders"
+        case .finishClaudeSetup?: "finish Claude Code's setup"
         case .revealInFinder?:  "show it in Finder"
         case .askForScreenRecording?: "ask macOS for screen recording"
+        case .updateCodex(let c)?: "update codex: " + c
         case nil:               "no button"
         }
     }
@@ -376,6 +500,28 @@ final class TestDrive {
         }
     }
 
+    @MainActor private func drawOwnWindow(to path: String) -> String {
+        guard let window = NSApp.windows.first(where: { $0.isVisible && $0.frame.width > 400 }),
+              let view = window.contentView?.superview ?? window.contentView else {
+            return "shot: no visible window to draw"
+        }
+        // A window behind other apps' windows is not redrawn by itself; ask for it before drawing.
+        view.needsLayout = true
+        view.layoutSubtreeIfNeeded()
+        view.needsDisplay = true
+        window.displayIfNeeded()
+        let rect = view.bounds
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: rect) else { return "shot: could not draw the window" }
+        view.cacheDisplay(in: rect, to: rep)
+        guard let png = rep.representation(using: .png, properties: [:]) else { return "shot: could not encode the window" }
+        do {
+            try png.write(to: URL(fileURLWithPath: path))
+            return "shot: drawn \(Int(rect.width))x\(Int(rect.height)) → \(path)"
+        } catch {
+            return "shot: \(error.localizedDescription)"
+        }
+    }
+
     @MainActor private func captureWindow(to path: String, _ model: AppModel) -> String {
         guard let window = NSApp.windows.first(where: { $0.isVisible && $0.frame.width > 400 }) else {
             return "shot: no visible window to capture"
@@ -398,7 +544,7 @@ final class TestDrive {
         return "shot: window \(size) requested"
     }
 
-    private func note(_ text: String) {
+    func note(_ text: String) {
         let stamp = ISO8601DateFormatter().string(from: Date())
         let line = "[\(stamp)] \(text)\n"
         guard let data = line.data(using: .utf8) else { return }

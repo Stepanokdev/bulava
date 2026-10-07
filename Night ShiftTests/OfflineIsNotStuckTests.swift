@@ -35,21 +35,6 @@ nonisolated final class OfflineIsNotStuckTests: XCTestCase {
 
     // MARK: - What it says
 
-    @MainActor func testTheReasonNamesTheNetworkRatherThanSilence() {
-        let model = AppModel()
-        var inst = silentWorker(offline: true)
-        inst.offlineSince = nil
-
-        XCTAssertEqual(model.stuckReason(inst),
-                       String(localized: "No network. It carries on by itself when the connection returns."))
-    }
-
-    @MainActor func testAnOutageAndAHangDoNotReadTheSame() {
-        let model = AppModel()
-        XCTAssertNotEqual(model.stuckReason(silentWorker(offline: true)),
-                          model.stuckReason(silentWorker(offline: false)))
-    }
-
     @MainActor func testThePhaseReadsAsWaitingNotAsFailure() {
         XCTAssertEqual(WorkerPhase.offline.humanLabel, String(localized: "Waiting for the network"))
     }

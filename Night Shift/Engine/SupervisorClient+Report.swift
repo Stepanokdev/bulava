@@ -164,6 +164,10 @@ extension SupervisorClient {
         let instructions = """
         # ОКРЕМИЙ ХІД: ЛИШЕ ЗВІТ
 
+        Language: the report is written in the language the person has been writing to you in this
+        conversation — not the language of this file, and not the language of the message that asked
+        for it, which the app sent.
+
         Це не нова задача, не продовження розробки й не аудит усього продукту. Код, гілку, коміти та
         робочі файли НЕ змінюй. Зроби зрозумілий команді звіт лише про вже виконану роботу в поточному
         діалозі: простими словами, що зроблено, як це працює і як перевірено.
@@ -197,11 +201,16 @@ extension SupervisorClient {
             return nil
         }
 
+        // Sent by the app, not typed by the person, and never shown in the chat — so it is not in the
+        // person's language, and says so: in Ukrainian, as it was, it turned the report and the reply
+        // to it Ukrainian for someone who writes in English. `[BULAVA]` tells the engine the words are
+        // the app's, so it does not name their language as the person's (`task_language_line`).
         let relayMessage = """
-        Згенеруй тепер лише звіт про вже виконану роботу. Не змінюй продукт і не запускай новий аудит.
-        Повний обов'язковий контракт лежить у файлі:
+        [BULAVA] The app asks for a report on the work already done in this conversation — only the report: do \
+        not change the product and do not start a new audit. The full contract is in:
         \(instructionFile.path)
-        Прочитай його повністю, виконай і поверни шлях до готового index.html.
+        Read it all, follow it and return the path of the finished index.html. Write the report, and \
+        your reply, in the language the person has been writing to you in.
         """
         return ChatReportRequest(id: id, directory: directory, instructionFile: instructionFile,
                                  artifactPointer: artifactPointer, artifactsRoot: artifactsRoot,

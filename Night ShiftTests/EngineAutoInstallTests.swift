@@ -102,39 +102,6 @@ nonisolated final class EngineAutoInstallTests: XCTestCase {
 
     // MARK: - The real probe has to actually see the machine
 
-    /// Injecting a probe buys the tests determinism and buys the code a new way to be wrong: a
-    /// `.machine` probe that quietly stopped observing would pass every test above. So the
-    /// observation itself is made to answer both ways, about a process this test owns — it must
-    /// say no before the process exists and yes while it is alive.
-    func testTheMachineProbeSeesAProcessAppearAndGo() throws {
-        let needle = "bulava-probe-\(UUID().uuidString)"
-        XCTAssertFalse(EngineBusy.processExists(needle),
-                       "nothing by this name has ever run on this Mac")
-
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/sh")
-        // The trailing `:` matters — a shell execs its last command and loses its own argv with it,
-        // which would take the needle out of the command line this probe reads.
-        p.arguments = ["-c", "sleep 5; : \(needle)"]
-        try p.run()
-        defer { p.terminate() }
-
-        var seen = false
-        for _ in 0..<50 where !seen {            // pgrep sees it once the fork has landed
-            seen = EngineBusy.processExists(needle)
-            if !seen { Thread.sleep(forTimeInterval: 0.05) }
-        }
-        XCTAssertTrue(seen, "the probe looked at the machine and failed to find a running process")
-
-        p.terminate(); p.waitUntilExit()
-        var gone = false
-        for _ in 0..<50 where !gone {
-            gone = !EngineBusy.processExists(needle)
-            if !gone { Thread.sleep(forTimeInterval: 0.05) }
-        }
-        XCTAssertTrue(gone, "and it must stop reporting a process that has exited")
-    }
-
     /// `.quiet` exists for the tests. Production must still be the one that asks the machine.
     func testTheDefaultProbeIsTheMachine() throws {
         let src = URL(fileURLWithPath: #filePath)
@@ -381,9 +348,18 @@ time.sleep(30)
         defer { try? FileManager.default.removeItem(atPath: target.path + ".install-claim") }
         XCTAssertFalse(EngineInstaller.writerStillRunning(in: target))
 
+        // A stand-in that IS an rsync by name, copying into this directory — which is what the
+        // probe now asks, rather than whether some command line mentions the words.
+        let bin = scratch()
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let fake = bin.appendingPathComponent("rsync")
+        try "#!/bin/sh\nsleep 5\n".write(to: fake, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fake.path)
+        defer { try? FileManager.default.removeItem(at: bin) }
+
         let orphan = Process()
-        orphan.executableURL = URL(fileURLWithPath: "/bin/sh")
-        orphan.arguments = ["-c", "sleep 5; : rsync -a \(target.path)/"]
+        orphan.executableURL = fake
+        orphan.arguments = ["-a", "/tmp/source/", "\(target.path)/"]
         try orphan.run()
         defer { if orphan.isRunning { orphan.terminate() } }
 
@@ -442,16 +418,152 @@ time.sleep(30)
         XCTAssertNil(EngineBusy.blocker(instances: [done], on: .quiet))
     }
 
-    /// …but only when there is a run to stop. A process that outlived its own run, or a session
-    /// with no instance behind it, is something to be told about, not something to offer to end.
-    func testAProcessWithNoRunBehindItIsNotOfferedAsSomethingToStop() {
-        let stray = EngineBusy.Probe(strayProcess: { "message-pump.sh" }, workerSession: { false })
+    /// A process that outlived its run is not somebody's work to stop — it is the engine's own
+    /// leftover, and the wall offers to end it. It used to say only that it was there, with no
+    /// button, and the one button on the screen repeated the refused install.
+    func testALeftoverWithNoRunBehindItIsOfferedToBeEnded() {
+        let stray = EngineBusy.Probe(strayProcess: { [EngineBusy.Leftover(pid: 4242, name: "message-pump.sh")] },
+                                     workerSession: { [] })
         let blocker = EngineBusy.blocker(instances: [], on: stray)
         XCTAssertNotNil(blocker, "it still holds the engine")
         XCTAssertNil(blocker?.holder, "there is no run left to stop")
+        XCTAssertEqual(blocker?.leftovers.map(\.pid), [4242], "but there is a process to end")
+        XCTAssertTrue(blocker?.hasLeftovers == true)
 
-        let session = EngineBusy.Probe(strayProcess: { nil }, workerSession: { true })
-        XCTAssertNil(EngineBusy.blocker(instances: [], on: session)?.holder)
+        let session = EngineBusy.Probe(strayProcess: { [] }, workerSession: { ["night-gone"] })
+        let held = EngineBusy.blocker(instances: [], on: session)
+        XCTAssertNil(held?.holder)
+        XCTAssertEqual(held?.orphanSessions, ["night-gone"], "and a session to close")
+    }
+
+    /// A run that is working is named and asked about; its own watchdog, which runs out of the same
+    /// directory, is not listed beside it as a "leftover".
+    func testALiveRunIsNotDressedUpAsALeftover() {
+        var inst = instance("Ledger"); inst.watchdogAlive = true
+        let probe = EngineBusy.Probe(strayProcess: { [EngineBusy.Leftover(pid: 1, name: "watchdog.sh")] },
+                                     workerSession: { [] })
+        let blocker = EngineBusy.blocker(instances: [inst], on: probe)
+        XCTAssertEqual(blocker?.holder?.name, "Ledger")
+        XCTAssertTrue(blocker?.leftovers.isEmpty == true)
+    }
+
+    // MARK: - Which processes belong to the engine being replaced
+
+    /// The machine this was found on: the installed engine's path has a space in it, the checkout's
+    /// too, temporary folders are reached through `/var` and `/private/var`, and a reviewer's prompt
+    /// quoted the script's name. Only a daemon running OUT OF the install target holds it.
+    func testOnlyDaemonsRunningFromTheTargetHoldIt() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("engine owner \(UUID().uuidString)")
+        let target = root.appendingPathComponent("Application Support/Bulava/engine")
+        let checkout = root.appendingPathComponent("Night Shift/engine")
+        for dir in [target, checkout] {
+            try FileManager.default.createDirectory(at: dir.appendingPathComponent("bin"),
+                                                    withIntermediateDirectories: true)
+        }
+        defer { try? FileManager.default.removeItem(at: root) }
+        // `/var/folders/…` and `/private/var/folders/…` are one place.
+        let viaVar = target.path.replacingOccurrences(of: "/private/var/", with: "/var/")
+
+        let table: [ProcessTable.Entry] = [
+            .init(pid: 10, argv: ["/bin/bash", target.path + "/bin/watchdog.sh", "proj-1"]),
+            .init(pid: 11, argv: ["/bin/bash", viaVar + "/bin/message-pump.sh", "proj-1"]),
+            .init(pid: 12, argv: ["/bin/bash", checkout.path + "/bin/watchdog.sh", "proj-2"]),
+            .init(pid: 13, argv: ["/bin/bash", "/private/var/folders/x/T/tmp.AB/engine/bin/watchdog.sh", "project-1"]),
+            .init(pid: 14, argv: ["node", "/opt/codex/bin/codex.js", "exec",
+                                  "why does \(target.path)/bin/watchdog.sh keep running?"]),
+            .init(pid: 15, argv: ["grep", "watchdog.sh"]),
+            .init(pid: 16, argv: ["/bin/bash", "-c", "\(target.path)/bin/watchdog.sh x; sleep 1"]),
+            .init(pid: 17, argv: ["/bin/bash", target.path + "/bin/pipeline.sh", "proj-1"]),
+            .init(pid: 18, argv: ["/bin/bash", target.path + "/bin/night-shift.sh", "status"]),
+            .init(pid: 19, argv: ["/bin/bash", "bin/watchdog.sh", "proj-3"]),
+        ]
+        let cwd: (Int32) -> String? = { $0 == 19 ? target.path : nil }
+        let found = EngineProcesses.daemons(of: target, in: table, cwd: cwd)
+        XCTAssertEqual(found.map(\.pid), [10, 11, 17, 19],
+                       "the target's own daemons, however their path was spelled — and nothing else")
+        XCTAssertEqual(found.map(\.name), ["watchdog.sh", "message-pump.sh", "pipeline.sh", "watchdog.sh"])
+    }
+
+    /// The install target is a sibling-prefix of nothing: `engine2` is not inside `engine`.
+    func testASiblingDirectoryIsNotInsideTheTarget() {
+        XCTAssertFalse(ProcessTable.path("/tmp/x/engine2/bin/watchdog.sh", isInside: "/tmp/x/engine"))
+        XCTAssertTrue(ProcessTable.path("/tmp/x/engine/bin/watchdog.sh", isInside: "/tmp/x/engine"))
+        XCTAssertTrue(ProcessTable.path("/tmp/x/engine", isInside: "/tmp/x/engine/"))
+    }
+
+    /// The same for the copy itself: it is rsync, and it writes into the target.
+    func testAnRsyncIsAWriterOnlyWhenItCopiesIntoTheTarget() {
+        let target = URL(fileURLWithPath: "/Users/someone/Library/Application Support/Bulava/engine")
+        let table: [ProcessTable.Entry] = [
+            .init(pid: 1, argv: ["/usr/bin/rsync", "-a", "--delete", "/Applications/Bulava.app/Contents/Resources/engine/",
+                                 target.path + "/"]),
+            .init(pid: 2, argv: ["/usr/bin/rsync", "-a", "/a/", "/b/"]),
+            .init(pid: 3, argv: ["claude", "-p", "rsync -a src/ \(target.path)/ keeps failing"]),
+        ]
+        XCTAssertEqual(EngineProcesses.writers(into: target, in: table), [1])
+    }
+
+    /// The kernel's own record of a process, read back exactly — a path with a space in it stays
+    /// one argument, which is the whole reason this does not parse `ps`.
+    func testTheProcessTableReadsArgumentsExactly() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("engine probe \(UUID().uuidString)/bin")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
+        let script = dir.appendingPathComponent("watchdog.sh")
+        try "#!/bin/bash\nsleep 5\n".write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+
+        let p = Process()
+        p.executableURL = script
+        p.arguments = ["slug with space"]
+        try p.run()
+        defer { if p.isRunning { p.terminate() } }
+
+        var argv: [String]?
+        for _ in 0..<50 {
+            argv = ProcessTable.arguments(of: p.processIdentifier)
+            if argv?.contains(script.path) == true { break }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        XCTAssertEqual(argv?.last, "slug with space")
+        XCTAssertTrue(argv?.contains(script.path) == true, "argv: \(argv ?? [])")
+
+        let engine = dir.deletingLastPathComponent()
+        let mine = EngineProcesses.daemons(of: engine, in: ProcessTable.snapshot())
+        XCTAssertTrue(mine.contains { $0.pid == p.processIdentifier },
+                      "the live probe found the daemon running out of this engine")
+        let other = EngineProcesses.daemons(of: engine.appendingPathComponent("elsewhere"),
+                                            in: ProcessTable.snapshot())
+        XCTAssertFalse(other.contains { $0.pid == p.processIdentifier })
+    }
+
+    /// Ending a leftover ends it — and only a process still running out of the engine is touched.
+    func testEndingALeftoverEndsItAndNothingElse() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("engine end \(UUID().uuidString)/bin")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
+        let script = dir.appendingPathComponent("watchdog.sh")
+        try "#!/bin/bash\nwhile :; do sleep 1; done\n".write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+
+        let leftover = Process(); leftover.executableURL = script; leftover.arguments = ["x"]
+        let bystander = Process()
+        bystander.executableURL = URL(fileURLWithPath: "/bin/sleep"); bystander.arguments = ["5"]
+        try leftover.run(); try bystander.run()
+        defer { if leftover.isRunning { leftover.terminate() }; if bystander.isRunning { bystander.terminate() } }
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        let engine = dir.deletingLastPathComponent()
+        let alive = await EngineBusy.end([.init(pid: leftover.processIdentifier, name: "watchdog.sh"),
+                                          .init(pid: bystander.processIdentifier, name: "watchdog.sh")],
+                                         engine: engine, grace: 2)
+        XCTAssertTrue(alive.isEmpty)
+        leftover.waitUntilExit()
+        XCTAssertFalse(leftover.isRunning, "the leftover is gone")
+        XCTAssertTrue(bystander.isRunning, "a pid that is not running this engine is never signalled")
     }
 
     /// Stopping is not the same as gone: the watchdog is killed outright, but the pump and the

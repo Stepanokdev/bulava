@@ -311,6 +311,18 @@ struct SettingsView: View {
                 toolDoctor
                 Hairline()
                 connectionTest
+                Hairline()
+                toggleRow("Fix what stops a message by itself",
+                          help: "When a message cannot go because something broke, Codex looks for the cause in that project's folder, fixes it there and Bulava sends the message again. It can change files only in that folder and in Bulava's notes about it, never the app or its engine. Off, the same repair waits for a button.",
+                          isOn: liveBinding(\.autoRepair))
+                Hairline()
+                toggleRow("Send anonymous error reports",
+                          help: "What broke and how the repair went: Bulava's own error code, the message with every name, path, address and key taken out, and the app, engine and macOS versions. No project, file, chat or account. Turning it off drops reports that have not gone yet.",
+                          isOn: Binding(get: { model.settings.shareErrorReports },
+                                        set: { on in
+                                            model.settings.shareErrorReports = on
+                                            model.flushIncidentReports()
+                                        }))
             }
             .padding(Metrics.cardPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -441,12 +453,12 @@ struct SettingsView: View {
             Hairline()
 
             toggleRow("Answer workers' questions myself",
-                      help: "A worker that asks you directly holds and surfaces the question instead of letting Codex decide right away.",
+                      help: "Codex reads a worker's question first and answers what it can. What only you can decide waits for you. When this is off, the worker takes the safe default right away.",
                       isOn: $draft.askUserEnabled)
 
             if draft.askUserEnabled {
                 SettingRow("Wait for my answer",
-                           help: "How long a worker holds before handing the question to Codex.") {
+                           help: "How long such a question waits for you. Then the worker takes the safe default; what only you may decide is left undone, and the run says what would unblock it.") {
                     Stepper(value: $draft.askUserWaitMinutes, in: 5...240, step: 5) {
                         Text("\(draft.askUserWaitMinutes) min")
                             .font(Typo.mono(11.5))
@@ -454,6 +466,30 @@ struct SettingsView: View {
                     }
                     .fixedSize()
                 }
+            }
+
+            Hairline()
+
+            toggleRow("Keep the Mac awake while work runs",
+                      help: "While work can go on without you, the Mac does not fall asleep on its own. It is let go the moment everything waits for you or is done. A closed lid or a flat battery still stops it.",
+                      isOn: $draft.keepAwakeWhileWorking)
+
+            Hairline()
+
+            toggleRow("Links to the phone",
+                      help: "Sites, pages, notes and files an agent shares, or that you open from a chat, open on your phone over this Wi-Fi only. A link opens only what it was made for. Off, nothing answers.",
+                      isOn: $draft.shareLinksEnabled)
+            if !model.shares.store.links.isEmpty {
+                SharedLinksList(shares: model.shares)
+            }
+
+            Hairline()
+
+            toggleRow("Bulava's browser",
+                      help: "Runs work in a Chrome of Bulava's own: you sign in to sites there once, and runs use them without asking you, one run at a time. Runs that need no sign-in get a throwaway browser. Off, runs use the browser your own Claude setup gives them.",
+                      isOn: $draft.accountBrowserEnabled)
+            if draft.accountBrowserEnabled {
+                AccountBrowserSection(browser: model.browser)
             }
         }
         .padding(.top, 14)
@@ -522,6 +558,8 @@ struct SettingsView: View {
         settings.codexEffort = model.settings.codexEffort
         settings.claudeStandsInForCodex = model.settings.claudeStandsInForCodex
         settings.workersMayDriveApps = model.settings.workersMayDriveApps
+        settings.autoRepair = model.settings.autoRepair
+        settings.shareErrorReports = model.settings.shareErrorReports
         // The switch is live, like every other switch here. The profile is NOT: it is typed, and
         // a live binding on a text field would write the whole settings file — and re-publish the
         // engine's configuration — once per keystroke. It goes through draft and Save.

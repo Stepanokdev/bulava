@@ -22,6 +22,8 @@ struct MenuBarView: View {
             let needing = needsUser
             let live = working
 
+            if model.power.holding { awake }
+
             if !needing.isEmpty {
                 divider
                 section("Needs you") {
@@ -88,6 +90,23 @@ struct MenuBarView: View {
         }
         if parts.isEmpty { return String(localized: "Nothing in flight") }
         return parts.joined(separator: " · ")
+    }
+
+    /// The Mac is being kept up for the work — and, on battery, what would still stop it.
+    private var awake: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 7) {
+            Image(systemName: model.runningOnBattery ? "battery.25" : "powerplug")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(model.runningOnBattery ? Palette.orange : Palette.textFaint)
+            Text(model.runningOnBattery
+                 ? "On battery. Plug the Mac in and keep the lid open, or the work stops when it sleeps."
+                 : "The Mac stays awake while this runs. Closing the lid still puts it to sleep.")
+                .font(Typo.panelMeta)
+                .foregroundStyle(model.runningOnBattery ? Palette.orange : Palette.textFaint)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 4)
+        .padding(.top, 8)
     }
 
     // MARK: - Sections
@@ -228,7 +247,7 @@ struct MenuBarView: View {
 
     private func reveal(_ product: Product) {
         openMainWindow()
-        model.open(product: product.id)
+        model.openWhatWaits(inProduct: product.id)
     }
 
     /// Bring back the window that is already there; open one only when there is none. Every press

@@ -1,0 +1,102 @@
+{
+  "schema": "bulava.pipeline/1",
+  "id": "plain",
+  "name": "Claude",
+  "description": "Без попередніх позицій: Claude одразу береться до задачі, Codex перевіряє результат і може повернути. Швидше для дрібних змін.",
+  "i18n": {
+    "en": {
+      "description": "No positions up front: Claude starts on the task straight away, Codex reviews the result and can send it back. Quicker for small changes.",
+      "node.chat": "Chat message",
+      "node.compose": "Brief for the worker",
+      "node.deliver": "Claude does the work",
+      "node.scope": "Scope of changes",
+      "node.verify": "Build proof",
+      "node.review": "Codex review",
+      "node.report": "Report",
+      "node.merge": "Merge the branch"
+    }
+  },
+  "version": "1.0.0",
+  "revision": 1,
+  "builtin": true,
+  "executes": "plain",
+  "nodes": [
+    {
+      "id": "chat",
+      "module": "bulava/trigger.chat@1",
+      "title": "Повідомлення в чаті"
+    },
+    {
+      "id": "compose",
+      "module": "bulava/prep.compose@1",
+      "title": "Бриф виконавцю"
+    },
+    {
+      "id": "deliver",
+      "module": "bulava/agent.claude@1",
+      "title": "Claude виконує"
+    },
+    {
+      "id": "scope",
+      "module": "bulava/gate.scope@1",
+      "title": "Межі змін"
+    },
+    {
+      "id": "verify",
+      "module": "bulava/gate.verify@1",
+      "title": "Доказ збіркою"
+    },
+    {
+      "id": "review",
+      "module": "bulava/gate.review@1",
+      "title": "Рев'ю Codex"
+    },
+    {
+      "id": "report",
+      "module": "bulava/out.report@1",
+      "title": "Звіт"
+    },
+    {
+      "id": "merge",
+      "module": "bulava/out.merge@1",
+      "title": "Злиття гілки"
+    }
+  ],
+  "edges": [
+    {
+      "from": "chat.task",
+      "to": "compose.in"
+    },
+    {
+      "from": "compose.brief",
+      "to": "deliver.brief"
+    },
+    {
+      "from": "deliver.work",
+      "to": "scope.work"
+    },
+    {
+      "from": "scope.work",
+      "to": "verify.work"
+    },
+    {
+      "from": "verify.work",
+      "to": "review.work"
+    },
+    {
+      "from": "review.pass",
+      "to": "report.in"
+    },
+    {
+      "from": "review.pass",
+      "to": "merge.work"
+    },
+    {
+      "from": "review.fail",
+      "to": "deliver.feedback",
+      "loop": {
+        "max": 3
+      }
+    }
+  ]
+}

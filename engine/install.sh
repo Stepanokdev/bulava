@@ -2,6 +2,14 @@
 set -eu
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# `--worker-settings-only`: Bulava Dev. It runs the engine from this checkout against a state folder
+# of its own (SUPERVISOR_STATE_DIR), and needs the worker settings there to name this checkout's
+# hooks — and nothing else. Claude Code's global settings, the slash commands and the terminal
+# commands belong to the production engine; a Dev launch rewriting them would point his terminal
+# and his statusline at whatever is half-written in the repository.
+WORKER_ONLY=0
+[ "${1:-}" = "--worker-settings-only" ] && WORKER_ONLY=1
+
 # Writing that an old install kept INSIDE the engine, which is not safe to leave alone.
 #
 # Before the store was split out, `_global.md` and `projects/*.md` lived in `supervisor/lessons/` —
@@ -17,7 +25,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LEGACY_RESCUE_FAILED=0
 LEGACY_LESSONS="$ROOT/supervisor/lessons"
 STORE="$HOME/.claude/supervisor/memory"   # read again at the end, where the failure is reported
-if [ -d "$LEGACY_LESSONS" ]; then
+if [ "$WORKER_ONLY" = 0 ] && [ -d "$LEGACY_LESSONS" ]; then
   rescued=0
   rescue_failed=0
 
@@ -79,14 +87,16 @@ fi
 # A first install has no ~/.claude at all, and this used to die on the backup before doing
 # anything — the one moment the script exists for.
 mkdir -p ~/.claude
-if [ -f ~/.claude/settings.json ]; then
+if [ "$WORKER_ONLY" = 1 ]; then
+  :
+elif [ -f ~/.claude/settings.json ]; then
   cp ~/.claude/settings.json ~/.claude/settings.json.backup-$(date +%Y%m%d-%H%M%S)
   echo "backup: ~/.claude/settings.json.backup-*"
 else
   echo "нових налаштувань Claude Code тут ще немає — створюю"
 fi
 
-ROOT="$ROOT" python3 - <<'EOF'
+ROOT="$ROOT" WORKER_ONLY="$WORKER_ONLY" python3 - <<'EOF'
 import json, os, pathlib, shlex
 
 ROOT = os.environ["ROOT"]
@@ -98,6 +108,7 @@ ROOT = os.environ["ROOT"]
 # safety-check and answer-question. shlex.quote handles spaces and any other special char.
 def cmd(rel):
     return shlex.quote(f"{ROOT}/{rel}")
+WORKER_ONLY = os.environ.get("WORKER_ONLY") == "1"
 p = pathlib.Path.home() / ".claude" / "settings.json"
 # Missing or unreadable settings mean a fresh machine, not a broken one: start from an empty
 # object rather than refusing to install.
@@ -130,12 +141,15 @@ allow = s.get("permissions", {}).get("allow", [])
 before = len(allow)
 s.setdefault("permissions", {})["allow"] = [a for a in allow if "sk-proj-" not in a]
 
-p.write_text(json.dumps(s, indent=2, ensure_ascii=False) + "\n")
+if not WORKER_ONLY:
+    p.write_text(json.dumps(s, indent=2, ensure_ascii=False) + "\n")
 
 # Worker-only hooks: passed to each worker by night-shift.sh via `claude --settings`.
 # 6h answer-question: may hold a question until Codex's 5h window resets.
 # 1h review-gate: targeted review plus deterministic build/test verification.
-sup = pathlib.Path.home() / ".claude" / "supervisor"
+# The state folder the engine itself uses (SUPERVISOR_STATE_DIR, else ~/.claude/supervisor): the
+# worker settings are read from there by `worker_settings_for`.
+sup = pathlib.Path(os.environ.get("SUPERVISOR_STATE_DIR") or (pathlib.Path.home() / ".claude" / "supervisor"))
 sup.mkdir(parents=True, exist_ok=True)
 worker = {"hooks": {
     "Stop": [{"matcher": "", "hooks": [
@@ -167,6 +181,14 @@ worker = {"hooks": {
         {"matcher": "Bash", "hooks": [
             {"type": "command", "command": cmd("hooks/control-guard.sh"), "timeout": 30}]},
     ],
+    # Where Claude Code would ask a person. An automation's run answers here instead of waiting
+    # for a click nobody can give; with a person there it only writes down what was asked.
+    "PermissionRequest": [{"matcher": "", "hooks": [
+        {"type": "command", "command": cmd("hooks/permission-gate.sh"), "timeout": 30}]}],
+    "PermissionDenied": [{"matcher": "", "hooks": [
+        {"type": "command", "command": cmd("hooks/permission-gate.sh"), "timeout": 30}]}],
+    "Notification": [{"matcher": "permission_prompt", "hooks": [
+        {"type": "command", "command": cmd("hooks/permission-gate.sh"), "timeout": 30}]}],
 }}
 # The statusline in the WORKER settings too — it is the only source of Claude's rate limits.
 #
@@ -178,9 +200,13 @@ worker = {"hooks": {
 # With it here, every worker keeps it current, which is exactly when knowing the limits matters.
 worker["statusLine"] = {"type": "command", "command": cmd("bin/statusline.sh")}
 (sup / "worker-settings.json").write_text(json.dumps(worker, indent=2, ensure_ascii=False) + "\n")
-print(f"statusLine set (global); supervisor hooks moved to worker-settings.json; "
-      f"global de-polluted; removed {before - len(s['permissions']['allow'])} leaked-key entries")
+if WORKER_ONLY:
+    print(f"worker settings written to {sup / 'worker-settings.json'} (hooks from {ROOT}); global settings untouched")
+else:
+    print(f"statusLine set (global); supervisor hooks moved to worker-settings.json; "
+          f"global de-polluted; removed {before - len(s['permissions']['allow'])} leaked-key entries")
 EOF
+[ "$WORKER_ONLY" = 1 ] && exit 0
 
 mkdir -p ~/.claude/commands
 # These are ours to update, but the file on disk may not be ours any more: somebody can have edited

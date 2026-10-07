@@ -20,6 +20,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import brand  # noqa: E402  (needs the path above)
+import language  # noqa: E402
 
 R = json.load(sys.stdin)
 out = sys.argv[1]
@@ -31,11 +32,12 @@ def esc(v):
 
 # --- Language ------------------------------------------------------------------
 #
-# The receipt is a page the director reads, so it speaks his language — the same one report.sh
-# passes for the rich report (`language`). Ukrainian was hard-coded here, which made the artifact
-# monolingual while the app itself ships en/uk/ru.
-LANG = (R.get("language") or "Ukrainian").strip().lower()
-LOC = "uk" if LANG.startswith(("ukrain", "укр")) else ("ru" if LANG.startswith(("russ", "рус")) else "en")
+# The receipt is a page the director reads, so it speaks his language: the one its summary is
+# written in — the worker writes in the language he writes to it in — else the one the run was told
+# (`language`), else the engine's own. A summary written in English used to sit under Ukrainian
+# headings because the run's setting always won.
+LOC = language.of_text(R.get("summary"),
+                       R.get("language") or os.environ.get("SUPERVISOR_REPORT_LANGUAGE") or "Ukrainian")
 
 
 def t(en, uk, ru):
@@ -184,7 +186,7 @@ chips = "".join(
 )
 
 DOC = f"""<!doctype html>
-<html lang="uk"><head>
+<html lang="{LOC}"><head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>{esc(R.get("project_name"))} · {esc(label)}</title>

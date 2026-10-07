@@ -170,6 +170,14 @@ private struct MessageEntry: View {
             }
 
             if isUser, entry.delivery == .failed,
+               let chatID = entry.chatID, model.setupBlocked.contains(chatID) {
+                setupRow(chatID: chatID)
+                    .disabled(readOnly)
+                    .padding(.leading, 37)
+                    .padding(.top, 4)
+            }
+
+            if isUser, entry.delivery == .failed,
                let chatID = entry.chatID, let folder = model.gitConsentBlocked[chatID] {
                 gitConsentRow(folder: folder, chatID: chatID)
                     .disabled(readOnly)
@@ -178,8 +186,42 @@ private struct MessageEntry: View {
             }
 
             if isUser, entry.delivery == .failed,
+               let chatID = entry.chatID, let block = model.mcpBlocked[chatID], block.entryID == entry.id {
+                McpRow(block: block, entryID: entry.id, chatID: chatID)
+                    .disabled(readOnly)
+                    .padding(.leading, 37)
+                    .padding(.top, 4)
+            }
+
+            if isUser, entry.delivery == .failed,
+               let chatID = entry.chatID, let block = model.dirtyTreeBlocked[chatID], block.entryID == entry.id {
+                DirtyTreeRow(block: block, entryID: entry.id, chatID: chatID)
+                    .disabled(readOnly)
+                    .padding(.leading, 37)
+                    .padding(.top, 4)
+            }
+
+            if isUser, entry.delivery == .failed,
+               let chatID = entry.chatID, let block = model.heavyFilesBlocked[chatID], block.entryID == entry.id {
+                HeavyFilesRow(block: block, entryID: entry.id, chatID: chatID)
+                    .disabled(readOnly)
+                    .padding(.leading, 37)
+                    .padding(.top, 4)
+            }
+
+            if isUser, entry.delivery == .failed,
                let chatID = entry.chatID, let plan = model.handoffBlocked[chatID] {
                 handoffRow(plan: plan, chatID: chatID)
+                    .disabled(readOnly)
+                    .padding(.leading, 37)
+                    .padding(.top, 4)
+            }
+
+            // What Bulava is doing about a failure that stopped this message — a repair under way,
+            // its verdict, or the offer of one.
+            if isUser, let chatID = entry.chatID, let repair = model.repairs[chatID],
+               repair.entryID == entry.id, entry.delivery == .failed || repair.isBusy {
+                RepairRow(repair: repair)
                     .disabled(readOnly)
                     .padding(.leading, 37)
                     .padding(.top, 4)
@@ -342,6 +384,31 @@ private struct MessageEntry: View {
                 model.answerWithClaudeInstead(entryID: entry.id, in: chatID)
             } label: {
                 Text("Answer with Claude")
+            }
+            .buttonStyle(.bulava(.primary))
+        }
+        .padding(11)
+        .frame(maxWidth: 680, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: Metrics.radiusPanel, style: .continuous)
+            .fill(Palette.orangeSoft))
+    }
+
+    /// Claude Code's first run is still ahead of it, and a worker would stop on its theme picker.
+    @ViewBuilder private func setupRow(chatID: UUID) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 12))
+                .foregroundStyle(Palette.orange)
+            Text("On its first start Claude Code waits for a colour theme to be picked, and a worker in the background cannot pick one.")
+                .font(Typo.caption)
+                .foregroundStyle(Palette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Button {
+                model.finishClaudeSetup(thenRetry: entry.id, in: chatID)
+            } label: {
+                Label { Text("Finish setup and send") } icon: { Image(systemName: "checkmark") }
+                    .labelStyle(.titleAndIcon)
             }
             .buttonStyle(.bulava(.primary))
         }
@@ -825,7 +892,7 @@ struct ReportCard: View {
                     ForEach(Array(TaskPresentation.cardActions(for: task, model: model).enumerated()),
                             id: \.element.id) { _, action in
                         Button { action.perform(model) } label: {
-                            Label { Text(action.titleKey) } icon: { Image(systemName: action.symbol) }
+                            Label { Text(action.title) } icon: { Image(systemName: action.symbol) }
                                 .labelStyle(.titleAndIcon)
                         }
                         .buttonStyle(.bulava(action.emphasis == .primary ? .primary : .quiet))

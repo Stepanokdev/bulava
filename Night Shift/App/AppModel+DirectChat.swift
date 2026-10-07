@@ -81,6 +81,11 @@ nonisolated enum DirectChatPhase: Equatable, Sendable {
     case needsReview
     case ready
     case resumable
+    /// Its watchdog died with its session while it still owed work; Bulava is bringing it back in
+    /// place (`AppModel.reviveDeadRuns`).
+    case reviving
+    /// That did not work, a few times over. A message tries again.
+    case revivalFailed
     case failed(String)
 
     var label: String {
@@ -90,7 +95,11 @@ nonisolated enum DirectChatPhase: Equatable, Sendable {
         case .preparing(let peers): peers.label
         case .queued: String(localized: "In line — the current answer has to finish first")
         case .waitingForLimit(let until):
-            if let until {
+            // A time already gone by is not "back around" anything: the window is back, and the
+            // watchdog is about to see it.
+            if let until, until <= Date() {
+                String(localized: "The usage window is back — picking the work up")
+            } else if let until {
                 String(format: String(localized: "Waiting for the usage window · back around %@"),
                        Fmt.clock(until))
             } else {
@@ -98,8 +107,11 @@ nonisolated enum DirectChatPhase: Equatable, Sendable {
             }
         case .waitingForCodex(let until):
             // The day as well as the clock: a weekly window five days out shown as a bare time
-            // reads as minutes away, and a reader acted on exactly that once already.
-            if let until {
+            // reads as minutes away, and a reader acted on exactly that once already. A time already
+            // gone by is not "back around" anything.
+            if let until, until <= Date() {
+                String(localized: "Codex is back — picking the work up")
+            } else if let until {
                 String(format: String(localized: "Waiting for Codex · back around %@"),
                        Fmt.stamp(until))
             } else {
@@ -117,6 +129,9 @@ nonisolated enum DirectChatPhase: Equatable, Sendable {
         case .needsReview: String(localized: "Work stopped — review the result above")
         case .ready: String(localized: "Night Shift replied")
         case .resumable: String(localized: "Ready to resume")
+        case .reviving: String(localized: "Night Shift stopped unexpectedly — Bulava is bringing it back")
+        case .revivalFailed:
+            String(localized: "Night Shift stopped and could not be brought back — send a message to continue")
         case .failed(let message): message
         }
     }
@@ -140,6 +155,8 @@ nonisolated enum DirectChatPhase: Equatable, Sendable {
         case .needsReview: "exclamationmark.bubble"
         case .ready: "checkmark.circle"
         case .resumable: "clock.arrow.circlepath"
+        case .reviving: "arrow.clockwise.circle"
+        case .revivalFailed: "exclamationmark.arrow.circlepath"
         case .failed: "exclamationmark.triangle"
         }
     }
@@ -151,19 +168,26 @@ nonisolated enum DirectChatPhase: Equatable, Sendable {
 
     var wantsAttention: Bool {
         self == .needsAttention || self == .needsReview || self == .engineMismatch || self == .frozen
-            || isFailure
+            || self == .revivalFailed || isFailure
     }
 
     var isActive: Bool {
         switch self {
         case .starting, .preparing, .queued, .waitingForLimit, .waitingForCodex, .restartingFrozen,
-             .working, .verifying, .reviewing, .auditing: true
+             .reviving, .working, .verifying, .reviewing, .auditing: true
         default: false
         }
     }
 
-    static func resolve(instance: SupervisorInstance, bindingHasOutcome: Bool) -> DirectChatPhase {
+    static func resolve(instance: SupervisorInstance, bindingHasOutcome: Bool,
+                        revivalGaveUp: Bool = false) -> DirectChatPhase {
         if instance.pendingQuestion != nil { return .needsAttention }
+        // Before the pause below. A run parked on Codex whose watchdog is dead is not waiting for
+        // Codex: nothing would notice it come back. It said "Waiting for Codex · back around 11:26 PM"
+        // at 11:28 and for as long as anyone looked.
+        if instance.needsRevival, !instance.inStartupGrace {
+            return revivalGaveUp ? .revivalFailed : .reviving
+        }
 
         if instance.auditState == "audit_running" || instance.reviewStage == "auditing" {
             return .auditing
@@ -226,6 +250,10 @@ nonisolated enum DirectChatPhase: Equatable, Sendable {
                 : .waitingForLimit(instance.pausedResumeAt)
         }
         if instance.doneResult == "needs-user" { return .needsReview }
+        // A message parked for a later delivery is still his, unanswered. The previous answer's
+        // "replied" over it is how two questions sat in the queue under a header saying he had his
+        // answer, and he asked the same thing three times.
+        if instance.queuedMessageCount > 0 { return .queued }
         if bindingHasOutcome || instance.outcome != nil || instance.doneResult != nil { return .ready }
         if instance.active || instance.watchdogAlive { return .working }
         return .resumable
@@ -236,22 +264,50 @@ extension AppModel {
     // MARK: Sending
 
     func sendDirectMessage(_ raw: String, attachments: [Attachment] = []) {
-        guard let productID = selectedProductID,
-              let product = products.product(id: productID) else { return }
-        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || !attachments.isEmpty else { return }
-
+        guard let productID = selectedProductID else { return }
         let chat = conversations.currentChat(for: productID)
+        sendDirectMessage(raw, attachments: attachments, productID: productID, chatID: chat.id)
+    }
+
+    /// Whether a message addressed to one chat went out, and if not, why not.
+    enum AddressedSend: Equatable {
+        case sent(entryID: UUID)
+        /// The same message arrived twice — a phone that never heard the first answer asks again.
+        /// Nothing new was written.
+        case alreadySent(entryID: UUID)
+        case noSuchProduct
+        case empty
+    }
+
+    /// Send into a chat named by its id, whatever the window happens to show.
+    ///
+    /// The window's own composer comes through here with the chat it has open; the phone comes
+    /// through here with the chat IT has open, which may be a different one. Reading the selection
+    /// anywhere below this line would send the phone's words into the Mac's chat.
+    ///
+    /// `entryID` is chosen by the sender. A retry after a lost reply carries the same one, and
+    /// finds the entry the first attempt already wrote.
+    @discardableResult
+    func sendDirectMessage(_ raw: String, attachments: [Attachment] = [],
+                           productID: UUID, chatID: UUID,
+                           entryID: UUID = UUID()) -> AddressedSend {
+        if conversations.entry(id: entryID) != nil { return .alreadySent(entryID: entryID) }
+        guard let product = products.product(id: productID) else { return .noSuchProduct }
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty || !attachments.isEmpty else { return .empty }
+
+        let chat = conversations.adoptChat(id: chatID, for: productID)
         let superseding = supersededChatIDs.remove(chat.id) != nil
         let message = directMessage(text, attachments: attachments, superseding: superseding)
         let userEntry = conversations.appendUser(text, productID: productID, chatID: chat.id,
-                                                 attachments: attachments)
+                                                 attachments: attachments, id: entryID)
         if isDirectChatBusy(chat.id) {
             conversations.updateDelivery(entryID: userEntry.id, .queued)
         }
         products.worked(productID)
         chatErrors[chat.id] = nil
         deliver(message: message, entryID: userEntry.id, chat: chat, product: product)
+        return .sent(entryID: userEntry.id)
     }
 
     // MARK: Codex-only
@@ -259,7 +315,7 @@ extension AppModel {
     private func deliverViaCodex(message: String, entryID: UUID, chat: Chat, product: Product) {
         guard let primary = chatPrimary(for: product, chatID: chat.id) else {
             conversations.updateDelivery(entryID: entryID, .failed)
-            failChat(chat.id, String(localized: "Choose a primary project folder before sending."))
+            failChat(chat.id, String(localized: "Choose a primary project folder before sending."), .needsYou)
             return
         }
         sendingChatIDs.insert(chat.id)
@@ -274,8 +330,10 @@ extension AppModel {
         let thread = conversations.chat(id: chat.id)?.session?.codexThreadID
         // `Automatic` means the chosen model's own default depth, which the catalogue knows and
         // differs per model — not one fixed level for all of them.
-        let effort = codexModels.effort(settings.codexEffort, forSlug: settings.codexModel).rawValue
-        let codexModel = settings.codexModel
+        settleRunChoices(for: chat.id)
+        let run = runChoices(for: chat.id)
+        let effort = codexModels.effort(run.codexEffort, forSlug: run.codexModel).rawValue
+        let codexModel = run.codexModel
         let cwd = URL(fileURLWithPath: primary.path)
 
         let answerID = conversations.beginForemanTurn(productID: product.id, chatID: chat.id,
@@ -289,7 +347,7 @@ extension AppModel {
                 codexTurns[chat.id] = nil
             }
             let path = await ShellEnvironment.shared.path()
-            let outcome = await CodexChatRunner.send(
+            let outcome = await runCodexTurn(CodexTurnRequest(
                 prompt: message, threadID: thread, cwd: cwd, effort: effort,
                 model: codexModel, path: path,
                 register: { [weak self] runner in
@@ -301,7 +359,7 @@ extension AppModel {
                         self?.conversations.updateBlocks(entryID: answerID, blocks: blocks,
                                                          persist: false)
                     }
-                })
+                }))
 
             conversations.updateBlocks(entryID: answerID, blocks: outcome.blocks,
                                        text: Self.proseOf(outcome.blocks), persist: true)
@@ -319,7 +377,10 @@ extension AppModel {
                 codexTurns[chat.id] = nil
                 if settings.claudeStandsInForCodex {
                     noteCodexStandIn(reason, in: chat, product: product)
-                    deliverViaClaude(message: message, entryID: entryID, chat: chat, product: product)
+                    // On what it was sent with. Codex has been working on it all this time, and a
+                    // change to the pill meanwhile was made for the next message, not this one.
+                    deliverViaClaude(message: message, entryID: entryID, chat: chat, product: product,
+                                     run: run)
                 } else {
                     conversations.updateDelivery(entryID: entryID, .failed)
                     conversations.setCodexWall(entryID: entryID, reason.wall)
@@ -327,7 +388,10 @@ extension AppModel {
                 return
             }
             if let failure = outcome.failure {
-                failChat(chat.id, failure)
+                // Codex had the message: whatever it did before failing may already be done.
+                failChat(chat.id, failure, .uncertain("codex.turn_failed"))
+            } else {
+                confirmedDeliveries.insert(entryID)
             }
             products.worked(product.id)
         }
@@ -371,16 +435,20 @@ extension AppModel {
         return lastSpoken?.id == entryID
     }
 
-    /// Stop what is running, take the message back, and put it in the composer to edit.
+    /// Stop what is running, take the message back, and hand the words to whoever asked.
     ///
     /// The two outcomes are told apart rather than blurred. A message still sitting in the
     /// undelivered queue is genuinely un-sent and disappears from the thread. One the agent has
     /// already read stays on screen, marked as replaced — because it WAS read, and hiding it would
     /// make the next answer look like a reply to nothing.
-    func takeBackMessage(entryID: UUID) {
+    ///
+    /// `handBack` runs once the engine has said whether the message was read. The Mac's Edit puts
+    /// the words in the Mac's composer; the phone's puts them in ITS composer — putting them into
+    /// the Mac's draft would leave the person holding the phone with an empty field and their text
+    /// on a screen in another room.
+    func takeBackMessage(entryID: UUID, handBack: @escaping (ConversationEntry) -> Void) {
         guard let entry = conversations.entry(id: entryID), entry.kind == .user,
               let chatID = entry.chatID, canTakeBack(entryID: entryID) else { return }
-        let productID = entry.productID
 
         // A Codex-only chat has no queue: the prompt goes straight to a process, and cancelling
         // that process IS the withdrawal.
@@ -406,7 +474,7 @@ extension AppModel {
                 outcome = .alreadyRead
             }
 
-            handBackToComposer(entry, in: productID)
+            handBack(entry)
             chatErrors[chatID] = nil
 
             switch outcome {
@@ -423,13 +491,22 @@ extension AppModel {
         }
     }
 
-    private func handBackToComposer(_ entry: ConversationEntry, in productID: UUID) {
-        var draft = draftText(for: productID)
+    /// The Mac's own Edit: the words go back into the Mac's composer.
+    func takeBackMessage(entryID: UUID) {
+        takeBackMessage(entryID: entryID) { [weak self] entry in
+            self?.handBackToComposer(entry)
+        }
+    }
+
+    /// Into the field of the chat the message was sent in — not whichever chat is open by the
+    /// time the engine has answered.
+    func handBackToComposer(_ entry: ConversationEntry) {
+        let slot = draftSlot(for: entry)
         // Anything already half-typed is kept: losing it to a button labelled "edit" would be
         // its own small betrayal.
-        draft = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        setDraftText(draft.isEmpty ? entry.text : entry.text + "\n" + draft, for: productID)
-        for attachment in entry.attachments { addDraftAttachment(attachment, to: productID) }
+        let draft = draftText(slot: slot).trimmingCharacters(in: .whitespacesAndNewlines)
+        setDraftText(draft.isEmpty ? entry.text : entry.text + "\n" + draft, slot: slot)
+        for attachment in entry.attachments { addDraftAttachment(attachment, slot: slot) }
         composerFocusRequest = UUID()
     }
 
@@ -441,7 +518,12 @@ extension AppModel {
         conversations.updateDelivery(entryID: entryID, nil)
         chatErrors[chatID] = nil
         trustBlocked[chatID] = nil
+        setupBlocked.remove(chatID)
         gitConsentBlocked[chatID] = nil
+        dirtyTreeBlocked[chatID] = nil
+        stopDirtyTreeWatch("chat:\(chatID)")
+        heavyFilesBlocked[chatID] = nil
+        mcpBlocked[chatID] = nil
         handoffBlocked[chatID] = nil
         signInBlocked[chatID] = nil
         conversations.setCodexWall(entryID: entryID, nil)
@@ -489,7 +571,7 @@ extension AppModel {
                                                      resumesOwnSession: plan.resumesOwnSession))
             if let failure {
                 conversations.updateDelivery(entryID: entryID, .failed)
-                failChat(chatID, Self.releaseProblem(failure))
+                failChat(chatID, Self.releaseProblem(failure), .unexpected("chat.release_failed"))
                 return
             }
             if plan.resumesOwnSession {
@@ -543,6 +625,23 @@ extension AppModel {
         }
     }
 
+    /// Answers Claude Code's first-run question the way its own picker would, then retries the
+    /// message that stopped on it. Nil ids come from the readiness screen, where nothing waits.
+    func finishClaudeSetup(thenRetry entryID: UUID? = nil, in chatID: UUID? = nil) {
+        guard ClaudeOnboarding.complete() else {
+            toast = ToastMessage(text: String(localized: "Could not write Claude Code's settings. Open Terminal, run `claude` once and pick a theme."),
+                                 kind: .error)
+            return
+        }
+        if let chatID {
+            setupBlocked.remove(chatID)
+            chatErrors[chatID] = nil
+        }
+        toast = ToastMessage(text: String(localized: "Claude Code is ready for work."), kind: .success)
+        Task { await refreshReadiness(force: true, depth: .free) }
+        if let entryID { retryDirectMessage(entryID: entryID) }
+    }
+
     func trustFolder(_ folder: String, thenRetry entryID: UUID?, in chatID: UUID?) {
         guard ClaudeFolderTrust.grant(forProjectPath: folder) else {
             toast = ToastMessage(text: String(localized: "Could not write the trust setting. Open a terminal in the folder and run `claude` once."),
@@ -566,6 +665,13 @@ extension AppModel {
     }
 
     private func deliver(message: String, entryID: UUID, chat: Chat, product: Product) {
+        // A conversation that works in a copy — every automation run, and a chat he asked to keep
+        // out of his folder — goes through the engine: that is the path that knows about the copy,
+        // the review and the outcome a run is read by.
+        if chat.isAutomationRun || chat.wantsCopy || chat.workCopyID != nil {
+            deliverViaClaude(message: message, entryID: entryID, chat: chat, product: product)
+            return
+        }
         // Codex out of weekly quota is a wall, not a failure worth an evening. Claude takes the
         // message instead — and the thread is told, because a substitution nobody mentioned is
         // worse than the wall.
@@ -581,27 +687,64 @@ extension AppModel {
         }
     }
 
-    private func deliverViaClaude(message: String, entryID: UUID, chat: Chat, product: Product) {
+    /// `run` is a send's snapshot when one was already taken — a message Codex refused on its
+    /// way to Claude. Without one, the snapshot is taken here.
+    private func deliverViaClaude(message: String, entryID: UUID, chat: Chat, product: Product,
+                                  run snapshot: RunChoices? = nil) {
         if isDirectChatBusy(chat.id) {
             conversations.updateDelivery(entryID: entryID, .queued)
         }
         sendingChatIDs.insert(chat.id)
 
+        // Taken now, whether or not this send ends up starting anything: an answer is for the one
+        // start it was given for, and must not wait around to be applied to a later one.
+        let dirtyAnswer = dirtyTreeAnswer.removeValue(forKey: chat.id)
+        // What this chat runs on, fixed for this send: a choice made a second later belongs to the
+        // next one. The first message is also where a chat stops following the default.
+        settleRunChoices(for: chat.id)
+        let run = snapshot ?? runChoices(for: chat.id)
+        claudeDeliveryStarted?(chat.id, run)
+
         Task {
             defer { sendingChatIDs.remove(chat.id) }
-            guard let primary = chatPrimary(for: product, chatID: chat.id) else {
+            guard let chosen = chatPrimary(for: product, chatID: chat.id) else {
                 conversations.updateDelivery(entryID: entryID, .failed)
-                failChat(chat.id, String(localized: "Choose a primary project folder before sending."))
+                failChat(chat.id, String(localized: "Choose a primary project folder before sending."), .needsYou)
+                return
+            }
+            // Where the worker actually runs: the chat's copy when it has one. Everything below —
+            // who holds the folder, trust, the start, the binding — is asked of that folder.
+            let primary: Project
+            switch await executionProject(for: chat.id, primary: chosen) {
+            case .success(let project):
+                primary = project
+            case .failure(let refusal):
+                conversations.updateDelivery(entryID: entryID, .failed)
+                failChat(chat.id, refusal.message, .unexpected("chat.start_refused"))
                 return
             }
             guard let files = writeSessionContext(chatID: chat.id, product: product,
                                                   primary: primary) else {
                 conversations.updateDelivery(entryID: entryID, .failed)
-                failChat(chat.id, String(localized: "Could not prepare the project context."))
+                failChat(chat.id, String(localized: "Could not prepare the project context."), .unexpected("chat.context_failed"))
                 return
             }
 
             var binding = conversations.chat(id: chat.id)?.session
+
+            // A conversation that works in a copy speaks only into the copy. A binding left in
+            // another folder — an older build rewrote it — is moved now; while a turn is still
+            // running there it is not, and nothing is sent anywhere until that turn ends.
+            if let held = binding, let copy = liveCopy(forChat: chat.id),
+               Slug.canonicalPath(held.projectPath) != Slug.canonicalPath(primary.path) {
+                guard let moved = reboundToCopy(held, copy: copy) else {
+                    conversations.updateDelivery(entryID: entryID, .failed)
+                    failChat(chat.id, String(localized: "Another Night Shift run is working in this project. Wait for it to finish, or stop it, and send again."), .needsYou)
+                    return
+                }
+                conversations.bindSession(moved, to: chat.id)
+                binding = moved
+            }
 
             if let stale = binding, matchingInstance(for: stale) == nil,
                let live = instanceForAdoption(projectPath: stale.projectPath, chatID: chat.id) {
@@ -645,7 +788,7 @@ extension AppModel {
                     resumesOwnSession: binding?.claudeSessionID != nil)
                 failChat(chat.id, String(format: String(localized:
                     "“%@” is still working in this project. It may be waiting on you rather than finished, so nothing was stopped."),
-                    holder))
+                    holder), .needsYou)
                 return
             case .takeOver(let plan):
                 // Whether this was a run that ended properly or one nobody was coming back to —
@@ -654,7 +797,7 @@ extension AppModel {
                 let abandoned = held?.instance.isFinished == false
                 if let failure = await releaseProject(plan) {
                     conversations.updateDelivery(entryID: entryID, .failed)
-                    failChat(chat.id, Self.releaseProblem(failure))
+                    failChat(chat.id, Self.releaseProblem(failure), .unexpected("chat.release_failed"))
                     return
                 }
                 if abandoned, let title = held?.chat.title {
@@ -678,20 +821,33 @@ extension AppModel {
                     conversations.updateDelivery(entryID: entryID, .failed)
                     trustBlocked[chat.id] = folder
                     failChat(chat.id, ClaudeFolderTrust.problem(forProjectPath: primary.path)
-                             ?? String(localized: "Claude Code has not been trusted with this folder."))
+                             ?? String(localized: "Claude Code has not been trusted with this folder."), .needsYou)
+                    return
+                } else if ClaudeOnboarding.needsSetup() {
+                    conversations.updateDelivery(entryID: entryID, .failed)
+                    setupBlocked.insert(chat.id)
+                    failChat(chat.id, String(localized: "Claude Code has not been set up on this Mac yet."), .needsYou)
                     return
                 } else {
+                    startingChats[chat.id] = primary.path
                     let launch = await client.startChat(
                         projectPath: primary.path,
                         contextFile: files.context.path,
                         extraDirsFile: files.directories.path,
-                        claudeEffort: claudeModels.effortFlag(settings.claudeEffort,
-                                                              for: settings.claudeModel),
-                        claudeModel: settings.claudeModel.flagValue,
-                        codexEffort: codexModels.effort(settings.codexEffort,
-                                                        forSlug: settings.codexModel).rawValue,
-                        codexModel: settings.codexModel,
-                        collaboration: settings.chatMode.collaborationMode)
+                        claudeEffort: claudeModels.effortFlag(run.claudeEffort,
+                                                              for: run.claudeModel),
+                        claudeModel: run.claudeModel.flagValue,
+                        codexEffort: codexModels.effort(run.codexEffort,
+                                                        forSlug: run.codexModel).rawValue,
+                        codexModel: run.codexModel,
+                        collaboration: settings.chatMode.collaborationMode,
+                        language: settings.workLanguageName,
+                        dirty: dirtyAnswer,
+                        unattended: chat.isAutomationRun)
+                    // Whatever the start's screen asked has been answered or has timed out by now,
+                    // and from here the chat's own run answers for it.
+                    startingChats[chat.id] = nil
+                    conversations.syncDirectQuestion(nil, in: chat.id)
                     guard launch.ok,
                           let instance = await client.awaitChatInstance(projectPath: primary.path)
                     else {
@@ -700,17 +856,67 @@ extension AppModel {
                         let detail = launch.stderr.isEmpty ? launch.stdout : launch.stderr
                         // 76 — the engine did not refuse to work, it asked. This folder has no git, and
                         // without a baseline the night shift has nowhere to roll back to. The answer is a button.
+                        //
+                        // The row under the message says it and holds the button. The engine's own
+                        // words are for a terminal, and showing them here too put a command to type
+                        // right above the button that does it.
                         if launch.exitCode == 76 {
                             gitConsentBlocked[chat.id] = primary.path
-                            failChat(chat.id, detail)
+                            chatErrors[chat.id] = nil
+                            toast = ToastMessage(text: String(localized: "There is no git here, so a run would have no way back and nothing to show a review."),
+                                                 kind: .info)
+                            return
+                        }
+                        // 77 — uncommitted work in the folder, and the engine will not commit it,
+                        // stash it or start on top of it until the director says which.
+                        if launch.exitCode == 77 {
+                            await stopOnDirtyTree(chatID: chat.id, entryID: entryID, folder: primary.path)
+                            return
+                        }
+                        // 78 — MCP servers of the project's own that Claude would stop to ask about
+                        // before it starts; or that very screen, read off the worker by the engine.
+                        if launch.exitCode == 78
+                            || (launch.stdout + launch.stderr).contains("handshake-blocked=mcp") {
+                            await stopOnMcp(chatID: chat.id, entryID: entryID, folder: primary.path)
+                            return
+                        }
+                        // 79 — the checkpoint would be too big, and the engine named the files that
+                        // make it so. Leaving them out is a button, not a paragraph about megabytes.
+                        if launch.exitCode == 79 {
+                            await stopOnHeavyFiles(chatID: chat.id, entryID: entryID, folder: primary.path,
+                                                   keepChanges: dirtyAnswer == .keep, fallback: detail)
+                            return
+                        }
+                        // The director asked for a commit and git refused it — a hook, a key that
+                        // looked like a secret, no identity. The changes are still there, so the
+                        // question is too, with the reason beside it.
+                        if dirtyAnswer != nil,
+                           let tree = await client.dirtyState(projectPath: primary.path), !tree.isSettled {
+                            await stopOnDirtyTree(chatID: chat.id, entryID: entryID, folder: primary.path,
+                                                  tree: tree, problem: detail)
+                            return
+                        }
+                        // The engine read the worker's screen before rolling the start back. A
+                        // config that says setup is done while the screen says otherwise is the
+                        // CLI's word against a file, and the screen is what stopped the work.
+                        // Claude asked on a screen of its own and the question sat in this chat
+                        // unanswered until the start gave up. Nothing is lost by sending again:
+                        // the same screen comes back here.
+                        if (launch.stdout + launch.stderr).contains("handshake-blocked=screen") {
+                            failChat(chat.id, String(localized: "Claude Code asked something on its own screen while starting, and it was not answered in time. Send the message again and the question will be here."), .needsYou)
+                            return
+                        }
+                        if ClaudeOnboarding.engineSawIt(launch.stdout + launch.stderr) {
+                            setupBlocked.insert(chat.id)
+                            failChat(chat.id, String(localized: "Claude Code has not been set up on this Mac yet."), .needsYou)
                             return
                         }
                         if let trust = ClaudeFolderTrust.problem(forProjectPath: primary.path) {
                             trustBlocked[chat.id] = ClaudeFolderTrust
                                 .folderNeedingTrust(forProjectPath: primary.path) ?? primary.path
-                            failChat(chat.id, trust)
+                            failChat(chat.id, trust, .needsYou)
                         } else {
-                            failChat(chat.id, detail.isEmpty ? "Night Shift did not start." : detail)
+                            failChat(chat.id, detail.isEmpty ? String(localized: "Night Shift did not start.") : detail, .unexpected("chat.start_failed"))
                         }
                         return
                     }
@@ -727,11 +933,13 @@ extension AppModel {
             conversations.updateSession(for: chat.id) { $0.outcomeAt = nil }
 
             do {
-                try await client.setReviewGate(enabled: settings.chatMode.reviewsWork,
+                // Nobody watches a run in a copy while it works, so its result is always reviewed.
+                let copyBound = conversations.chat(id: chat.id)?.workCopyID != nil
+                try await client.setReviewGate(enabled: settings.chatMode.reviewsWork || copyBound,
                                                projectPath: bound.projectPath)
             } catch {
                 conversations.updateDelivery(entryID: entryID, .failed)
-                failChat(chat.id, String(localized: "Could not set the mode for this run, so nothing was sent. Check that the run folder is writable."))
+                failChat(chat.id, String(localized: "Could not set the mode for this run, so nothing was sent. Check that the run folder is writable."), .unexpected("chat.mode_failed"))
                 return
             }
             let result = await client.workerSend(projectPath: bound.projectPath,
@@ -744,18 +952,24 @@ extension AppModel {
                                                  message: message,
                                                  messageID: entryID,
                                                  intent: .conversation,
-                                                 pipeline: settings.chatMode.messagePipeline,
-                                                 runEnv: self.engineChoices(),
+                                                 pipeline: relayPipeline(forChat: chat.id),
+                                                 runEnv: self.engineChoices(run: run,
+                                                                            unattended: conversations.chat(id: chat.id)?.isAutomationRun == true),
                                                  contextFile: files.context.path,
                                                  extraDirsFile: files.directories.path)
             switch result.tier {
             case .live, .resumed:
                 conversations.updateDelivery(entryID: entryID,
                                              result.uncertain ? .queued : nil)
+                if result.confirmed { confirmedDeliveries.insert(entryID) }
                 if let instance = await client.awaitChatInstance(projectPath: bound.projectPath,
                                                                  timeout: 8) {
+                    // From the binding as it is NOW. `bound` was taken before the answer marker
+                    // was cleared above, and keeping it put the previous answer's time back — the
+                    // header then said "replied" over a message nobody had answered.
                     conversations.bindSession(self.makeBinding(for: primary, instance: instance,
-                                                                keeping: bound), to: chat.id)
+                                                                keeping: conversations.chat(id: chat.id)?.session ?? bound),
+                                              to: chat.id)
                 }
                 await refresh(codex: false)
             case .preparing:
@@ -765,8 +979,12 @@ extension AppModel {
                 chatErrors[chat.id] = nil
                 if let instance = await client.awaitChatInstance(projectPath: bound.projectPath,
                                                                  timeout: 8) {
+                    // From the binding as it is NOW. `bound` was taken before the answer marker
+                    // was cleared above, and keeping it put the previous answer's time back — the
+                    // header then said "replied" over a message nobody had answered.
                     conversations.bindSession(self.makeBinding(for: primary, instance: instance,
-                                                                keeping: bound), to: chat.id)
+                                                                keeping: conversations.chat(id: chat.id)?.session ?? bound),
+                                              to: chat.id)
                 }
                 await refresh(codex: false)
             case .queued:
@@ -776,15 +994,20 @@ extension AppModel {
             case .conflict:
                 conversations.updateDelivery(entryID: entryID, .failed)
 
-                failChat(chat.id, String(localized: "Another Night Shift run is working in this project. Wait for it to finish, or stop it, and send again."))
+                failChat(chat.id, String(localized: "Another Night Shift run is working in this project. Wait for it to finish, or stop it, and send again."), .needsYou)
             case .none:
                 conversations.updateDelivery(entryID: entryID, .failed)
                 failChat(chat.id, bound.claudeSessionID == nil
                          ? String(localized: "This older chat has no resume id. Start a new chat to continue.")
-                         : String(localized: "Night Shift could not resume this conversation. Your history is intact."))
+                         : String(localized: "Night Shift could not resume this conversation. Your history is intact."),
+                         bound.claudeSessionID == nil ? .needsYou : .unexpected("chat.resume_failed"))
             case .error:
                 conversations.updateDelivery(entryID: entryID, .failed)
-                failChat(chat.id, result.message.isEmpty ? String(localized: "The message was not delivered.") : result.message)
+                // Proven not delivered — the engine refused it before trying — or not known: cut
+                // off, killed, broken halfway through typing. Only the first may be sent again by
+                // a repair on its own; the second may already be running.
+                failChat(chat.id, result.message.isEmpty ? String(localized: "The message was not delivered.") : result.message,
+                         result.undelivered ? .unexpected("chat.delivery_failed") : .uncertain("chat.delivery_uncertain"))
             }
         }
     }
@@ -794,14 +1017,23 @@ extension AppModel {
     /// Every send, not only at session start: the preflight, the consultations and the review gate
     /// are separate processes started later, and the only thing that reaches them is what the
     /// engine wrote down for the run.
-    func engineChoices() -> [String: String] {
-        SupervisorClient.runEnv(
-            claudeEffort: claudeModels.effortFlag(settings.claudeEffort,
-                                                   for: settings.claudeModel),
-            claudeModel: settings.claudeModel.flagValue,
-            codexEffort: codexModels.effort(settings.codexEffort, forSlug: settings.codexModel).rawValue,
-            codexModel: settings.codexModel,
-            collaboration: settings.chatMode.collaborationMode)
+    func engineChoices(for chatID: UUID?) -> [String: String] {
+        engineChoices(run: runChoices(for: chatID))
+    }
+
+    /// From choices already taken — the snapshot a send made of its chat before anything was
+    /// awaited, so a change to the pill while the message is on its way reaches the next one.
+    func engineChoices(run: RunChoices, unattended: Bool = false) -> [String: String] {
+        var env = SupervisorClient.runEnv(
+            claudeEffort: claudeModels.effortFlag(run.claudeEffort, for: run.claudeModel),
+            claudeModel: run.claudeModel.flagValue,
+            codexEffort: codexModels.effort(run.codexEffort, forSlug: run.codexModel).rawValue,
+            codexModel: run.codexModel,
+            collaboration: settings.chatMode.collaborationMode,
+            language: settings.workLanguageName)
+        // An automation's run: carried on every send, so a resumed run keeps its rules and browser.
+        if unattended { env["SUPERVISOR_UNATTENDED"] = "1" }
+        return env
     }
 
     private func directMessage(_ text: String, attachments: [Attachment],
@@ -983,11 +1215,25 @@ extension AppModel {
     /// Only the first line used to arrive here — and the user saw «the folder is deeper than 4
     /// levels» with none of the repository list and no advice. Now the whole text is in the chat;
     /// the notification, which has no room, gets the first line, because the rest is visible next
-    private func failChat(_ chatID: UUID, _ message: String) {
+    ///
+    /// `kind` says whether anything is broken. A failure only the person can resolve is shown and
+    /// left to them; anything else is handed to a repair (AppModel+Repair.swift) and reported.
+    func failChat(_ chatID: UUID, _ message: String,
+                  _ kind: ChatFailure = .unexpected("chat.failed")) {
         let full = message.trimmingCharacters(in: .whitespacesAndNewlines)
-        let headline = full.split(whereSeparator: \.isNewline).first.map(String.init) ?? full
         chatErrors[chatID] = full
-        toast = ToastMessage(text: headline, kind: .error)
+        // The whole text now, not its first line: the card has room, and the first line is
+        // rarely the part that says what to do. Keyed by chat, so a repair continues this card.
+        // A button when nothing will start by itself: the setting is off, or the message may
+        // already have arrived and only the person can say whether to send it again.
+        let fixable = kind.code != nil && (!settings.autoRepair || !kind.resendable)
+        toast = ToastMessage(text: full, kind: .error, key: repairToastKey(chatID),
+                             actions: fixable && lastFailedMessage(in: chatID) != nil
+                                 ? [ToastAction(title: String(localized: "Fix it")) { [weak self] in
+                                        self?.startRepair(chatID: chatID)
+                                    }]
+                                 : [])
+        noticeChatFailure(chatID, message: full, kind: kind)
     }
 
     // MARK: Project context
@@ -1000,12 +1246,18 @@ extension AppModel {
 
         var resourceLines: [String] = []
         var extraPaths: [String] = []
+        let copy = liveCopy(forChat: chatID)
         for resource in product.resources {
             if let projectID = resource.projectID, let project = projects.project(id: projectID) {
                 let policy = resource.access == .workspace ? "можно изменять" : "сначала спросить перед изменением"
                 let role = project.id == primary.id ? "основная папка" : "дополнительная папка"
-                resourceLines.append("- \(resource.name) — \(role), \(policy): `\(project.path)`"
+                // In a copy, the main folder IS the copy; his own folder is named, and not to touch.
+                let path = project.id == primary.id ? primary.path : project.path
+                resourceLines.append("- \(resource.name) — \(role), \(policy): `\(path)`"
                                       + (resource.note.isEmpty ? "" : " — \(resource.note)"))
+                if project.id == primary.id, let copy {
+                    resourceLines.append("- Папка пользователя для «\(resource.name)»: `\(copy.sourcePath)` — НЕ изменять, работа идёт в копии")
+                }
                 if project.id != primary.id { extraPaths.append(project.path) }
             } else if let url = resource.urlString, !url.isEmpty {
                 resourceLines.append("- \(resource.name) — ссылка: \(url)"
@@ -1022,7 +1274,7 @@ extension AppModel {
         }
         extraPaths = Array(Set(extraPaths.map(Slug.canonicalPath))).sorted()
 
-        let contextText = """
+        let contextText: String = """
         Ты работаешь в обычном долгоживущем диалоге Night Shift, который показан через приложение Bulava.
         Это не задача бригадира: не классифицируй сообщения, не создавай внутренние карточки и не считай
         уточнение новой задачей. Продолжай тот же разговор ровно как в интерактивном терминале.
@@ -1047,7 +1299,7 @@ extension AppModel {
         никогда не запускается автоматически. Если пользователь прямо попросил полный аудит — словами на любом
         языке или через `/deep-audit` — запусти `deep-audit "$PWD" "<контекст запроса>"`, дождись отчёта и покажи
         выводы. Не начинай исправлять найденный общепродуктовый backlog без отдельного согласия пользователя.
-        """
+        """ + copyContext(chatID: chatID, copy: copy)
 
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -1096,7 +1348,7 @@ extension AppModel {
                 .appendingPathComponent("\(sessionID).jsonl")
             guard FileManager.default.fileExists(atPath: transcript.path) else { continue }
             desired.insert(chat.id)
-            if let feed = chatFeeds[chat.id], feed.sessionID == sessionID { continue }
+            if let feed = chatFeeds[chat.id], feed.sessionID == sessionID, feed.transcript == transcript { continue }
             chatFeeds[chat.id]?.stop()
             let feed = ChatTranscriptFeed(chatID: chat.id, productID: chat.productID,
                                           sessionID: sessionID, transcript: transcript,
@@ -1108,6 +1360,29 @@ extension AppModel {
         for (chatID, feed) in chatFeeds where !desired.contains(chatID) {
             feed.stop()
             chatFeeds[chatID] = nil
+        }
+
+        // A chat being started whose worker is asking on a screen of its own. The start waits for
+        // the answer instead of being rolled back (`screen-wait.json`), and the chat is bound to the
+        // run only once the start returns — so the question is put in the chat from here, the same
+        // card any of Claude's questions is, answerable on the Mac and on the phone.
+        for chatID in startingChats.keys {
+            guard let chat = conversations.chat(id: chatID) else { continue }
+            if let instance = startingInstance(for: chatID) {
+                syncPendingQuestion(in: chat, from: instance)
+            } else {
+                conversations.syncDirectQuestion(nil, in: chatID)
+            }
+        }
+    }
+
+    /// The run being started for this chat, while Claude waits on a screen of its own for an answer.
+    func startingInstance(for chatID: UUID?) -> SupervisorInstance? {
+        guard let chatID, let path = startingChats[chatID] else { return nil }
+        let folder = Slug.canonicalPath(path)
+        return snapshot.instances.first {
+            Slug.canonicalPath($0.projectPath) == folder && $0.screenWaitSince != nil
+                && $0.pendingQuestion != nil
         }
     }
 
@@ -1161,7 +1436,7 @@ extension AppModel {
             .last(where: { $0.kind == .user })
         signInBlocked[chat.id] = SignInBlock(noticeEntryID: notice.id, askedEntryID: asked?.id)
         if let asked { conversations.updateDelivery(entryID: asked.id, .failed) }
-        failChat(chat.id, String(localized: "Claude's login has run out, so this was never answered. Sign in and send it again."))
+        failChat(chat.id, String(localized: "Claude's login has run out, so this was never answered. Sign in and send it again."), .needsYou)
     }
 
     func matchingInstance(for binding: ChatSessionBinding) -> SupervisorInstance? {
@@ -1265,7 +1540,8 @@ extension AppModel {
         if sendingChatIDs.contains(chatID) { return .starting }
         guard let chat = conversations.chat(id: chatID), let binding = chat.session else { return .new }
         if let instance = matchingInstance(for: binding) {
-            return DirectChatPhase.resolve(instance: instance, bindingHasOutcome: binding.outcomeAt != nil)
+            return DirectChatPhase.resolve(instance: instance, bindingHasOutcome: binding.outcomeAt != nil,
+                                           revivalGaveUp: revivalGaveUp(instance.slug))
         }
         if binding.outcomeAt != nil { return .ready }
         return binding.claudeSessionID == nil ? .new : .resumable
@@ -1277,22 +1553,11 @@ extension AppModel {
     /// message is being prepared — there is no current answer, and the thing it waits for is the
     /// two positions being formed for IT. The screen that says a message is queued has to say which.
     func directWaitReason(for chatID: UUID?) -> String {
-        switch directPhase(for: chatID) {
+        let phase = directPhase(for: chatID)
+        switch phase {
         case .preparing(let peers): return peers.label
-        case .waitingForLimit(let until):
-            if let until {
-                return String(format: String(localized: "Waiting for the usage window · back around %@"),
-                              Fmt.clock(until))
-            }
-            return String(localized: "Waiting for the usage window")
-        case .waitingForCodex(let until):
-            if let until {
-                return String(format: String(localized: "Waiting for Codex · back around %@"),
-                              Fmt.stamp(until))
-            }
-            return String(localized: "Waiting for Codex")
-        case .engineMismatch:
-            return String(localized: "The installed engine is older than this app — reinstall it in Settings")
+        case .waitingForLimit, .waitingForCodex, .engineMismatch, .reviving, .revivalFailed:
+            return phase.label
         case .reviewing, .verifying, .auditing:
             return String(localized: "Waiting for the review to finish")
         default:
@@ -1335,11 +1600,12 @@ extension AppModel {
     func stopDirectChat(_ chatID: UUID?) {
         guard let chatID, !stoppingChatIDs.contains(chatID) else { return }
 
-        if let runner = codexTurns[chatID] {
-            runner.cancel()
-            return
-        }
-        guard let binding = conversations.chat(id: chatID)?.session else { return }
+        // Everything the chat has running, not the first thing found. A chat can have Codex
+        // answering AND the engine's worker busy; stopping Codex and returning left the other one
+        // going, which is why Stop sometimes had to be pressed again and again.
+        codexTurns[chatID]?.cancel()
+        guard let binding = conversations.chat(id: chatID)?.session,
+              matchingInstance(for: binding) != nil else { return }
         stoppingChatIDs.insert(chatID)
         Task {
             defer { stoppingChatIDs.remove(chatID) }
@@ -1347,7 +1613,7 @@ extension AppModel {
                                                     runID: binding.activeRunID)
             if !result.ok && result.exitCode != 2 {
                 let detail = result.stderr.isEmpty ? result.stdout : result.stderr
-                failChat(chatID, detail.isEmpty ? String(localized: "Could not stop the current answer.") : detail)
+                failChat(chatID, detail.isEmpty ? String(localized: "Could not stop the current answer.") : detail, .unexpected("chat.stop_failed"))
             }
             await refresh(codex: false)
         }
@@ -1405,13 +1671,17 @@ extension AppModel {
         return completed != session.lastReportedTurnKey
     }
 
-    func generateChatReport(chatID: UUID) {
+    /// `opensWhenDone: false` is an automation's report, asked for by the app when the run's work
+    /// ended: nobody is waiting at the window for it, so it is kept, not put in front of him.
+    func generateChatReport(chatID: UUID, opensWhenDone: Bool = true) {
         guard !generatingChatReportIDs.contains(chatID),
               let chat = conversations.chat(id: chatID),
               let binding = chat.session,
               let sessionID = binding.claudeSessionID,
               let home = OrchestratorHome.detect()?.path else {
-            failChat(chatID, String(localized: "This chat does not have a resumable Night Shift session yet."))
+            if opensWhenDone {
+                failChat(chatID, String(localized: "This chat does not have a resumable Night Shift session yet."), .needsYou)
+            }
             return
         }
         generatingChatReportIDs.insert(chatID)
@@ -1420,20 +1690,20 @@ extension AppModel {
             guard let published = await client.generateRichChatReport(
                 projectPath: binding.projectPath, orchestratorHome: home,
                 sessionID: sessionID, branch: binding.branch, runID: binding.activeRunID,
-                language: settings.reportLanguage.reportLanguageName,
+                language: settings.workLanguageName,
                 title: chat.title, originalRequest: chat.firstMessage) else {
-                failChat(chatID, String(localized: "Could not generate the report."))
+                failChat(chatID, String(localized: "Could not generate the report."), .unexpected("chat.report_failed"))
                 return
             }
             conversations.addReport(published, to: chatID)
-            openChatReport(path: published, title: chat.title)
+            if opensWhenDone { openChatReport(path: published, title: chat.title) }
         }
     }
 
     func openChatReport(path: String, title: String) {
         let url = URL(fileURLWithPath: path)
         guard FileManager.default.fileExists(atPath: url.path) else {
-            toast = ToastMessage(text: "The report file is missing.", kind: .error)
+            toast = ToastMessage(text: String(localized: "The report file is missing."), kind: .error)
             return
         }
         reportViewer = ReportViewer(taskID: nil, title: title, htmlURL: url, isVideo: false)

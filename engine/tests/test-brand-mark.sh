@@ -95,6 +95,13 @@ case "$receipt" in *'class="brand"'*) ok "the receipt has the lockup" ;; *) bad 
 case "$receipt" in *"#8b65ff"*|*"#6e4bff"*) bad "the old violet is still in the receipt" ;;
   *) ok "the receipt is on the brand palette" ;; esac
 
+mkdir -p "$TMP2/artifact"
+printf '{"title":"t","summary":"s"}' > "$TMP2/artifact/report.json"
+python3 "$BIN_DIR/artifact.py" "$TMP2/artifact" "$TMP2/artifact-out" >/dev/null 2>&1
+artefact="$(cat "$TMP2/artifact-out/index.html" 2>/dev/null)"
+case "$artefact" in *'class="brand"'*'<svg'*) ok "the artefact — the report the app opens — has the lockup" ;;
+  *) bad "no lockup in the artefact" ;; esac
+
 echo
 [ "$fails" = 0 ] && echo "✅ brand mark: one source, no drift" || echo "❌ brand mark: $fails problem(s)"
 exit "$fails"

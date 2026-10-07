@@ -219,25 +219,53 @@ extension SupervisorClient {
 
     // MARK: Merge
 
+    /// Merge a card's branch into its target, without ever switching the branch his folder has open.
+    ///
+    /// It used to `git checkout <target>` in his folder first, so approving a card while he was
+    /// working on another branch moved him off it. Now: when the target IS the branch he has open,
+    /// it is merged there as before, and only if nothing is uncommitted. When it is not, the merge
+    /// is made in a temporary checkout of its own and the branch is moved with a compare-and-swap —
+    /// his folder, his branch and his uncommitted work are not touched. A target open in some other
+    /// checkout is refused: moving it under that checkout would leave its files describing a
+    /// different commit.
     func merge(projectPath: String, branch: String?, target: String?) async -> MergeResult {
         guard let branch, !branch.isEmpty else { return .noBranch }
         guard let target, !target.isEmpty else { return .sameBranch }
         guard branch != target else { return .sameBranch }
         let projURL = URL(fileURLWithPath: projectPath)
         let script = """
-        if [ "$1" = "$2" ]; then echo SAME; exit 0; fi
-        st="$(git status --porcelain 2>/dev/null)"
-        if [ -n "$st" ]; then echo DIRTY; exit 0; fi
-        git rev-parse --verify --quiet "refs/heads/$2" >/dev/null 2>&1 || { echo "FAIL:target $2 not found"; exit 0; }
-        git checkout "$2" >/dev/null 2>&1 || { echo "FAIL:checkout $2 failed"; exit 0; }
-        if git merge --no-ff -m "Merge $1 (approved via NightShift)" "$1" >/dev/null 2>&1; then
-          if git merge-base --is-ancestor "$1" "$2"; then echo MERGED; else echo NOTREACHED; fi
-        else
-          git merge --abort >/dev/null 2>&1
-          echo CONFLICT
+        br="$1"; tgt="$2"; msg="Merge $1 (approved via NightShift)"
+        if [ "$br" = "$tgt" ]; then echo SAME; exit 0; fi
+        git rev-parse --verify --quiet "refs/heads/$tgt" >/dev/null 2>&1 || { echo "FAIL:target $tgt not found"; exit 0; }
+        reached() { if git merge-base --is-ancestor "$br" "$tgt"; then echo MERGED; else echo NOTREACHED; fi; }
+        cur="$(git symbolic-ref --quiet --short HEAD 2>/dev/null)"
+        top="$(git rev-parse --show-toplevel 2>/dev/null)"
+        holder="$(git worktree list --porcelain | while IFS= read -r line; do
+          case "$line" in "worktree "*) w="${line#worktree }" ;; "branch refs/heads/$tgt") printf '%s\n' "$w" ;; esac
+        done)"
+        if [ "$cur" = "$tgt" ]; then
+          st="$(git status --porcelain 2>/dev/null)"
+          if [ -n "$st" ]; then echo DIRTY; exit 0; fi
+          if git merge --no-ff -m "$msg" "$br" >/dev/null 2>&1; then reached; else git merge --abort >/dev/null 2>&1; echo CONFLICT; fi
+          exit 0
         fi
+        if [ -n "$holder" ]; then echo "FAIL:$tgt is open in $holder, so it was not moved under it"; exit 0; fi
+        old="$(git rev-parse "refs/heads/$tgt")"
+        scratch="$(mktemp -d "${TMPDIR:-/tmp}/bulava-merge.XXXXXX")" || { echo "FAIL:no room to prepare the merge"; exit 0; }
+        wt="$scratch/checkout"
+        if ! git worktree add --quiet --detach "$wt" "$old" >/dev/null 2>&1; then
+          rm -rf "$scratch"; echo "FAIL:could not prepare a checkout for the merge"; exit 0
+        fi
+        if git -C "$wt" merge --no-ff -m "$msg" "$br" >/dev/null 2>&1; then
+          new="$(git -C "$wt" rev-parse HEAD)"
+          if git update-ref -m "$msg" "refs/heads/$tgt" "$new" "$old" >/dev/null 2>&1; then res=OK; else res="FAIL:$tgt moved during the merge — nothing was changed, merge again"; fi
+        else
+          git -C "$wt" merge --abort >/dev/null 2>&1; res=CONFLICT
+        fi
+        git worktree remove --force "$wt" >/dev/null 2>&1; git worktree prune >/dev/null 2>&1; rm -rf "$scratch"
+        if [ "$res" = OK ]; then reached; else echo "$res"; fi
         """
-        let r = await Shell.run(script, args: [branch, target], cwd: projURL, timeout: 60)
+        let r = await Shell.run(script, args: [branch, target], cwd: projURL, timeout: 120)
         let out = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         if out.hasPrefix("MERGED") { return .merged }
         if out.hasPrefix("SAME") { return .sameBranch }
@@ -246,60 +274,6 @@ extension SupervisorClient {
         if out.hasPrefix("CONFLICT") { return .conflict }
         if out.hasPrefix("FAIL:") { return .failed(String(out.dropFirst(5))) }
         return .failed(out.isEmpty ? "merge failed" : out)
-    }
-
-    func mergeToMainLocal(projectPath: String, branch: String?, target: String?, label: String) async -> MergeResult {
-        guard let branch, !branch.isEmpty else { return .noBranch }
-        guard let target, !target.isEmpty else { return .sameBranch }
-        guard branch != target else { return .sameBranch }
-        let script = """
-        cur="$(git symbolic-ref --short HEAD 2>/dev/null)"
-        [ -n "$cur" ] && [ "$cur" != "$1" ] && git checkout "$1" >/dev/null 2>&1
-        # D-B (Codex #3): NEVER commit uncommitted work here — those bytes were not evidenced by the
-        # gate. A dirty tree = un-gated changes; bail so the director sends it back to the worker to
-        # commit (which re-triggers verification) rather than shipping unverified bytes.
-        if [ -n "$(git status --porcelain 2>/dev/null)" ]; then echo DIRTY; exit 0; fi
-        git rev-parse --verify --quiet "refs/heads/$2" >/dev/null 2>&1 || { echo "FAIL:target $2 not found"; exit 0; }
-        git checkout "$2" >/dev/null 2>&1 || { echo "FAIL:checkout $2 failed"; exit 0; }
-        if git merge --no-ff -m "Merge $1 (approved via NightShift)" "$1" >/dev/null 2>&1; then
-          if git merge-base --is-ancestor "$1" "$2"; then echo MERGED; else echo NOTREACHED; fi
-        else
-          git merge --abort >/dev/null 2>&1
-          echo CONFLICT
-        fi
-        """
-        let r = await Shell.run(script, args: [branch, target, label], cwd: URL(fileURLWithPath: projectPath), timeout: 90)
-        let out = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        if out.hasPrefix("MERGED") { return .merged }
-        if out.hasPrefix("SAME") { return .sameBranch }
-        if out.hasPrefix("NOTREACHED") { return .notReached }
-        if out.hasPrefix("CONFLICT") { return .conflict }
-        if out.hasPrefix("FAIL:") { return .failed(String(out.dropFirst(5))) }
-        return .failed(out.isEmpty ? "merge failed" : out)
-    }
-
-    func isMerged(projectPath: String, branch: String, base: String) async -> Bool {
-        guard !branch.isEmpty, !base.isEmpty, branch != base else { return false }
-        let r = await Shell.run("git merge-base --is-ancestor \"$1\" \"$2\" && echo YES || echo NO",
-                                args: [branch, base], cwd: URL(fileURLWithPath: projectPath), timeout: 20)
-        return r.stdout.contains("YES")
-    }
-
-    func mergedTargetBranch(projectPath: String, branch: String, baseSHA: String?) async -> String? {
-        guard !branch.isEmpty, let baseSHA, !baseSHA.isEmpty else { return nil }
-        let script = """
-        head="$(git rev-parse "$1" 2>/dev/null)"
-        [ -z "$head" ] && exit 0
-        [ "$head" = "$2" ] && exit 0   # no commits over base → work not done, not "merged"
-        for b in main master develop; do
-          [ "$b" = "$1" ] && continue
-          git show-ref --verify --quiet "refs/heads/$b" || continue
-          if git merge-base --is-ancestor "$1" "$b" 2>/dev/null; then echo "$b"; exit 0; fi
-        done
-        """
-        let r = await Shell.run(script, args: [branch, baseSHA], cwd: URL(fileURLWithPath: projectPath), timeout: 20)
-        let out = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        return out.isEmpty ? nil : out
     }
 
     func openPR(projectPath: String, branch: String, target: String, title: String) async -> (ok: Bool, url: String?, message: String) {

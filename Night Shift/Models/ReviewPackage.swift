@@ -70,12 +70,12 @@ nonisolated enum MergeResult: Sendable {
     var isSuccess: Bool { if case .merged = self { return true } else { return false } }
     var message: String {
         switch self {
-        case .merged: "Merged into the target branch"
-        case .dirty: "The target branch has uncommitted changes; commit or stash first"
-        case .conflict: "Merge hit conflicts; resolve in the repo, then merge manually"
-        case .noBranch: "No branch to merge"
-        case .sameBranch: "No separate target branch to merge into (the run reused its own branch); open a PR or pick a target manually"
-        case .notReached: "Merge ran but the reviewed commit isn't on the target; nothing was marked merged"
+        case .merged: String(localized: "Merged into the target branch")
+        case .dirty: String(localized: "The target branch has uncommitted changes; commit or stash them first")
+        case .conflict: String(localized: "The merge hit conflicts; resolve them in the repository, then merge by hand")
+        case .noBranch: String(localized: "No branch to merge")
+        case .sameBranch: String(localized: "No separate branch to merge into — the run reused its own; open a PR or pick a target by hand")
+        case .notReached: String(localized: "The merge ran, but the reviewed commit is not on the target; nothing was marked as merged")
         case .failed(let m): m
         }
     }

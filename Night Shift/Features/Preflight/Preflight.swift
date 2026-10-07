@@ -46,6 +46,9 @@ nonisolated struct PreflightCheck: Identifiable, Sendable {
 
         case trustFolders([String])
 
+        /// Mark Claude Code's first run as done, so a worker does not stop on its theme picker.
+        case finishClaudeSetup
+
         /// Copy the engine out of the app and let it install itself.
         case installEngine
 
@@ -72,6 +75,10 @@ nonisolated struct PreflightCheck: Identifiable, Sendable {
         /// following the link finds nothing to change. `CGRequestScreenCaptureAccess` makes macOS
         /// re-decide and, when it has nothing valid on file, show its own dialog.
         case askForScreenRecording
+
+        /// Update the Codex CLI in a Terminal the person watches — npm or Homebrew, whichever
+        /// installed it. Installing in the background is not something this app does.
+        case updateCodex(command: String)
     }
     var fix: Fix?
 
@@ -285,6 +292,7 @@ final class PreflightRunner {
             missingTitleKey: "Codex is not installed",
             missingDetailKey: "Codex independently reviews finished work before you see it. Homebrew has the build OpenAI signed and Apple notarised.",
             run: codexAnswersCheck))
+        if let update = await codexUpdateCheck() { out.append(update) }
         out.append(await toolCheck(name: "jq", titleKey: "jq is installed",
                                    detailKey: "The engine reads and writes its own state through it. Without jq a run cannot start.",
                                    brewFormula: "jq"))
@@ -298,11 +306,12 @@ final class PreflightRunner {
                                    detailKey: "Needed to branch, diff and merge work."))
         out.append(await githubCheck())
         out.append(folderCheck(model: model))
+        out.append(claudeSetupCheck())
         out.append(trustCheck(model: model))
         out.append(accessibilityCheck())
         out.append(screenRecordingCheck())
         out.append(oldCopyCheck())
-        out.append(await browserCheck())
+        out.append(await browserCheck(model: model))
         out.append(await notificationCheck())
         out.append(microphoneCheck())
         checks = out
@@ -343,6 +352,19 @@ final class PreflightRunner {
 
     // MARK: Individual checks
 
+    private func claudeSetupCheck() -> PreflightCheck {
+        guard ClaudeOnboarding.needsSetup() else {
+            return PreflightCheck(id: "claude-setup", titleKey: "Claude Code is set up",
+                                  detailKey: "Its first-run questions are answered, so a worker goes straight to work.",
+                                  status: .ready)
+        }
+        return PreflightCheck(id: "claude-setup",
+                              titleKey: "Claude Code has not been set up yet",
+                              detailKey: "On its first start it waits for a colour theme to be picked, and a worker in the background cannot pick one, so no work would start. Finishing setup here keeps the default theme; /theme changes it later.",
+                              status: .missing,
+                              fix: .finishClaudeSetup)
+    }
+
     private func trustCheck(model: AppModel) -> PreflightCheck {
 
         let paths = Set(model.products.products
@@ -370,6 +392,11 @@ final class PreflightRunner {
     /// Said before the button is pressed rather than after it refuses.
     private func engineHeldNote(model: AppModel) -> String? {
         guard let blocker = model.engineBlocker else { return nil }
+        // Leftovers alone are not a reason to wait — the button ends them.
+        if blocker.holders.isEmpty, blocker.orphanSessions.isEmpty, !blocker.leftovers.isEmpty {
+            return String(format: String(localized: "%lld leftover processes from earlier runs will be stopped first."),
+                          blocker.leftovers.count)
+        }
         return String(format: String(localized: "Cannot be replaced while %@."), blocker.text)
     }
 
@@ -398,6 +425,26 @@ final class PreflightRunner {
                                   detailKey: "Bulava cannot start any work without it.",
                                   status: .missing)
         }
+    }
+
+    /// Whether the Codex Bulava runs is the newest — the only way a model OpenAI added this week
+    /// reaches the menu. Not a requirement: an older Codex still does everything it did. No row at
+    /// all when it cannot be told (offline, an install nobody can place) — nothing is claimed.
+    private func codexUpdateCheck() async -> PreflightCheck? {
+        let path = await onPath("codex")
+        guard !path.isEmpty, let source = CodexUpdate.source(of: path) else { return nil }
+        let installed = await Task.detached { CodexInstalls.reportedVersion(path) }.value
+        guard let installed, let latest = await CodexUpdate.latest(for: source) else { return nil }
+        guard let available = CodexUpdate.decide(installed: installed, latest: latest, source: source) else {
+            return PreflightCheck(id: "codex-update", titleKey: "Codex is up to date",
+                                  detailKey: "New models appear in the menu as soon as OpenAI adds them.",
+                                  status: .ready, evidence: installed, gate: .convenience)
+        }
+        return PreflightCheck(id: "codex-update", titleKey: "A newer Codex is out",
+                              detailKey: "New models reach the model menu only through a Codex that knows them. The update takes a minute and keeps your settings and sign-in.",
+                              status: .missing,
+                              evidence: "\(available.installed) → \(available.latest)",
+                              gate: .convenience, fix: .updateCodex(command: available.command))
     }
 
     private func onPath(_ name: String) async -> String {
@@ -543,7 +590,10 @@ final class PreflightRunner {
         if probe.launched, probe.exitCode == 0, reply.lowercased().contains("ok") {
             return PreflightCheck(id: "claude-auth", titleKey: "Claude answers",
                                   detailKey: "A real one-shot call came back, so the subscription is live.",
-                                  status: .ready, evidence: String(reply.prefix(120)))
+                                  // No evidence on success: what came back is the CLI's own
+                                  // chatter (a settings warning, a session header) cut mid-word,
+                                  // and under a green tick it only reads as something wrong.
+                                  status: .ready, evidence: nil)
         }
         let output = reply.isEmpty ? probe.combined : reply
         let evidence = String(output.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
@@ -575,7 +625,7 @@ final class PreflightRunner {
         if probe.launched, probe.exitCode == 0, !reply.isEmpty {
             return PreflightCheck(id: "codex-auth", titleKey: "Codex answers",
                                   detailKey: "A real read-only call came back, so reviews can run.",
-                                  status: .ready, evidence: String(reply.suffix(120)))
+                                  status: .ready, evidence: nil)
         }
         let output = reply.isEmpty ? probe.combined : reply
         let evidence = String(output.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
@@ -735,16 +785,26 @@ final class PreflightRunner {
                               fix: .revealInFinder(old))
     }
 
-    private func browserCheck() async -> PreflightCheck {
+    private func browserCheck(model: AppModel) async -> PreflightCheck {
+        // Bulava's own browser, when it is on: runs use it and the throwaway one, not his Chrome,
+        // so whether his own Claude setup has a Chrome bridge no longer matters to them.
+        if model.settings.accountBrowserEnabled, ChromeApp.find() != nil {
+            let sites = model.browser.sites
+            let signedIn = sites.filter { $0.signedInAt != nil }.count
+            return PreflightCheck(id: "browser", titleKey: "Bulava's browser is ready",
+                                  detailKey: "Runs open pages in a throwaway browser, and the sites you signed in to in Bulava's own, one run at a time — without asking you.",
+                                  status: .ready,
+                                  evidence: "Google Chrome · \(signedIn)/\(sites.count)",
+                                  gate: .convenience)
+        }
         let browsers = ["/Applications/Google Chrome.app", "/Applications/Chromium.app",
                         "/Applications/Microsoft Edge.app", "/Applications/Brave Browser.app"]
         let browser = browsers.first { FileManager.default.fileExists(atPath: $0) }
-        let mcp = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/mcp.json")
-        let configured: Bool = {
-            guard let data = try? Data(contentsOf: mcp),
-                  let text = String(data: data, encoding: .utf8) else { return false }
-            return text.contains("chrome-devtools")
-        }()
+        // Claude Code keeps a user's MCP servers in ~/.claude.json (`claude mcp add` writes there).
+        // This used to read ~/.claude/mcp.json, which nothing writes, and said "not wired up" on a
+        // Mac where the bridge had been configured for months.
+        let configured = Self.chromeDevtoolsConfigured(
+            claudeConfig: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude.json"))
         guard let browser else {
             return PreflightCheck(id: "browser", titleKey: "No browser for web work",
                                   detailKey: "Browser work — checking a site, filling a console — needs a Chrome-family browser.",
@@ -762,6 +822,16 @@ final class PreflightRunner {
                               detailKey: "A browser is installed but the chrome-devtools bridge is not configured, so Bulava cannot drive it.",
                               status: .missing, evidence: (browser as NSString).lastPathComponent,
                               gate: .convenience)
+    }
+
+    nonisolated static func chromeDevtoolsConfigured(claudeConfig: URL) -> Bool {
+        guard let data = try? Data(contentsOf: claudeConfig),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let servers = root["mcpServers"] as? [String: Any] else { return false }
+        return servers.contains { name, value in
+            name.contains("chrome-devtools")
+                || ((value as? [String: Any])?["args"] as? [String])?.contains { $0.contains("chrome-devtools-mcp") } == true
+        }
     }
 
     private func folderCheck(model: AppModel) -> PreflightCheck {
@@ -988,6 +1058,9 @@ private struct CheckRow: View {
                     Text(folders.count == 1 ? "Trust the folder" : "Trust the folders")
                 }
                 .buttonStyle(.bulava(.primary))
+            } else if check.status != .ready, case .finishClaudeSetup? = check.fix {
+                Button { model.finishClaudeSetup() } label: { Text("Finish setup") }
+                    .buttonStyle(.bulava(.primary))
             } else if check.status != .ready, case .installEngine? = check.fix {
                 if let holders = model.engineBlocker?.holders, !holders.isEmpty {
                     // Plain "Install the engine" is known to refuse right now, and the run it
@@ -1015,7 +1088,32 @@ private struct CheckRow: View {
                         // directory, and a message accepted but not yet started lives in there.
                         Text("Whatever it is answering right now stops there, and anything still waiting in its queue is dropped. The conversation itself is kept — send the message again afterwards.")
                     }
+                } else if let blocker = model.engineBlocker, !blocker.orphanSessions.isEmpty {
+                    // Nobody's run is holding it — what is left is a worker session nothing
+                    // accounts for. It may still be on somebody's screen, so this asks first.
+                    Button { confirmingStop = true } label: {
+                        Text(model.stoppingForEngine ? "Stopping…"
+                             : model.installingEngine ? "Installing…"
+                             : "Close leftovers and install")
+                    }
+                    .buttonStyle(.bulava(.primary))
+                    .disabled(model.stoppingForEngine || model.installingEngine)
+                    .confirmationDialog(
+                        Text("Close what earlier runs left open and install the engine?"),
+                        isPresented: $confirmingStop, titleVisibility: .visible
+                    ) {
+                        Button("Close and install", role: .destructive) {
+                            Task { await model.stopHolderAndInstallEngine() }
+                        }
+                        Button("Cancel", role: .cancel) { }
+                    } message: {
+                        Text(verbatim: (blocker.orphanSessions
+                                        + blocker.leftovers.map { "\($0.name) · \($0.pid)" })
+                            .joined(separator: "\n"))
+                    }
                 } else {
+                    // A daemon an earlier run left behind is ended by the install itself: nothing
+                    // is working in it, so there is nothing to ask about.
                     Button { Task { await model.installEngine() } } label: {
                         Text(model.installingEngine ? "Installing…" : "Install the engine")
                     }
@@ -1035,6 +1133,10 @@ private struct CheckRow: View {
             } else if check.status != .ready, case .signIn(let command)? = check.fix {
                 Button { model.signIn(command: command) } label: { Text("Sign in…") }
                     .buttonStyle(.bulava(.primary))
+            } else if check.status != .ready, case .updateCodex(let command)? = check.fix {
+                Button { model.updateCodex(command: command) } label: { Text("Update Codex") }
+                    .buttonStyle(.bulava(.secondary))
+                    .help(Text(verbatim: command))
             } else if case .askForScreenRecording? = check.fix {
                 // Shown whatever the status says, for the reason above. The call returns at once
                 // and macOS decides whether a dialog is warranted; re-reading readiness afterwards

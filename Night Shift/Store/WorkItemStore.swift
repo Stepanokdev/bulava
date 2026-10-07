@@ -85,13 +85,6 @@ final class WorkItemStore {
         persist()
     }
 
-    func markReportAnnounced(_ id: UUID, at date: Date = Date()) {
-        guard let i = items.firstIndex(where: { $0.id == id }),
-              items[i].reportAnnouncedAt == nil else { return }
-        items[i].reportAnnouncedAt = date
-        persist()
-    }
-
     func markPreempted(_ streamID: UUID, in itemID: UUID) {
         guard let i = items.firstIndex(where: { $0.id == itemID }),
               !items[i].preemptedStreamIDs.contains(streamID) else { return }

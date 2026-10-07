@@ -40,6 +40,14 @@ if ! supervised_session_live "$slug"; then
     # one without being told to. Folded into 1 it reached the app as text with a terminal command in
     # it; kept, the app can answer it with a button, exactly as the chat does.
     [ "$start_rc" = 76 ] && exit 76
+    # 77 is the same kind of answer: the folder holds uncommitted work and the engine will not
+    # commit it, stash it or start on top of it until the director says which.
+    [ "$start_rc" = 77 ] && exit 77
+    # 78: the project's MCP servers, which Claude would stop to ask about where nobody can answer.
+    [ "$start_rc" = 78 ] && exit 78
+    # 79: a first checkpoint that would not fit, and the files that make it heavy are named — the
+    # director can leave them out of checkpoints instead of reading about megabytes.
+    [ "$start_rc" = 79 ] && exit 79
     exit 1
   fi
 fi

@@ -18,6 +18,7 @@ LIMIT_RECHECK_COOLDOWN="${SUPERVISOR_LIMIT_RECHECK_COOLDOWN:-600}"
 
 log() { echo "$(date '+%F %T') [$SLUG] $*" >> "$LOG"; }
 log "watchdog started (pid $$, session $SESSION)"
+
 last_resume=$(cat "$IDIR/last-resume" 2>/dev/null || echo 0)
 case "$last_resume" in ''|*[!0-9]*) last_resume=0 ;; esac
 
@@ -103,7 +104,22 @@ while [ -d "$IDIR" ]; do
     log "run changed under this watchdog ($WD_RUN → $(tr -d '[:space:]' < "$IDIR/run-id" 2>/dev/null)) — exiting rather than supervising somebody else's work"
     exit 0
   fi
-  tmux has-session -t "$SESSION" 2>/dev/null || { sleep "$POLL"; continue; }
+  if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+    # The session is gone and this watchdog is not: the tmux server died, or someone killed it. A
+    # worker that quits takes the instance with it (the launch line ends in `stop`), so a directory
+    # still here with work owed means the worker was taken, not that it left. It is started again in
+    # place — a few times, spaced out — instead of this loop sleeping beside it for ever.
+    if instance_owes_work "$IDIR" && [ "${revive_tries:-0}" -lt "${SUPERVISOR_REVIVE_TRIES:-3}" ] \
+       && [ $(( $(date +%s) - ${revive_at:-0} )) -ge "${SUPERVISOR_REVIVE_GAP:-120}" ]; then
+      revive_at=$(date +%s); revive_tries=$(( ${revive_tries:-0} + 1 ))
+      log "the session is gone and the run still owes work — starting its worker again in place (try $revive_tries)"
+      instance_revive "$SLUG" worker-only; _rv=$?
+      [ "$_rv" = 0 ] && tmux has-session -t "$SESSION" 2>/dev/null \
+        && { log "worker started again in place"; revive_tries=0; } \
+        || log "could not start the worker again (rc=$_rv)"
+    fi
+    sleep "$POLL"; continue
+  fi
   now=$(date +%s)
 
   if [ -e "$IDIR/offline.json" ] && network_up; then
@@ -114,6 +130,16 @@ while [ -d "$IDIR" ]; do
   pane=$(tmux capture-pane -t "$SESSION" -p 2>/dev/null)
   cur_hash=$(printf '%s' "$pane" | cksum)
   if [ "$cur_hash" != "$last_hash" ]; then note_activity; last_hash="$cur_hash"; fi
+
+  if permission_wait_check "$IDIR" "$SESSION" "$now"; then note_activity; sleep "$POLL"; continue; fi
+  # Still there after that check means the dialog is still on screen: it removes the mark of one
+  # that was answered. In a run with a person there it waits for him — the app shows it as his — and
+  # a run waiting for him is not idle. The four-hour teardown counted it as idle and deleted the run
+  # with its folder, and the stall park marked it stalled: a question is exempt from both, a dialog
+  # was not.
+  if [ -f "$IDIR/permission-wait.json" ] && tmux has-session -t "$SESSION" 2>/dev/null; then
+    note_activity
+  fi
 
   # Preparation is work, even though the pane is perfectly still while it happens. Two model calls
   # take minutes; without this the run would be declared stalled and the flush below would type a

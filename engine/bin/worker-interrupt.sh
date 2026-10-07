@@ -63,6 +63,27 @@ if ! _turn_running "$session" && [ ! -e "$idir/review-active" ]; then
   exit 2
 fi
 
+# A review in progress is Codex working inside the Stop hook, after the turn itself has ended — the
+# "it is Codex thinking, not Claude" case. An Escape does not reach a hook's children, so Stop used
+# to need pressing again and again while the reviewer carried on. The gate records its pid; the
+# whole tree goes, and its EXIT trap clears the marker.
+if review_active_live "$idir"; then
+  rpid="$(jq -r '.pid // empty' "$idir/review-active" 2>/dev/null)"
+  case "$rpid" in ''|*[!0-9]*) rpid="" ;; esac
+  if [ -n "$rpid" ]; then
+    kill_tree "$rpid" TERM
+    ( sleep 2; kill -0 "$rpid" 2>/dev/null && kill_tree "$rpid" KILL ) >/dev/null 2>&1 &
+  fi
+fi
+
 tmux send-keys -t "$session" Escape 2>/dev/null || { echo "не вдалося передати Stop"; exit 1; }
+# One Escape is not always one stop: when a menu or a permission question is on the worker's screen,
+# the first Escape closes that and the turn carries on. He pressed Stop once and meant it, so the
+# turn is watched for a few seconds and given a second Escape if it is still going.
+for _ in 1 2 3; do
+  sleep 1
+  _turn_running "$session" || break
+done
+_turn_running "$session" && tmux send-keys -t "$session" Escape 2>/dev/null
 echo "■ Зупиняю поточну відповідь; діалог і черга залишаються"
 exit 0

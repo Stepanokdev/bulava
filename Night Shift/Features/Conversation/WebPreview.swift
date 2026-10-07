@@ -88,6 +88,10 @@ struct WebPreview: View {
 
             if phase == .loading { ProgressView().controlSize(.small) }
 
+            if let shares = ShareCenter.current, let link = shares.link(forPage: currentURL) {
+                PhoneHandoffButton(urls: shares.urls(for: link), title: link.title)
+            }
+
             Button { NSWorkspace.shared.open(currentURL) } label: {
                 Image(systemName: "arrow.up.forward.app")
             }

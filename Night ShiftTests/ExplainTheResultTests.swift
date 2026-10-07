@@ -399,7 +399,9 @@ nonisolated final class ExplainTheResultTests: XCTestCase {
         store.updateBlocks(entryID: old, blocks: [.markdown(id: "m", "Two files.")],
                            text: "Two files.", persist: true)
 
-        // Strip the field, the way a file written by the previous build has it.
+        // Strip the field, the way a file written by the previous build has it. The history is
+        // written in the background, so the write is let finish before the file is read raw.
+        CoalescedWrites.shared.flush(entries)
         var raw = try JSONSerialization.jsonObject(with: Data(contentsOf: entries)) as! [[String: Any]]
         for i in raw.indices { raw[i].removeValue(forKey: "turnFinished") }
         try JSONSerialization.data(withJSONObject: raw).write(to: entries)

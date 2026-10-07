@@ -175,6 +175,25 @@ else
 fi
 
 echo
+echo "===== a hung alignment is stopped on its own short budget, not on the positions' long one ====="
+# The comparison of two finished positions takes under a minute and a half ninety-five times in a
+# hundred. It once sat silent for fifteen minutes — the Codex position budget — before the work went
+# on without it anyway. Here the positions' Codex budget is sixty seconds and the alignment's is
+# three: a silent alignment has to be given up in seconds.
+printf 'REAL GOAL — a\n' > "$IDIR/peer-claude.md"; printf 'RECOMMENDATION — b\n' > "$IDIR/peer-codex.md"
+rm -f "$IDIR/peer-alignment.md" "$IDIR/degraded.md"
+printf '#!/bin/bash\nif [ "${1:-}" = login ]; then echo "Logged in using ChatGPT"; exit 0; fi\nsleep 120\n' > "$TMP/stub/codex"
+chmod +x "$TMP/stub/codex"
+t0=$(date +%s)
+PATH="$TMP/stub:$PATH" SUPERVISOR_PEER_IDLE_TIMEOUT_CODEX=60 SUPERVISOR_ALIGN_IDLE_TIMEOUT=3 SUPERVISOR_PEER_POLL=1 \
+  bash "$BIN/preflight.sh" --art "$IDIR" --stage align "$TMP/project" "задача" >/dev/null 2>&1
+took=$(( $(date +%s) - t0 ))
+[ "$took" -lt 30 ] && ok "given up after ${took}s, not after the positions' 60" || bad "the alignment waited ${took}s"
+grep -q "Codex не встиг звірити дві позиції" "$IDIR/degraded.md" 2>/dev/null \
+  && ok "and the work goes on with both positions standing, as before" || bad "degraded: $(cat "$IDIR/degraded.md" 2>/dev/null)"
+rm -f "$IDIR/peer-claude.md" "$IDIR/peer-codex.md" "$IDIR/degraded.md"
+
+echo
 echo "===== and a position that arrives clears what the last attempt said ====="
 printf 'claude не встиг сформувати позицію за 2с\n' > "$IDIR/peer-claude.unavailable"
 peer_run 'echo "REAL GOAL — done

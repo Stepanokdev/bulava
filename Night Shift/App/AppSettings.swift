@@ -359,6 +359,17 @@ nonisolated enum CodexEffortChoice: String, Codable, CaseIterable, Identifiable,
 }
 
 nonisolated struct AppSettings: Codable, Equatable {
+
+    /// The language Bulava's workers start in, before the person has written anything: the report
+    /// language when one is chosen, else the one the app is shown in. After that they answer in the
+    /// language the person writes to them in (`worker_language_rule`). "System" used to mean English
+    /// here and, for a chat, the engine's own Ukrainian — so whoever wrote in English or Russian was
+    /// answered in Ukrainian.
+    var workLanguageName: String {
+        reportLanguage == .system
+            ? ExplainPrompt.languageName(interface: interfaceLanguage, displayedCode: LanguageBundle.currentCode)
+            : reportLanguage.reportLanguageName
+    }
     var stateDirPath: String
     var orchestratorHomePath: String?
     var pollSeconds: Double
@@ -385,12 +396,39 @@ nonisolated struct AppSettings: Codable, Equatable {
 
     var codexModel: String = ""
 
+    /// The pipeline a new chat starts on. Nil is the built-in one for the chat mode; a chat that
+    /// chose its own keeps it, whatever this becomes later.
+    var defaultPipelineID: String?
+
     /// Whether Bulava will drive other apps' interfaces when a worker asks it to.
     ///
     /// macOS's own Accessibility grant is the real gate — without it nothing here works at all.
     /// This is the second lock, the one he can turn without opening System Settings, and it
     /// answers refusals rather than falling silent so a worker is never left waiting on nothing.
     var workersMayDriveApps: Bool = true
+
+    /// Whether the Mac is kept from idle sleep while work goes on without him. On by default: a
+    /// night shift on a Mac that dozes off after twenty minutes is a night shift of twenty minutes.
+    var keepAwakeWhileWorking: Bool = true
+
+    /// Whether Bulava opens what agents share — and what is tapped in a chat — to the phone over
+    /// the home Wi-Fi (`ShareCenter`). Off, the share server is stopped and no link answers.
+    var shareLinksEnabled: Bool = true
+
+    /// Whether runs work in Bulava's own browser (`AccountBrowser`): a Chrome with its own profile
+    /// he signs in to once, lent to one run at a time, beside a throwaway one for everything that
+    /// needs no sign-in. On, runs no longer reach the Chrome he works in.
+    var accountBrowserEnabled: Bool = true
+
+    /// Whether a failure that stopped a message is handed to Codex (or Claude) to fix by itself,
+    /// in that project's folder, and the message sent again once it is fixed. Off, the same repair
+    /// waits behind a button.
+    var autoRepair: Bool = true
+
+    /// Whether an anonymous report of such a failure — what broke and how the repair went, with
+    /// every name, path and key taken out — is sent to Bulava's makers. Turning it off drops
+    /// whatever was still waiting to go.
+    var shareErrorReports: Bool = true
 
     /// Whether Claude answers in Codex's place, by itself, when Codex has no weekly quota left.
     ///
@@ -443,8 +481,7 @@ nonisolated struct AppSettings: Codable, Equatable {
     var learningProfileForPrompt: String { LearningProfile.normalized(learningProfile) }
 
     static var defaultStateDirPath: String {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".claude/supervisor").path
+        AppChannel.current.defaultSupervisorStateDir().path
     }
 
     static var fallback: AppSettings {
@@ -459,7 +496,6 @@ nonisolated struct AppSettings: Codable, Equatable {
         }
         return SupervisorPaths(stateDir: URL(fileURLWithPath: stateDirPath))
     }
-    var orchestratorHomeURL: URL? { orchestratorHomePath.map { URL(fileURLWithPath: $0) } }
 
     // MARK: Persistence
 
@@ -550,6 +586,7 @@ nonisolated extension AppSettings {
         claudeEffort = (try? c.decodeIfPresent(ClaudeEffortChoice.self, forKey: .claudeEffort)) ?? .auto
         codexEffort = (try? c.decodeIfPresent(CodexEffortChoice.self, forKey: .codexEffort)) ?? .auto
         codexModel = (try? c.decodeIfPresent(String.self, forKey: .codexModel)) ?? ""
+        defaultPipelineID = try? c.decodeIfPresent(String.self, forKey: .defaultPipelineID)
         dictationLanguage = (try? c.decodeIfPresent(DictationLanguage.self,
                                                     forKey: .dictationLanguage)) ?? .interface
         // The stored `true` is retired here, once.
@@ -564,6 +601,11 @@ nonisolated extension AppSettings {
         standInMigrated = true
         workersMayDriveApps = (try? c.decodeIfPresent(Bool.self,
                                                       forKey: .workersMayDriveApps)) ?? true
+        keepAwakeWhileWorking = (try? c.decodeIfPresent(Bool.self, forKey: .keepAwakeWhileWorking)) ?? true
+        shareLinksEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .shareLinksEnabled)) ?? true
+        accountBrowserEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .accountBrowserEnabled)) ?? true
+        autoRepair = (try? c.decodeIfPresent(Bool.self, forKey: .autoRepair)) ?? true
+        shareErrorReports = (try? c.decodeIfPresent(Bool.self, forKey: .shareErrorReports)) ?? true
         // Absent in every settings file written before this feature, and absent means off with no
         // profile. Both lines have to be HERE: this decoder is written by hand, and a property
         // that only has a default in the declaration is silently reset on every launch.

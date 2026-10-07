@@ -20,6 +20,8 @@ nonisolated struct TailFollow: Equatable, Sendable {
         var offsetY: CGFloat
         var contentHeight: CGFloat
         var viewportHeight: CGFloat
+        /// How wide the thread is. A change of width re-measures every row — see `advance`.
+        var viewportWidth: CGFloat = 0
 
         var distanceFromBottom: CGFloat {
             max(0, contentHeight - viewportHeight - offsetY)
@@ -47,16 +49,44 @@ nonisolated struct TailFollow: Equatable, Sendable {
     init(following: Bool = true) { self.following = following }
 
     /// Take a new reading. Returns true when the thread should scroll to the end.
+    ///
+    /// A lazy thread re-measures rows it had only estimated: its content height jumps, and a
+    /// reading later the offset is pulled up with nobody touching anything. Read as the reader
+    /// leaving, that stopped the thread following its own answer for good. So an offset that drops
+    /// in the reading right after the height changed is the layout settling — unless a hand is on
+    /// the trackpad (`byHand`). A hand that starts scrolling while nothing is being re-measured is
+    /// believed at once: its phase arrives a frame or two after the offset has already moved.
+    private var heightJustChanged = false
+
+    /// Readings still to come of a thread re-measuring itself after its width changed.
+    ///
+    /// A narrower window, or the side panel opening, re-measures every row at once: over the next
+    /// several readings the content height and the offset jump together, by thousands of points in
+    /// a long chat. "Both at once" is otherwise how a hand scrolling while the answer grows looks,
+    /// so the thread stopped following its own answer every time the window changed width — and,
+    /// when the lazy stack went blank on the way, was put back in the middle instead of at the end.
+    /// A width change is never his hand; his hand is still believed through its scroll phase.
+    private var relayoutReadings = 0
+    static let relayoutWindow = 12
+
     @discardableResult
-    mutating func advance(from old: Frame, to new: Frame) -> Bool {
+    mutating func advance(from old: Frame, to new: Frame, byHand: Bool = false) -> Bool {
         guard !pinned else { return false }
+        let resized = abs(new.contentHeight - old.contentHeight) > 0.5
         let shrank = new.contentHeight < old.contentHeight - 0.5
         let scrolledUp = new.offsetY < old.offsetY - Self.deadband
+        // The pattern is two readings: the height moves, then the offset follows it. A reading that
+        // moves both at once is a hand scrolling while the answer grows, and that is believed.
+        let settling = heightJustChanged && !resized
+        heightJustChanged = resized
+        if abs(new.viewportWidth - old.viewportWidth) > 0.5 { relayoutReadings = Self.relayoutWindow }
+        let relayingOut = relayoutReadings > 0
+        if relayoutReadings > 0 { relayoutReadings -= 1 }
 
         if new.distanceFromBottom <= Self.slack {
             // Back at the end — by hand or because the tail caught up. Either way, follow again.
             following = true
-        } else if scrolledUp && !shrank {
+        } else if scrolledUp && !shrank && (byHand || (!settling && !relayingOut)) {
             // Content that collapses (a disclosure closing) drags the offset up on its own; that
             // is the layout moving, not the reader.
             following = false
