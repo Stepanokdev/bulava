@@ -1,0 +1,39 @@
+# Bulava's error-report inbox on the Stepanok server, behind Traefik, on the push relay's host:
+#   https://bulava-push.stepanok.com/v1/reports   — error reports
+#   https://bulava-push.stepanok.com/v1/usage     — the weekly usage summaries
+# A path on an existing host, so no new DNS name and no new certificate. Traefik ranks the longer
+# rule first, so /v1/reports reaches this container and everything else still reaches the relay.
+#
+# ./.env (not in git) holds REPORTS_ADMIN_TOKEN — the one secret that reads the reports back.
+# ./data holds one file per day; files older than RETENTION_DAYS are deleted by the service.
+services:
+  inbox:
+    build: .
+    container_name: bulava-reports
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      RETENTION_DAYS: "90"
+    volumes:
+      - ./data:/data
+    user: "65532:65532"
+    networks:
+      - web
+    mem_limit: 64m
+    read_only: true
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=web"
+      - "traefik.http.routers.bulava-reports.rule=Host(`bulava-push.stepanok.com`) && (PathPrefix(`/v1/reports`) || PathPrefix(`/v1/usage`))"
+      - "traefik.http.routers.bulava-reports.entrypoints=websecure"
+      - "traefik.http.routers.bulava-reports.tls.certresolver=letsencrypt"
+      - "traefik.http.services.bulava-reports.loadbalancer.server.port=8080"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  web:
+    external: true

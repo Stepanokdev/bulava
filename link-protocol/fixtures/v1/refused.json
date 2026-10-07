@@ -1,0 +1,19 @@
+{
+  "code" : "protocol_too_old",
+  "desktopVersion" : "1.9",
+  "message" : "Update the app.",
+  "phoneApps" : {
+    "android" : {
+      "build" : 9,
+      "url" : "https://bulava.app/Bulava-android.apk",
+      "version" : "1.1"
+    },
+    "ios" : {
+      "build" : 9,
+      "url" : "https://testflight.apple.com/join/wtWcPjb1",
+      "version" : "1.1"
+    }
+  },
+  "protocolVersion" : 1,
+  "type" : "refused"
+}

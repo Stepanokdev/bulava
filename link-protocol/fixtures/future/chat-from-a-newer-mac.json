@@ -1,0 +1,57 @@
+{
+  "data": {
+    "actions": [],
+    "archived": false,
+    "busy": true,
+    "entries": [
+      {
+        "actions": [],
+        "asks": [],
+        "atMs": 1,
+        "attachments": [],
+        "author": "Night Shift",
+        "blocks": [],
+        "id": "E1",
+        "kind": "hologram",
+        "reactions": [
+          "+1"
+        ],
+        "text": "A kind of entry this phone has never seen",
+        "tone": "neutral"
+      },
+      {
+        "actions": [],
+        "asks": [],
+        "atMs": 2,
+        "attachments": [],
+        "author": "Night Shift",
+        "blocks": [
+          {
+            "files": [],
+            "id": "b",
+            "kind": "diagram",
+            "renderer": "mermaid",
+            "text": "graph TD; A-->B"
+          }
+        ],
+        "id": "E2",
+        "kind": "agent",
+        "text": "",
+        "tone": "neutral"
+      }
+    ],
+    "hasEarlier": false,
+    "id": "C1",
+    "productID": "P1",
+    "queueCount": 0,
+    "status": {
+      "active": true,
+      "code": "working",
+      "label": "Working",
+      "tone": "active"
+    },
+    "title": "Export"
+  },
+  "event": "chat",
+  "type": "event"
+}

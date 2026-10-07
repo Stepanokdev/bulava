@@ -1,0 +1,13 @@
+{
+  "id" : "R3",
+  "ok" : true,
+  "result" : {
+    "data" : "AAEC",
+    "mime" : "image/png",
+    "name" : "shot.png",
+    "offset" : 0,
+    "ref" : "att:A1",
+    "total" : 3
+  },
+  "type" : "response"
+}

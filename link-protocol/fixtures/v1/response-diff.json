@@ -1,0 +1,8 @@
+{
+  "id" : "R7",
+  "ok" : true,
+  "result" : {
+    "text" : "@@ -1 +1 @@\n-old\n+new\n"
+  },
+  "type" : "response"
+}

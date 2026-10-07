@@ -1,0 +1,3 @@
+"NSCameraUsageDescription" = "Bulava uses the camera only to read the pairing code on your Mac.";
+"NSLocalNetworkUsageDescription" = "Bulava talks to Bulava on your Mac directly over this Wi‑Fi. Nothing goes through the internet.";
+"NSMicrophoneUsageDescription" = "Bulava records only after you tap the microphone in a chat. Your Mac turns the recording into text, and it goes nowhere else.";

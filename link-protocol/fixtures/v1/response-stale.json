@@ -1,0 +1,9 @@
+{
+  "error" : {
+    "code" : "stale",
+    "message" : "This was already handled on your Mac."
+  },
+  "id" : "R2",
+  "ok" : false,
+  "type" : "response"
+}

@@ -1,0 +1,29 @@
+"live.working.one" = "Працює";
+"live.working" = "Працює · %lld";
+"live.done" = "Готово";
+"live.more" = "і ще %lld";
+"live.stale" = "Mac давно не озивався. Можливо, він заснув.";
+"live.outcome.done" = "Готово";
+"live.outcome.attention" = "Потрібна ваша відповідь";
+"live.outcome.failed" = "Зупинилося з помилкою";
+"live.outcome.stopped" = "Зупинено";
+
+/* The week's widgets: their names and descriptions in the widget gallery, and the face shown before the first week arrives. */
+"Without you" = "Без тебе";
+"How long the agents worked this week, and how much work each of your messages started." = "Скільки агенти працювали цього тижня і скільки роботи запускало кожне твоє повідомлення.";
+"How runs ended" = "Прогони";
+"What review accepted this week, what it accepted with remarks, and what waited for you." = "Що рев'ю прийняло цього тижня, що прийняло із зауваженнями і що чекало на тебе.";
+"Receipt of the week" = "Чек тижня";
+"What the week's work would have cost at API prices. An estimate, not what you pay." = "Скільки коштувала б робота тижня за цінами API. Це оцінка, а не те, що ти платиш.";
+"Rhythm of the week" = "Ритм тижня";
+"When the agents worked, day by day and hour by hour." = "Коли працювали агенти, по днях і годинах.";
+"Code changes" = "Обсяг змін";
+"Lines the agents added and removed this week." = "Рядки, які агенти додали і прибрали цього тижня.";
+"Limits" = "Ліміти";
+"Claude's and Codex's limits, with a tick where an even pace would be." = "Ліміти Claude і Codex із рискою там, де був би рівний темп.";
+"Working now" = "Зараз працюють";
+"Which agents are working and which runs wait for you." = "Які агенти працюють і які прогони чекають на тебе.";
+"The week at a glance" = "Тиждень одним екраном";
+"Hours without you, accepted runs, the receipt and the week's rhythm on one face." = "Години без тебе, прийняті прогони, чек і ритм тижня на одному віджеті.";
+"Open Bulava and this fills in within minutes." = "Відкрий Булаву, і за кілька хвилин тут з'являться цифри.";
+"Connect to Bulava on your Mac and this fills in." = "Підключись до Булави на Mac, і тут з'являться цифри.";

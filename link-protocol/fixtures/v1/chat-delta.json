@@ -1,0 +1,141 @@
+{
+  "data" : {
+    "header" : {
+      "actions" : [
+
+      ],
+      "archived" : false,
+      "busy" : false,
+      "composer" : {
+        "groups" : [
+          {
+            "engine" : "codex",
+            "id" : "codexEffort",
+            "kind" : "depth",
+            "options" : [
+              {
+                "id" : "auto",
+                "label" : "Automatic · Medium"
+              },
+              {
+                "id" : "high",
+                "label" : "High"
+              }
+            ],
+            "selected" : "high",
+            "title" : "Codex thinks"
+          }
+        ],
+        "summary" : [
+          {
+            "depth" : "Max",
+            "engine" : "claude",
+            "model" : "Opus 5.5",
+            "name" : "Claude"
+          },
+          {
+            "depth" : "High",
+            "engine" : "codex",
+            "model" : "GPT-5.5",
+            "name" : "Codex"
+          }
+        ]
+      },
+      "hasEarlier" : true,
+      "queueCount" : 0,
+      "status" : {
+        "active" : false,
+        "code" : "ready",
+        "label" : "Night Shift replied",
+        "tone" : "good"
+      },
+      "title" : "Export fix"
+    },
+    "id" : "C1",
+    "order" : [
+      "E1",
+      "E2"
+    ],
+    "removed" : [
+      "E0"
+    ],
+    "upserts" : [
+      {
+        "actions" : [
+
+        ],
+        "asks" : [
+
+        ],
+        "atMs" : 1790000030000,
+        "attachments" : [
+
+        ],
+        "author" : "Night Shift",
+        "blocks" : [
+          {
+            "activity" : {
+              "sentence" : "Reading ExportController.swift",
+              "status" : "done"
+            },
+            "files" : [
+
+            ],
+            "id" : "t1",
+            "kind" : "activity",
+            "text" : ""
+          },
+          {
+            "files" : [
+
+            ],
+            "id" : "m1",
+            "kind" : "markdown",
+            "links" : [
+              {
+                "kind" : "document",
+                "name" : "index.html",
+                "ref" : "lnk:C1:0a1b2c3d4e5f60718293",
+                "size" : 2048
+              }
+            ],
+            "text" : "It waits for the **transcript**. The page: `artifacts/review/index.html`."
+          },
+          {
+            "files" : [
+              {
+                "kind" : "image",
+                "name" : "after.png",
+                "ref" : "art:run/after.png",
+                "size" : 10
+              }
+            ],
+            "id" : "g1",
+            "kind" : "gallery",
+            "text" : "Before and after"
+          }
+        ],
+        "explanation" : {
+          "actions" : [
+            {
+              "id" : "explain.steps:E2",
+              "kind" : "invoke",
+              "label" : "Go through it step by step",
+              "style" : "secondary"
+            }
+          ],
+          "brief" : "It waits for the transcript, so the button stays grey.",
+          "running" : false,
+          "stale" : false
+        },
+        "finished" : true,
+        "id" : "E2",
+        "kind" : "agent",
+        "text" : "It waits for the transcript.",
+        "tone" : "neutral"
+      }
+    ]
+  },
+  "event" : "chat.delta",
+  "type" : "event"
+}

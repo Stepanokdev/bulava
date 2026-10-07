@@ -1,0 +1,9 @@
+{
+  "id" : "R1",
+  "ok" : true,
+  "result" : {
+    "duplicate" : false,
+    "entryID" : "E9"
+  },
+  "type" : "response"
+}

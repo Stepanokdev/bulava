@@ -1,0 +1,11 @@
+"scan.hint" = "Point the camera at the code on your Mac";
+"scan.close" = "Close";
+"scan.denied" = "Bulava needs the camera to read the code on your Mac. Allow it in Settings, or scan the code with the Camera app instead.";
+"scan.settings" = "Open Settings";
+"PUSH_TITLE" = "Bulava";
+"PUSH_BODY" = "Your Mac is waiting for your answer. Open Bulava to see what it needs.";
+"PUSH_BODY_DONE" = "A task is done. Its report is ready to read.";
+"PUSH_BODY_REPLIED" = "The work is done. The answer is in the chat.";
+"LIVE_START_TITLE" = "Bulava is working";
+"LIVE_START_BODY" = "Your Mac has started work. The Lock Screen shows what it is working on.";
+"notification.send" = "Send";

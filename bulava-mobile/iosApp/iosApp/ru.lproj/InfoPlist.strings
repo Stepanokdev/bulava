@@ -1,0 +1,3 @@
+"NSCameraUsageDescription" = "Bulava использует камеру только для того, чтобы прочитать код подключения на вашем Mac.";
+"NSLocalNetworkUsageDescription" = "Bulava говорит с Bulava на вашем Mac напрямую через эту сеть Wi‑Fi. Ничего не идёт через интернет.";
+"NSMicrophoneUsageDescription" = "Bulava записывает только после того, как вы коснётесь микрофона в чате. Ваш Mac превращает запись в текст, и больше она никуда не уходит.";

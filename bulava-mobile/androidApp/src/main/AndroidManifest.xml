@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- The link to the Mac: a TLS WebSocket on the local network, found again by Bonjour (NSD). -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- Android 17 asks before an app reaches devices on the local network. -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Dictation: a voice note recorded in the composer, sent to the Mac, whose Whisper writes it down. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+
+    <application
+        android:name=".BulavaApplication"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Bulava">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- The pairing page on bulava.app hands the code over through this. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="bulava" android:host="pair" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".ScanActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+        <service
+            android:name=".LinkService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+        <!-- A button pressed on a notification: the phone is unlocked first, then it is answered on
+             the Mac without opening the app. It has no screen of its own. -->
+        <activity
+            android:name=".NotificationAnswerActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:launchMode="singleInstance"
+            android:showWhenLocked="true"
+            android:theme="@style/Theme.Bulava.Answer" />
+
+        <!-- The week's widgets: one receiver per face, each drawn by Glance from the week the Mac sent. -->
+        <receiver
+            android:name=".widgets.AutonomyWidgetReceiver"
+            android:exported="true"
+            android:label="@string/week_widget_autonomy">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/week_widget_autonomy" />
+        </receiver>
+        <receiver
+            android:name=".widgets.OutcomesWidgetReceiver"
+            android:exported="true"
+            android:label="@string/week_widget_outcomes">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/week_widget_outcomes" />
+        </receiver>
+        <receiver
+            android:name=".widgets.ReceiptWidgetReceiver"
+            android:exported="true"
+            android:label="@string/week_widget_receipt">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/week_widget_receipt" />
+        </receiver>
+        <receiver
+            android:name=".widgets.RhythmWidgetReceiver"
+            android:exported="true"
+            android:label="@string/week_widget_rhythm">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/week_widget_rhythm" />
+        </receiver>
+        <receiver
+            android:name=".widgets.VolumeWidgetReceiver"
+            android:exported="true"
+            android:label="@string/week_widget_volume">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/week_widget_volume" />
+        </receiver>
+        <receiver
+            android:name=".widgets.LimitsWidgetReceiver"
+            android:exported="true"
+            android:label="@string/week_widget_limits">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/week_widget_limits" />
+        </receiver>
+        <receiver
+            android:name=".widgets.NowWidgetReceiver"
+            android:exported="true"
+            android:label="@string/week_widget_now">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/week_widget_now" />
+        </receiver>
+        <receiver
+            android:name=".widgets.WeekGlanceWidgetReceiver"
+            android:exported="true"
+            android:label="@string/week_widget_glance">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/week_widget_glance" />
+        </receiver>
+    </application>
+
+</manifest>

@@ -1,0 +1,34 @@
+# The push relay on the Stepanok server, behind Traefik: https://bulava-push.stepanok.com
+# The APNs key is mounted from ./secrets/apns.p8 (not in git; the copy lives in bulava-mobile/secrets/).
+services:
+  relay:
+    build: .
+    container_name: bulava-push
+    restart: unless-stopped
+    environment:
+      APNS_KEY_FILE: /run/secrets/apns.p8
+      APNS_KEY_ID: DQ98M28C8L
+      APNS_TEAM_ID: KHU94Q2JSS
+      APNS_TOPIC: com.stepanok.bulava
+    volumes:
+      - ./secrets/apns.p8:/run/secrets/apns.p8:ro
+    networks:
+      - web
+    mem_limit: 64m
+    read_only: true
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=web"
+      - "traefik.http.routers.bulava-push.rule=Host(`bulava-push.stepanok.com`)"
+      - "traefik.http.routers.bulava-push.entrypoints=websecure"
+      - "traefik.http.routers.bulava-push.tls.certresolver=letsencrypt"
+      - "traefik.http.services.bulava-push.loadbalancer.server.port=8080"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  web:
+    external: true

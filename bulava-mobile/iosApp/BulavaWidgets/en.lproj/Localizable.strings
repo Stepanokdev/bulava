@@ -1,0 +1,9 @@
+"live.working.one" = "Working";
+"live.working" = "Working · %lld";
+"live.done" = "Done";
+"live.more" = "and %lld more";
+"live.stale" = "Not heard from your Mac for a while. It may be asleep.";
+"live.outcome.done" = "Done";
+"live.outcome.attention" = "Needs your answer";
+"live.outcome.failed" = "Stopped with an error";
+"live.outcome.stopped" = "Stopped";
