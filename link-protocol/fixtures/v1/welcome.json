@@ -1,0 +1,45 @@
+{
+  "capabilities" : [
+    "actions",
+    "attachments.upload",
+    "attention",
+    "audio.transcribe",
+    "chat.archive",
+    "chat.create",
+    "chat.history",
+    "chat.pin",
+    "chat.read",
+    "chat.rename",
+    "chat.send",
+    "chat.stop",
+    "commands",
+    "context",
+    "entry.retry",
+    "entry.takeBack",
+    "files",
+    "files.open",
+    "finished",
+    "home",
+    "liveActivity",
+    "products.manage",
+    "push",
+    "questions",
+    "reports",
+    "reports.decide",
+    "settings.models",
+    "skills"
+  ],
+  "credential" : {
+    "deviceID" : "D1",
+    "secret" : "S1"
+  },
+  "desktop" : {
+    "id" : "k3Y",
+    "language" : "uk",
+    "name" : "Ivan's MacBook Pro",
+    "version" : "1.9"
+  },
+  "deviceID" : "D1",
+  "protocolVersion" : 1,
+  "type" : "welcome"
+}

@@ -1,0 +1,137 @@
+{
+  "id" : "R6",
+  "ok" : true,
+  "result" : {
+    "changes" : [
+      {
+        "added" : 12,
+        "kindLabel" : "Modified",
+        "path" : "Sources/Export.swift",
+        "project" : "Narada",
+        "ref" : "chg:R1:Sources/Export.swift",
+        "removed" : 3
+      }
+    ],
+    "chatReports" : {
+      "create" : {
+        "id" : "chatReport.make:C1",
+        "kind" : "invoke",
+        "label" : "Create report",
+        "style" : "secondary"
+      },
+      "generating" : false,
+      "items" : [
+        {
+          "detail" : "27.09 12:10 · Export fix on the phone",
+          "open" : {
+            "id" : "chatReport:C1:0",
+            "kind" : "report",
+            "label" : "Open the report",
+            "style" : "secondary",
+            "target" : "chatReport:C1:0"
+          },
+          "title" : "Latest report"
+        }
+      ],
+      "note" : "It will be saved in the project’s artifacts folder and ignored by Git."
+    },
+    "checks" : {
+      "items" : [
+        {
+          "criterion" : "Export enables after the transcript",
+          "note" : "UI test",
+          "status" : "pass"
+        }
+      ],
+      "status" : "pass"
+    },
+    "instructions" : {
+      "brief" : "Keep the UI native.",
+      "summary" : "Meeting recorder for macOS"
+    },
+    "nowAndNext" : [
+      {
+        "actions" : [
+
+        ],
+        "id" : "T1",
+        "status" : {
+          "active" : true,
+          "code" : "running",
+          "label" : "Running",
+          "tone" : "active"
+        },
+        "subtitle" : "Working",
+        "title" : "Export fix"
+      }
+    ],
+    "productID" : "P1",
+    "report" : {
+      "id" : "productReport:P1",
+      "kind" : "report",
+      "label" : "Everything done so far",
+      "style" : "secondary",
+      "target" : "productReport:P1"
+    },
+    "resources" : [
+      {
+        "access" : "workspace",
+        "accessLabel" : "Night Shift works here",
+        "actions" : [
+          {
+            "id" : "resource.primary:R1",
+            "kind" : "invoke",
+            "label" : "Make primary",
+            "style" : "secondary"
+          }
+        ],
+        "branch" : "main",
+        "id" : "R1",
+        "kind" : "repository",
+        "kindLabel" : "Repository",
+        "live" : true,
+        "name" : "Narada",
+        "path" : "~/Developer/Narada",
+        "primary" : true
+      }
+    ],
+    "work" : [
+      {
+        "id" : "W1",
+        "kind" : "variants",
+        "missing" : 1,
+        "parts" : [
+          {
+            "actions" : [
+
+            ],
+            "id" : "T2",
+            "status" : {
+              "active" : false,
+              "code" : "reportReady",
+              "label" : "Report ready",
+              "tone" : "good"
+            },
+            "subtitle" : "Reviewed",
+            "title" : "Variant A"
+          }
+        ],
+        "report" : {
+          "id" : "workReport:W1",
+          "kind" : "report",
+          "label" : "Open the report",
+          "style" : "primary",
+          "target" : "workReport:W1"
+        },
+        "status" : {
+          "active" : false,
+          "code" : "reportReady",
+          "label" : "Report ready",
+          "tone" : "good"
+        },
+        "title" : "Onboarding"
+      }
+    ]
+  },
+  "type" : "response"
+}

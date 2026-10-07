@@ -1,0 +1,10 @@
+{
+  "id" : "R9",
+  "ok" : true,
+  "result" : {
+    "chatID" : "C1",
+    "requestID" : "V1",
+    "text" : "Зроби експорт сірим, поки немає транскрипту"
+  },
+  "type" : "response"
+}

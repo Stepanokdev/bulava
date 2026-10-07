@@ -1,0 +1,14 @@
+{
+  "app" : {
+    "deviceName" : "Pixel 9",
+    "osVersion" : "Android 17",
+    "platform" : "android",
+    "version" : "1.0"
+  },
+  "minimumVersion" : 1,
+  "pairing" : {
+    "token" : "pairing-token"
+  },
+  "protocolVersion" : 1,
+  "type" : "hello"
+}

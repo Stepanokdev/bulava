@@ -1,0 +1,9 @@
+{
+  "error" : {
+    "code" : "decisions_conflict",
+    "message" : "Decisions for this report were sent from another device meanwhile. Look at them before sending yours."
+  },
+  "id" : "R12",
+  "ok" : false,
+  "type" : "response"
+}

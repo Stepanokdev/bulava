@@ -121,6 +121,7 @@ digests and the procedure that produced them are published at
 | `engine/` | the work engine: sessions, the review gate, the verifier, the queue, the watchdog |
 | `bulava-mobile/` | Bulava on the phone — Compose Multiplatform for Android and iPhone, a window onto the Mac |
 | `link-protocol/` | the contract between the Mac and the phone, with the files both sides are tested against |
+| `server/report-inbox/` | where Bulava's anonymous error reports and weekly usage summaries land: everything a Mac sends, so it can be read |
 | `site/install.sh` | the one-liner below, in full — the thing you would be piping into `bash` |
 | `Night ShiftTests/`, `Night ShiftUITests/` | what proves it |
 

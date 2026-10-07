@@ -1,0 +1,29 @@
+"live.working.one" = "Работает";
+"live.working" = "Работает · %lld";
+"live.done" = "Готово";
+"live.more" = "и ещё %lld";
+"live.stale" = "Mac давно не отзывался. Возможно, он уснул.";
+"live.outcome.done" = "Готово";
+"live.outcome.attention" = "Нужен ваш ответ";
+"live.outcome.failed" = "Остановилось с ошибкой";
+"live.outcome.stopped" = "Остановлено";
+
+/* The week's widgets: their names and descriptions in the widget gallery, and the face shown before the first week arrives. */
+"Without you" = "Без тебя";
+"How long the agents worked this week, and how much work each of your messages started." = "Сколько агенты работали на этой неделе и сколько работы запускало каждое твоё сообщение.";
+"How runs ended" = "Прогоны";
+"What review accepted this week, what it accepted with remarks, and what waited for you." = "Что ревью приняло на этой неделе, что приняло с замечаниями и что ждало тебя.";
+"Receipt of the week" = "Чек недели";
+"What the week's work would have cost at API prices. An estimate, not what you pay." = "Сколько стоила бы работа недели по ценам API. Это оценка, а не то, что ты платишь.";
+"Rhythm of the week" = "Ритм недели";
+"When the agents worked, day by day and hour by hour." = "Когда работали агенты, по дням и часам.";
+"Code changes" = "Объём изменений";
+"Lines the agents added and removed this week." = "Строки, которые агенты добавили и удалили на этой неделе.";
+"Limits" = "Лимиты";
+"Claude's and Codex's limits, with a tick where an even pace would be." = "Лимиты Claude и Codex с риской там, где был бы ровный темп.";
+"Working now" = "Сейчас в работе";
+"Which agents are working and which runs wait for you." = "Какие агенты работают и какие прогоны ждут тебя.";
+"The week at a glance" = "Неделя одним экраном";
+"Hours without you, accepted runs, the receipt and the week's rhythm on one face." = "Часы без тебя, принятые прогоны, чек и ритм недели на одном виджете.";
+"Open Bulava and this fills in within minutes." = "Открой Булаву, и через несколько минут здесь появятся цифры.";
+"Connect to Bulava on your Mac and this fills in." = "Подключись к Булаве на Mac, и здесь появятся цифры.";

@@ -1,0 +1,36 @@
+<resources>
+    <string name="app_name">Bulava</string>
+    <string name="channel_requests">Requests from your Mac</string>
+    <string name="channel_finished">Finished work</string>
+    <string name="channel_link">Connection to your Mac</string>
+    <string name="link_running">Connected to %1$s</string>
+    <string name="link_running_body">Requests from your Mac arrive here as notifications.</string>
+    <string name="link_working">Working: %1$s</string>
+    <string name="link_working_count">Working: %1$d</string>
+    <string name="link_done">Done: %1$s</string>
+    <string name="scan_hint">Point the camera at the code on your Mac</string>
+    <string name="scan_camera_needed">Bulava needs the camera to read the code on your Mac.</string>
+    <string name="scan_allow">Allow the camera</string>
+    <string name="scan_open_settings">Open settings</string>
+    <string name="scan_close">Close</string>
+    <string name="scan_camera_failed">The camera would not start. Close this and scan the code on the Mac with the phone’s own camera app instead: the page it opens has a button that pairs Bulava.</string>
+
+    <!-- The week's widgets, in the widget picker. -->
+    <string name="week_widget_autonomy">Without you</string>
+    <string name="week_widget_autonomy_about">How long the agents worked this week, and how much work each of your messages started.</string>
+    <string name="week_widget_outcomes">How runs ended</string>
+    <string name="week_widget_outcomes_about">What review accepted this week, what it accepted with remarks, and what waited for you.</string>
+    <string name="week_widget_receipt">Receipt of the week</string>
+    <string name="week_widget_receipt_about">What the week\'s work would have cost at API prices. An estimate, not what you pay.</string>
+    <string name="week_widget_rhythm">Rhythm of the week</string>
+    <string name="week_widget_rhythm_about">When the agents worked, day by day and hour by hour.</string>
+    <string name="week_widget_volume">Code changes</string>
+    <string name="week_widget_volume_about">Lines the agents added and removed this week.</string>
+    <string name="week_widget_limits">Limits</string>
+    <string name="week_widget_limits_about">Claude\'s and Codex\'s limits, with a tick where an even pace would be.</string>
+    <string name="week_widget_now">Working now</string>
+    <string name="week_widget_now_about">Which agents are working and which runs wait for you.</string>
+    <string name="week_widget_glance">The week at a glance</string>
+    <string name="week_widget_glance_about">Hours without you, accepted runs, the receipt and the week\'s rhythm on one face.</string>
+    <string name="week_empty">Connect to Bulava on your Mac and this fills in.</string>
+</resources>

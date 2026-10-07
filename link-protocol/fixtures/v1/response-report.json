@@ -1,0 +1,19 @@
+{
+  "id" : "R4",
+  "ok" : true,
+  "result" : {
+    "actions" : [
+      {
+        "confirm" : "Merge it in",
+        "id" : "report.merge:T1",
+        "kind" : "invoke",
+        "label" : "Merge it in",
+        "style" : "primary"
+      }
+    ],
+    "html" : "<p>Done</p>",
+    "root" : "rep:abc",
+    "title" : "Export fix"
+  },
+  "type" : "response"
+}

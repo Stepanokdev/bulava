@@ -1,0 +1,646 @@
+{
+  "data" : {
+    "attention" : [
+      {
+        "actions" : [
+          {
+            "id" : "trust:C1:E1",
+            "kind" : "invoke",
+            "label" : "Trust and send",
+            "style" : "primary"
+          },
+          {
+            "id" : "mac",
+            "kind" : "mac",
+            "label" : "Sign in on your Mac",
+            "style" : "secondary"
+          }
+        ],
+        "atMs" : 1790000000000,
+        "body" : "Claude Code asks before working in a folder for the first time.",
+        "chatID" : "C1",
+        "id" : "ask:trust:C1:E1",
+        "kind" : "ask",
+        "productID" : "P1",
+        "title" : "Export fix",
+        "tone" : "attention"
+      },
+      {
+        "actions" : [
+          {
+            "id" : "task.dirty.commit:A1",
+            "input" : {
+              "above" : [
+                {
+                  "text" : "Author: Ivan <ivan@example.com>"
+                }
+              ],
+              "below" : [
+                {
+                  "text" : "Everything below goes into one commit on “main”.",
+                  "tone" : "faint"
+                },
+                {
+                  "mono" : true,
+                  "text" : "M  App.swift"
+                }
+              ],
+              "placeholder" : "Commit message",
+              "required" : true,
+              "submit" : "Commit and start",
+              "title" : "A commit in your name",
+              "value" : "WIP: App.swift"
+            },
+            "kind" : "invoke",
+            "label" : "Commit as me…",
+            "style" : "secondary"
+          }
+        ],
+        "atMs" : 1789999000000,
+        "body" : "“Export fix” did not start: the folder has uncommitted changes.",
+        "code" : "M  App.swift",
+        "id" : "task.dirty:A1",
+        "kind" : "ask",
+        "productID" : "P1",
+        "title" : "Export fix",
+        "tone" : "attention"
+      }
+    ],
+    "composer" : {
+      "groups" : [
+        {
+          "engine" : "claude",
+          "id" : "claudeModel",
+          "kind" : "model",
+          "options" : [
+            {
+              "id" : "auto",
+              "label" : "Automatic"
+            },
+            {
+              "detail" : "The newest Opus.",
+              "id" : "opus",
+              "label" : "Opus · Opus 5.5",
+              "section" : "Newest of each"
+            },
+            {
+              "id" : "claude-opus-4-7",
+              "label" : "Opus 4.7",
+              "section" : "A fixed version"
+            }
+          ],
+          "selected" : "opus",
+          "title" : "Claude"
+        },
+        {
+          "engine" : "claude",
+          "id" : "claudeEffort",
+          "kind" : "depth",
+          "options" : [
+            {
+              "id" : "auto",
+              "label" : "Automatic · High"
+            },
+            {
+              "id" : "max",
+              "label" : "Max"
+            }
+          ],
+          "selected" : "max",
+          "title" : "Claude thinks"
+        }
+      ],
+      "summary" : [
+        {
+          "depth" : "Max",
+          "engine" : "claude",
+          "model" : "Opus 5.5",
+          "name" : "Claude"
+        },
+        {
+          "depth" : "High",
+          "engine" : "codex",
+          "model" : "GPT-5.5",
+          "name" : "Codex"
+        }
+      ]
+    },
+    "desktop" : {
+      "id" : "k3Y",
+      "language" : "uk",
+      "name" : "Ivan's MacBook Pro",
+      "version" : "1.9"
+    },
+    "finished" : [
+      {
+        "atMs" : 1790000000000,
+        "body" : "Report ready",
+        "chatID" : "C1",
+        "id" : "done:T1",
+        "productID" : "P1",
+        "report" : {
+          "id" : "done.report:T1",
+          "kind" : "report",
+          "label" : "Open the report",
+          "style" : "primary",
+          "target" : "done.report:T1"
+        },
+        "title" : "Export fix"
+      }
+    ],
+    "limits" : {
+      "engines" : [
+        {
+          "name" : "Claude",
+          "pressure" : "tight",
+          "stale" : false,
+          "used" : 81,
+          "windows" : [
+            {
+              "elapsed" : 58,
+              "label" : "Session",
+              "pace" : "with room to spare",
+              "paceKey" : "behind",
+              "pressure" : "comfortable",
+              "resets" : "2h 5m",
+              "used" : 34,
+              "usedLabel" : "34% used"
+            },
+            {
+              "elapsed" : 55,
+              "label" : "Weekly",
+              "pace" : "ahead of an even pace",
+              "paceKey" : "ahead",
+              "pressure" : "tight",
+              "resets" : "3d 4h",
+              "used" : 81,
+              "usedLabel" : "81% used"
+            }
+          ]
+        },
+        {
+          "name" : "Codex",
+          "note" : "Not known yet — it fills in when something runs",
+          "pressure" : "comfortable",
+          "readAgo" : "2 hours ago",
+          "stale" : true,
+          "windows" : [
+
+          ]
+        }
+      ],
+      "title" : "Limits"
+    },
+    "live" : {
+      "ended" : [
+        {
+          "id" : "task:T1",
+          "label" : "Report ready",
+          "outcome" : "done",
+          "product" : "Narada",
+          "productID" : "P1",
+          "sinceMs" : 1789990000000,
+          "title" : "Import speed"
+        }
+      ],
+      "over" : false,
+      "running" : [
+        {
+          "chatID" : "C1",
+          "id" : "chat:C1",
+          "product" : "Narada",
+          "productID" : "P1",
+          "sinceMs" : 1790000000000,
+          "title" : "Export fix"
+        }
+      ]
+    },
+    "phoneApps" : {
+      "android" : {
+        "build" : 9,
+        "url" : "https://bulava.app/Bulava-android.apk",
+        "version" : "1.1"
+      },
+      "ios" : {
+        "build" : 9,
+        "url" : "https://testflight.apple.com/join/wtWcPjb1",
+        "version" : "1.1"
+      }
+    },
+    "products" : [
+      {
+        "archivedChats" : [
+
+        ],
+        "brief" : "Meeting recorder",
+        "chats" : [
+          {
+            "archived" : false,
+            "createdAtMs" : 1790000000000,
+            "id" : "C1",
+            "pinned" : false,
+            "productID" : "P1",
+            "status" : {
+              "active" : false,
+              "code" : "needsAttention",
+              "label" : "Needs your answer",
+              "tone" : "attention"
+            },
+            "title" : "Export fix",
+            "updatedAtMs" : 1790000060000
+          }
+        ],
+        "icon" : {
+          "kind" : "image",
+          "name" : "icon.png",
+          "ref" : "icon:P1",
+          "size" : 2048
+        },
+        "id" : "P1",
+        "initials" : "N",
+        "lastWorkedAtMs" : 1790000000000,
+        "name" : "Narada",
+        "pinned" : true,
+        "status" : {
+          "active" : true,
+          "code" : "running",
+          "label" : "Running",
+          "tone" : "active"
+        }
+      }
+    ],
+    "readiness" : [
+      {
+        "actions" : [
+          {
+            "id" : "trust:C1:E1",
+            "kind" : "invoke",
+            "label" : "Trust and send",
+            "style" : "primary"
+          }
+        ],
+        "detail" : "",
+        "id" : "engine",
+        "state" : "problem",
+        "title" : "The work engine is installed"
+      }
+    ],
+    "summary" : {
+      "ready" : 1,
+      "waiting" : 1,
+      "working" : 2
+    },
+    "week" : {
+      "autonomy" : {
+        "facts" : [
+          {
+            "label" : "Longest run",
+            "value" : "3h 58m"
+          },
+          {
+            "label" : "Agents at once",
+            "value" : "up to 2"
+          },
+          {
+            "label" : "Active days",
+            "value" : "3 of 3"
+          }
+        ],
+        "hero" : "32",
+        "lines" : [
+          {
+            "strong" : "39m",
+            "text" : "of work for each of your messages"
+          },
+          {
+            "text" : "49 messages from you"
+          },
+          {
+            "text" : "26 h by the clock"
+          }
+        ],
+        "perDay" : [
+          1015,
+          589,
+          339,
+          null,
+          null,
+          null,
+          null
+        ],
+        "spoken" : "32 agent-hours this week, 39m of work for each of your messages",
+        "title" : "Without you",
+        "unit" : "h"
+      },
+      "days" : [
+        "Mon",
+        "Tue",
+        "Wed",
+        "Thu",
+        "Fri",
+        "Sat",
+        "Sun"
+      ],
+      "generatedMs" : 1791342000000,
+      "limits" : {
+        "line" : "Claude: ahead of an even pace",
+        "meters" : [
+          {
+            "elapsed" : 40,
+            "engine" : "Claude",
+            "label" : "Claude · session",
+            "pace" : "with room to spare",
+            "paceKey" : "behind",
+            "resets" : "3h",
+            "severity" : "ok",
+            "used" : 17,
+            "usedText" : "17%",
+            "weekly" : false
+          },
+          {
+            "elapsed" : 16,
+            "engine" : "Claude",
+            "label" : "Claude · weekly",
+            "pace" : "ahead of an even pace",
+            "paceKey" : "ahead",
+            "resets" : "5d 21h",
+            "severity" : "ok",
+            "used" : 20,
+            "usedText" : "20%",
+            "weekly" : true
+          }
+        ],
+        "spoken" : "Claude 20%, ahead of an even pace",
+        "title" : "Limits"
+      },
+      "now" : {
+        "count" : "1",
+        "empty" : "Nobody is working right now",
+        "longTitle" : "Working now",
+        "runs" : [
+          {
+            "name" : "Widgets for the week",
+            "sinceMs" : 1791339180000,
+            "time" : "47m",
+            "waiting" : false
+          },
+          {
+            "name" : "Export fix",
+            "time" : "waits for you",
+            "waiting" : true
+          }
+        ],
+        "spoken" : "1 agent: Widgets for the week. 1 run waits for you",
+        "title" : "Now",
+        "unit" : "agent",
+        "waiting" : "1 run waits for you"
+      },
+      "off" : false,
+      "outcomes" : {
+        "facts" : [
+          {
+            "label" : "Tasks given to agents",
+            "value" : "20"
+          },
+          {
+            "label" : "Advice from Codex",
+            "value" : "9"
+          },
+          {
+            "label" : "Questions to you",
+            "value" : "2"
+          },
+          {
+            "label" : "Commits",
+            "value" : "15"
+          }
+        ],
+        "hero" : "21",
+        "legend" : [
+          {
+            "key" : "passed",
+            "text" : "11 without remarks"
+          },
+          {
+            "key" : "debt",
+            "text" : "10 with remarks"
+          },
+          {
+            "key" : "waiting",
+            "text" : "7 waited for you"
+          }
+        ],
+        "lines" : [
+          {
+            "text" : "of them 10 with remarks"
+          },
+          {
+            "text" : "7 waited for you"
+          }
+        ],
+        "perDay" : [
+          [
+            4,
+            3,
+            4
+          ],
+          [
+            4,
+            6,
+            3
+          ],
+          [
+            3,
+            1,
+            0
+          ],
+          null,
+          null,
+          null,
+          null
+        ],
+        "spoken" : "21 accepted, 10 of them with remarks, 7 waited for you",
+        "title" : "How runs ended",
+        "unit" : "accepted"
+      },
+      "period" : "Oct 5 – 11",
+      "receipt" : {
+        "caption" : "at API prices",
+        "footer" : "API prices · not spending · plan Team",
+        "hero" : "≈ $655",
+        "longTitle" : "Receipt of the week",
+        "note" : "an estimate, not spending",
+        "perDay" : [
+          275,
+          199,
+          181,
+          null,
+          null,
+          null,
+          null
+        ],
+        "rows" : [
+          {
+            "label" : "Agents' answers",
+            "value" : "4.7M"
+          },
+          {
+            "label" : "Read from cache",
+            "value" : "2B"
+          },
+          {
+            "label" : "Written to cache",
+            "value" : "21M"
+          },
+          {
+            "label" : "Codex, tokens",
+            "value" : "17.8M"
+          }
+        ],
+        "spoken" : "About $655 at API prices, an estimate",
+        "title" : "Receipt",
+        "tokens" : "4.7M tokens",
+        "total" : {
+          "label" : "Total, estimate",
+          "value" : "≈ $655"
+        }
+      },
+      "rhythm" : {
+        "active" : "3",
+        "activeLabel" : "days with work",
+        "activeOf" : "/3",
+        "heat" : [
+          [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            90,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            60,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            30,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          null,
+          null,
+          null,
+          null
+        ],
+        "line" : "peak 9:00 PM · active days 3/3",
+        "longTitle" : "Rhythm of the week",
+        "peak" : "9:00 PM",
+        "peakLabel" : "peak",
+        "spoken" : "Busiest at 9:00 PM, 3 active days of 3",
+        "title" : "Rhythm"
+      },
+      "today" : 2,
+      "v" : 1,
+      "volume" : {
+        "added" : "+19.1K",
+        "detail" : "108 files · 15 commits",
+        "line" : "lines · 108 files",
+        "longTitle" : "Code changes",
+        "perDay" : [
+          [
+            7382,
+            56
+          ],
+          [
+            4045,
+            88
+          ],
+          [
+            7698,
+            95
+          ],
+          null,
+          null,
+          null,
+          null
+        ],
+        "removed" : "−239",
+        "spoken" : "19,125 lines added, 239 removed, 108 files",
+        "title" : "Changes"
+      },
+      "week" : "2026-W41",
+      "words" : {
+        "appClosed" : "Bulava is closed",
+        "macAway" : "The Mac is out of reach",
+        "now" : "now",
+        "off" : "Weekly statistics are off",
+        "offHint" : "The widget counts nothing until they are on.",
+        "turnOn" : "Turn on in Bulava",
+        "week" : "this week"
+      }
+    }
+  },
+  "event" : "home",
+  "type" : "event"
+}

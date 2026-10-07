@@ -1,0 +1,290 @@
+{
+  "data" : {
+    "actions" : [
+      {
+        "id" : "stop:C1",
+        "kind" : "invoke",
+        "label" : "Stop",
+        "style" : "secondary"
+      }
+    ],
+    "activity" : "Reading ExportController.swift",
+    "archived" : false,
+    "busy" : true,
+    "composer" : {
+      "groups" : [
+        {
+          "engine" : "codex",
+          "id" : "codexEffort",
+          "kind" : "depth",
+          "options" : [
+            {
+              "id" : "auto",
+              "label" : "Automatic · Medium"
+            },
+            {
+              "id" : "high",
+              "label" : "High"
+            }
+          ],
+          "selected" : "high",
+          "title" : "Codex thinks"
+        }
+      ],
+      "summary" : [
+        {
+          "depth" : "Max",
+          "engine" : "claude",
+          "model" : "Opus 5.5",
+          "name" : "Claude"
+        },
+        {
+          "depth" : "High",
+          "engine" : "codex",
+          "model" : "GPT-5.5",
+          "name" : "Codex"
+        }
+      ]
+    },
+    "entries" : [
+      {
+        "actions" : [
+          {
+            "id" : "takeBack:E1",
+            "kind" : "takeBack",
+            "label" : "Edit",
+            "style" : "secondary",
+            "target" : "E1"
+          },
+          {
+            "id" : "commit:E1",
+            "input" : {
+              "placeholder" : "Commit message",
+              "required" : true,
+              "value" : "WIP"
+            },
+            "kind" : "invoke",
+            "label" : "Commit as me…",
+            "style" : "secondary"
+          }
+        ],
+        "asks" : [
+          {
+            "actions" : [
+              {
+                "id" : "trust:C1:E1",
+                "kind" : "invoke",
+                "label" : "Trust and send",
+                "style" : "primary"
+              }
+            ],
+            "code" : "/Users/you/Narada",
+            "id" : "trust:C1:E1",
+            "kind" : "folderTrust",
+            "title" : "Claude Code asks before working in a folder for the first time.",
+            "tone" : "attention"
+          }
+        ],
+        "atMs" : 1790000000000,
+        "attachments" : [
+          {
+            "kind" : "image",
+            "name" : "shot.png",
+            "ref" : "att:A1",
+            "size" : 3
+          }
+        ],
+        "author" : "You",
+        "blocks" : [
+
+        ],
+        "delivery" : {
+          "code" : "failed",
+          "label" : "Not delivered"
+        },
+        "id" : "E1",
+        "kind" : "user",
+        "text" : "Why is export grey?",
+        "tone" : "neutral"
+      },
+      {
+        "actions" : [
+
+        ],
+        "asks" : [
+
+        ],
+        "atMs" : 1790000030000,
+        "attachments" : [
+
+        ],
+        "author" : "Night Shift",
+        "blocks" : [
+          {
+            "activity" : {
+              "sentence" : "Reading ExportController.swift",
+              "status" : "done"
+            },
+            "files" : [
+
+            ],
+            "id" : "t1",
+            "kind" : "activity",
+            "text" : ""
+          },
+          {
+            "files" : [
+
+            ],
+            "id" : "m1",
+            "kind" : "markdown",
+            "links" : [
+              {
+                "kind" : "document",
+                "name" : "index.html",
+                "ref" : "lnk:C1:0a1b2c3d4e5f60718293",
+                "size" : 2048
+              }
+            ],
+            "text" : "It waits for the **transcript**. The page: `artifacts/review/index.html`."
+          },
+          {
+            "files" : [
+              {
+                "kind" : "image",
+                "name" : "after.png",
+                "ref" : "art:run/after.png",
+                "size" : 10
+              }
+            ],
+            "id" : "g1",
+            "kind" : "gallery",
+            "text" : "Before and after"
+          }
+        ],
+        "explanation" : {
+          "actions" : [
+            {
+              "id" : "explain.steps:E2",
+              "kind" : "invoke",
+              "label" : "Go through it step by step",
+              "style" : "secondary"
+            }
+          ],
+          "brief" : "It waits for the transcript, so the button stays grey.",
+          "running" : false,
+          "stale" : false
+        },
+        "finished" : true,
+        "id" : "E2",
+        "kind" : "agent",
+        "text" : "It waits for the transcript.",
+        "tone" : "neutral"
+      },
+      {
+        "actions" : [
+
+        ],
+        "asks" : [
+
+        ],
+        "atMs" : 1790000040000,
+        "attachments" : [
+
+        ],
+        "author" : "Night Shift",
+        "blocks" : [
+
+        ],
+        "id" : "E3",
+        "kind" : "question",
+        "question" : {
+          "answerable" : true,
+          "eyebrow" : "Needs your answer",
+          "headline" : "Which build number?",
+          "items" : [
+            {
+              "multiSelect" : false,
+              "options" : [
+                {
+                  "detail" : "The next one",
+                  "id" : "42",
+                  "label" : "42"
+                }
+              ],
+              "question" : "Build number"
+            }
+          ],
+          "recommendation" : "42",
+          "situation" : "41 is taken.",
+          "unblocks" : "The upload"
+        },
+        "text" : "Which build number?",
+        "tone" : "neutral"
+      },
+      {
+        "actions" : [
+
+        ],
+        "asks" : [
+
+        ],
+        "atMs" : 1790000050000,
+        "attachments" : [
+
+        ],
+        "author" : "",
+        "blocks" : [
+
+        ],
+        "card" : {
+          "actions" : [
+            {
+              "id" : "card.report:T1",
+              "kind" : "report",
+              "label" : "Open the report",
+              "style" : "primary",
+              "target" : "card.report:T1"
+            },
+            {
+              "id" : "card.changes:T1",
+              "input" : {
+                "placeholder" : "Ask for changes",
+                "required" : true
+              },
+              "kind" : "compose",
+              "label" : "Ask for changes",
+              "style" : "secondary"
+            }
+          ],
+          "id" : "T1",
+          "status" : {
+            "active" : false,
+            "code" : "reportReady",
+            "label" : "Report ready",
+            "tone" : "good"
+          },
+          "subtitle" : "Reviewed and ready for you",
+          "title" : "Export fix"
+        },
+        "id" : "E4",
+        "kind" : "report",
+        "text" : "",
+        "tone" : "neutral"
+      }
+    ],
+    "hasEarlier" : true,
+    "id" : "C1",
+    "productID" : "P1",
+    "queueCount" : 1,
+    "status" : {
+      "active" : true,
+      "code" : "working",
+      "label" : "Night Shift is working",
+      "tone" : "active"
+    },
+    "title" : "Export fix"
+  },
+  "event" : "chat",
+  "type" : "event"
+}

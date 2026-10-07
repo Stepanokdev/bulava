@@ -1,0 +1,36 @@
+<resources>
+    <string name="app_name">Bulava</string>
+    <string name="channel_requests">Запросы с вашего Mac</string>
+    <string name="channel_finished">Завершённая работа</string>
+    <string name="channel_link">Связь с вашим Mac</string>
+    <string name="link_running">Подключено к %1$s</string>
+    <string name="link_running_body">Запросы с вашего Mac будут приходить сюда уведомлениями.</string>
+    <string name="link_working">Работает: %1$s</string>
+    <string name="link_working_count">Работает: %1$d</string>
+    <string name="link_done">Готово: %1$s</string>
+    <string name="scan_hint">Наведите камеру на код на вашем Mac</string>
+    <string name="scan_camera_needed">Bulava нужна камера, чтобы прочитать код на вашем Mac.</string>
+    <string name="scan_allow">Разрешить камеру</string>
+    <string name="scan_open_settings">Открыть настройки</string>
+    <string name="scan_close">Закрыть</string>
+    <string name="scan_camera_failed">Камера не запустилась. Закройте это и отсканируйте код на Mac обычной камерой телефона: на странице, которую она откроет, есть кнопка, которая подключит Bulava.</string>
+
+    <!-- The week's widgets, in the widget picker. -->
+    <string name="week_widget_autonomy">Без тебя</string>
+    <string name="week_widget_autonomy_about">Сколько агенты работали на этой неделе и сколько работы запускало каждое твоё сообщение.</string>
+    <string name="week_widget_outcomes">Прогоны</string>
+    <string name="week_widget_outcomes_about">Что ревью приняло на этой неделе, что приняло с замечаниями и что ждало тебя.</string>
+    <string name="week_widget_receipt">Чек недели</string>
+    <string name="week_widget_receipt_about">Сколько стоила бы работа недели по ценам API. Это оценка, а не то, что ты платишь.</string>
+    <string name="week_widget_rhythm">Ритм недели</string>
+    <string name="week_widget_rhythm_about">Когда работали агенты, по дням и часам.</string>
+    <string name="week_widget_volume">Объём изменений</string>
+    <string name="week_widget_volume_about">Строки, которые агенты добавили и удалили на этой неделе.</string>
+    <string name="week_widget_limits">Лимиты</string>
+    <string name="week_widget_limits_about">Лимиты Claude и Codex с риской там, где был бы ровный темп.</string>
+    <string name="week_widget_now">Сейчас в работе</string>
+    <string name="week_widget_now_about">Какие агенты работают и какие прогоны ждут тебя.</string>
+    <string name="week_widget_glance">Неделя одним экраном</string>
+    <string name="week_widget_glance_about">Часы без тебя, принятые прогоны, чек и ритм недели на одном виджете.</string>
+    <string name="week_empty">Подключись к Булаве на Mac, и здесь появятся цифры.</string>
+</resources>

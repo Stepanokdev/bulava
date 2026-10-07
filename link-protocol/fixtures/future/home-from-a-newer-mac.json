@@ -1,0 +1,88 @@
+{
+  "data": {
+    "attention": [
+      {
+        "actions": [
+          {
+            "id": "a1",
+            "kind": "biometric",
+            "label": "Approve with Face ID",
+            "requires": "faceid",
+            "style": "glowing"
+          }
+        ],
+        "atMs": 5,
+        "body": "A new kind of request",
+        "id": "x",
+        "kind": "payment",
+        "productID": "P1",
+        "title": "Pay",
+        "tone": "money"
+      }
+    ],
+    "composer": {
+      "groups": [
+        {
+          "id": "voice",
+          "multi": true,
+          "options": [
+            {
+              "id": "calm",
+              "label": "Calm"
+            }
+          ],
+          "selected": "calm",
+          "title": "Voice"
+        }
+      ]
+    },
+    "desktop": {
+      "id": "k3Y",
+      "language": "uk",
+      "name": "Mac",
+      "timezone": "Europe/Kyiv",
+      "version": "2.4"
+    },
+    "products": [
+      {
+        "archivedChats": [],
+        "brief": "",
+        "chats": [
+          {
+            "archived": false,
+            "createdAtMs": 1,
+            "id": "C1",
+            "pinned": false,
+            "productID": "P1",
+            "status": {
+              "active": false,
+              "code": "hibernating",
+              "eta": 123,
+              "label": "Asleep until the window opens",
+              "tone": "sleepy"
+            },
+            "title": "Export",
+            "unreadCount": 3,
+            "updatedAtMs": 2
+          }
+        ],
+        "color": "#ff0000",
+        "id": "P1",
+        "initials": "N",
+        "name": "Narada",
+        "owner": {
+          "name": "Someone"
+        },
+        "pinned": false
+      }
+    ],
+    "readiness": [],
+    "workspaces": [
+      {
+        "id": "w"
+      }
+    ]
+  },
+  "event": "home",
+  "type": "event"
+}

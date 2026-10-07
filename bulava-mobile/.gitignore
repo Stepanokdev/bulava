@@ -1,0 +1,28 @@
+*.iml
+.kotlin
+.gradle
+**/build/
+xcuserdata
+!src/**/build/
+local.properties
+.idea
+.DS_Store
+captures
+.externalNativeBuild
+.cxx
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+!*.xcodeproj/xcshareddata/
+!*.xcodeproj/project.xcworkspace/
+!*.xcworkspace/contents.xcworkspacedata
+**/xcshareddata/WorkspaceSettings.xcsettings
+node_modules/
+
+# Release keys: the App Store Connect API key, the APNs key, the Android upload keystore and
+# their passwords. They live here on the director's machine only and never enter git.
+secrets/
+*.jks
+*.keystore
+*.p8
+*.p12
+*.mobileprovision

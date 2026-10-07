@@ -1,0 +1,36 @@
+{
+  "id" : "R8",
+  "ok" : true,
+  "result" : {
+    "counted" : true,
+    "servers" : [
+      {
+        "description" : "GitHub",
+        "health" : "connected",
+        "lastUsed" : "today",
+        "name" : "github",
+        "scope" : "user",
+        "target" : "npx @github/mcp",
+        "transport" : "stdio",
+        "uses" : 5
+      }
+    ],
+    "skills" : [
+      {
+        "actions" : [
+
+        ],
+        "description" : "Clean editorial UI",
+        "id" : "S1",
+        "lastUsed" : "2 days ago",
+        "name" : "minimalist-ui",
+        "scope" : "global",
+        "source" : "~/.claude/skills/minimalist-ui",
+        "uses" : 14,
+        "usesHere" : 3
+      }
+    ],
+    "transcripts" : 120
+  },
+  "type" : "response"
+}
