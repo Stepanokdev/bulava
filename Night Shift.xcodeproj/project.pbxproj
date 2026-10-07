@@ -723,7 +723,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 1.12;
+				MARKETING_VERSION = 1.13;
 				BULAVA_BUNDLE_BASE = "stepanok.com.Night-Shift.dev";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BULAVA_BUNDLE_BASE)";
 				PRODUCT_NAME = Bulava;
@@ -771,7 +771,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 1.12;
+				MARKETING_VERSION = 1.13;
 				BULAVA_BUNDLE_BASE = "stepanok.com.Night-Shift";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BULAVA_BUNDLE_BASE)";
 				PRODUCT_NAME = Bulava;
@@ -805,7 +805,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 1.12;
+				MARKETING_VERSION = 1.13;
 				BULAVA_BUNDLE_BASE = "stepanok.com.Night-Shift.dev";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BULAVA_BUNDLE_BASE).widgets";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -838,7 +838,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 1.12;
+				MARKETING_VERSION = 1.13;
 				BULAVA_BUNDLE_BASE = "stepanok.com.Night-Shift";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BULAVA_BUNDLE_BASE).widgets";
 				PRODUCT_NAME = "$(TARGET_NAME)";
