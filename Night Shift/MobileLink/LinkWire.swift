@@ -187,6 +187,10 @@ nonisolated struct HomeDTO: Codable, Equatable, Sendable {
     /// The newest phone app bulava.app offers, per platform, as this Mac last read it. The phone
     /// compares it with itself and offers the update; absent until the Mac has read it once.
     var phoneApps: PhoneAppsDTO? = nil
+    /// This calendar week as the Mac's widgets show it, every word already in the Mac's language —
+    /// what the phone's widgets draw. Absent until the Mac has counted it once, and from a Mac older
+    /// than this.
+    var week: WeekSnapshot? = nil
 }
 
 /// What `https://bulava.app/mobile/version.json` says, passed on as it was read. The phone opens
@@ -241,6 +245,13 @@ nonisolated struct LimitWindowDTO: Codable, Equatable, Sendable {
     var pressure: String
     /// When it comes back, as the sidebar says it: "2h 5m". Absent when the Mac does not know.
     var resets: String?
+    /// How much of the window has already passed, 0…100: where an even pace would stand, drawn as
+    /// a tick on the bar. Absent when the reset is unknown, and from a Mac older than this.
+    var elapsed: Int? = nil
+    /// The pace in the Mac's words: "ahead of an even pace". Absent with `elapsed`.
+    var pace: String? = nil
+    /// ahead | even | behind. Unknown values read as even.
+    var paceKey: String? = nil
 }
 
 /// The stretch of work going on now, by name: what the Lock Screen of an iPhone says.

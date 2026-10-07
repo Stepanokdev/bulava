@@ -198,13 +198,13 @@ nonisolated final class DecisionCenterTests: XCTestCase {
         var review = DecisionReview()
         review.open(center.record(for: report))          // the panel opens; nothing sent yet
         let draft = DecisionAnswers(choices: ["leak": "No"], general: "from the Mac")
-        XCTAssertTrue(review.canSend(draft, in: center.record(for: report)))
+        XCTAssertTrue(review.canSend(draft, in: center.record(for: report), for: set))
 
         // The phone answers while the panel is open.
         let phone = try center.submit(report: report, answers: DecisionAnswers(choices: ["leak": "Take it"]),
                                       revision: set.revision, basedOn: nil, submissionID: UUID(), device: "phone-1").get()
         XCTAssertEqual(review.unseen(in: center.record(for: report))?.id, phone.id, "the panel shows the phone's answer")
-        XCTAssertFalse(review.canSend(draft, in: center.record(for: report)), "and Send is off until he has seen it")
+        XCTAssertFalse(review.canSend(draft, in: center.record(for: report), for: set), "and Send is off until he has seen it")
         let refused = center.send(from: &review, report: report, answers: draft, revision: set.revision)
         XCTAssertEqual(refused.failure?.code, .conflict, "the panel's send is refused, not made a correction behind his back")
         XCTAssertEqual(messages(in: chat, of: model).count, 1)
@@ -222,6 +222,77 @@ nonisolated final class DecisionCenterTests: XCTestCase {
         later.open(center.record(for: report))
         XCTAssertNil(later.unseen(in: center.record(for: report)))
         XCTAssertEqual(later.seen, sent.id)
+    }
+
+    /// Opened again after an answer went, the panel shows that answer — what of it fits the questions
+    /// as they are now — and Send stays off until something in it changes.
+    @MainActor
+    func testAnAnsweredReportOpensWithItsAnswerAndSendsOnlyAChange() async throws {
+        let (_, center, chat) = try await ready()
+        center.publish(report, to: chat.id)
+        let set = try XCTUnwrap(DecisionSet.load(besides: report))
+        var review = DecisionReview()
+        review.open(center.record(for: report))
+        let answer = DecisionAnswers(choices: ["leak": "Take it", "browser": "Now"], comments: ["browser": "soon"], general: "go")
+        let sent = try center.send(from: &review, report: report, answers: answer, revision: set.revision).get()
+        XCTAssertTrue(center.record(for: report).draft.isEmpty, "the draft goes with the answer")
+
+        let record = DecisionCenter(folder: store).record(for: report)
+        let shown = try XCTUnwrap(record.latest).answers.fitted(to: set)
+        XCTAssertEqual(shown, sent.answers, "what was sent is what the panel opens with")
+        var again = DecisionReview()
+        again.open(record)
+        XCTAssertFalse(again.canSend(shown, in: record, for: set), "the same answer again is not a correction")
+        var changed = shown
+        changed.choices["browser"] = "Never"
+        XCTAssertTrue(again.canSend(changed, in: record, for: set))
+
+        // The questions change under it: what no longer fits is not shown as chosen.
+        var questions = Self.questions
+        questions["items"] = [["id": "leak", "title": "Close the password leak", "options": ["Now", "Later"]],
+                              ["id": "browser", "title": "A browser of Bulava's own", "options": ["Now", "After the release", "Never"]]]
+        try writeQuestions(questions)
+        let newSet = try XCTUnwrap(DecisionSet.load(besides: report))
+        let fitted = sent.answers.fitted(to: newSet)
+        XCTAssertEqual(fitted.choices, ["browser": "Now"])
+        XCTAssertEqual(fitted.comments, ["browser": "soon"])
+        XCTAssertEqual(fitted.general, "go")
+        // What opens is what was sent, as it fits now: Send stays off until he changes something.
+        XCTAssertEqual(record.opening(for: newSet), fitted)
+        XCTAssertFalse(again.canSend(fitted, in: record, for: newSet), "a choice that no longer fits is not his change")
+        var edited = fitted
+        edited.choices["leak"] = "Later"
+        XCTAssertTrue(again.canSend(edited, in: record, for: newSet), "a real change can go")
+    }
+
+    /// Emptied on purpose, his answer stays empty when the questions open again — after a quit too.
+    /// The answer sent opens only when he has nothing of his own.
+    @MainActor
+    func testAnEmptiedAnswerStaysEmptyAndTheSentOneOpensOnlyWithoutOne() async throws {
+        let (_, center, chat) = try await ready()
+        center.publish(report, to: chat.id)
+        let set = try XCTUnwrap(DecisionSet.load(besides: report))
+        var review = DecisionReview()
+        review.open(center.record(for: report))
+        let sent = try center.send(from: &review, report: report,
+                                   answers: DecisionAnswers(choices: ["leak": "Take it"], comments: ["browser": "soon"]),
+                                   revision: set.revision).get()
+        XCTAssertEqual(center.record(for: report).opening(for: set), sent.answers.fitted(to: set),
+                       "nothing of his own yet: the answer sent")
+
+        center.saveDraft(DecisionAnswers(), for: report)          // he unticks and clears everything
+        XCTAssertEqual(center.record(for: report).opening(for: set), DecisionAnswers())
+        XCTAssertEqual(DecisionCenter(folder: store).record(for: report).opening(for: set), DecisionAnswers(),
+                       "and after a quit it is still empty, not the answer sent")
+
+        center.saveDraft(nil, for: report)                        // back to exactly what was sent
+        XCTAssertNil(center.record(for: report).ownDraft)
+        XCTAssertEqual(DecisionCenter(folder: store).record(for: report).opening(for: set), sent.answers.fitted(to: set))
+
+        // A record written before drafts were told apart: a draft in it is his all the same.
+        let old = #"{"reportPath":"/x/index.html","draft":{"choices":{"leak":"No"},"comments":{},"general":""},"submissions":[]}"#
+        let log = try JSONDecoder().decode(DecisionAnswerLog.self, from: Data(old.utf8))
+        XCTAssertEqual(log.ownDraft?.choices, ["leak": "No"])
     }
 
     @MainActor

@@ -11,6 +11,7 @@
 		ABCDEF00000000000000SPF1 /* Sparkle.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = ABCDEF00000000000000SPF0 /* Sparkle.framework */; };
 		ABCDEF00000000000000SPF2 /* Sparkle.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = ABCDEF00000000000000SPF0 /* Sparkle.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		CE3BA82830109F9B00334BEF /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = CE3BA82730109F9B00334BEF /* WhisperKit */; };
+		ABCDEF00000000000000MW11 /* BulavaMacWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = ABCDEF00000000000000MW03 /* BulavaMacWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -28,6 +29,13 @@
 			remoteGlobalIDString = CEBE1DFD30102DFF003C4304;
 			remoteInfo = "Night Shift";
 		};
+		ABCDEF00000000000000MW13 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = CEBE1DF630102DFF003C4304 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = ABCDEF00000000000000MW04;
+			remoteInfo = BulavaMacWidgets;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -42,6 +50,17 @@
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		ABCDEF00000000000000MW12 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				ABCDEF00000000000000MW11 /* BulavaMacWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -49,7 +68,19 @@
 		ABCDEF0000000000000000B1 /* Night ShiftUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Night ShiftUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		ABCDEF00000000000000SPF0 /* Sparkle.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Sparkle.framework; path = Frameworks/Sparkle.framework; sourceTree = "<group>"; };
 		CEBE1DFE30102DFF003C4304 /* Bulava.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Bulava.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		ABCDEF00000000000000MW03 /* BulavaMacWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BulavaMacWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		ABCDEF00000000000000MW02 /* Exceptions for "BulavaMacWidgets" folder in "BulavaMacWidgets" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				BulavaMacWidgets.entitlements,
+				Info.plist,
+			);
+			target = ABCDEF00000000000000MW04 /* BulavaMacWidgets */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		ABCDEF0000000000000000A2 /* Night ShiftTests */ = {
@@ -65,6 +96,19 @@
 		CEBE1E0030102DFF003C4304 /* Night Shift */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = "Night Shift";
+			sourceTree = "<group>";
+		};
+		ABCDEF00000000000000WK01 /* Week */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Shared/Week;
+			sourceTree = "<group>";
+		};
+		ABCDEF00000000000000MW01 /* BulavaMacWidgets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				ABCDEF00000000000000MW02 /* Exceptions for "BulavaMacWidgets" folder in "BulavaMacWidgets" target */,
+			);
+			path = BulavaMacWidgets;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -94,6 +138,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		ABCDEF00000000000000MW06 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -101,6 +152,8 @@
 			isa = PBXGroup;
 			children = (
 				CEBE1E0030102DFF003C4304 /* Night Shift */,
+				ABCDEF00000000000000WK01 /* Week */,
+				ABCDEF00000000000000MW01 /* BulavaMacWidgets */,
 				ABCDEF0000000000000000A2 /* Night ShiftTests */,
 				ABCDEF0000000000000000B2 /* Night ShiftUITests */,
 				CEBE1DFF30102DFF003C4304 /* Products */,
@@ -112,6 +165,7 @@
 			isa = PBXGroup;
 			children = (
 				CEBE1DFE30102DFF003C4304 /* Bulava.app */,
+				ABCDEF00000000000000MW03 /* BulavaMacWidgets.appex */,
 				ABCDEF0000000000000000A1 /* Night ShiftTests.xctest */,
 				ABCDEF0000000000000000B1 /* Night ShiftUITests.xctest */,
 			);
@@ -183,15 +237,18 @@
 				CEBE1DFB30102DFF003C4304 /* Frameworks */,
 				CEBE1DFC30102DFF003C4304 /* Resources */,
 				ABCDEF00000000000000SPF3 /* Embed Frameworks */,
+				ABCDEF00000000000000MW12 /* Embed Foundation Extensions */,
 				ABCDEF00000000000000ENG0 /* Bundle the work engine */,
 				ABCDEF00000000000000BLD0 /* Stamp the build number */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				ABCDEF00000000000000MW14 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				CEBE1E0030102DFF003C4304 /* Night Shift */,
+				ABCDEF00000000000000WK01 /* Week */,
 			);
 			name = "Night Shift";
 			packageProductDependencies = (
@@ -201,6 +258,30 @@
 			productName = "Night Shift";
 			productReference = CEBE1DFE30102DFF003C4304 /* Bulava.app */;
 			productType = "com.apple.product-type.application";
+		};
+		ABCDEF00000000000000MW04 /* BulavaMacWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = ABCDEF00000000000000MW08 /* Build configuration list for PBXNativeTarget "BulavaMacWidgets" */;
+			buildPhases = (
+				ABCDEF00000000000000MW05 /* Sources */,
+				ABCDEF00000000000000MW06 /* Frameworks */,
+				ABCDEF00000000000000MW07 /* Resources */,
+				ABCDEF00000000000000MW15 /* Stamp the build number */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				ABCDEF00000000000000MW01 /* BulavaMacWidgets */,
+				ABCDEF00000000000000WK01 /* Week */,
+			);
+			name = BulavaMacWidgets;
+			packageProductDependencies = (
+			);
+			productName = BulavaMacWidgets;
+			productReference = ABCDEF00000000000000MW03 /* BulavaMacWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -221,6 +302,9 @@
 						TestTargetID = CEBE1DFD30102DFF003C4304;
 					};
 					CEBE1DFD30102DFF003C4304 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					ABCDEF00000000000000MW04 = {
 						CreatedOnToolsVersion = 26.6;
 					};
 				};
@@ -248,6 +332,7 @@
 				CEBE1DFD30102DFF003C4304 /* Night Shift */,
 				ABCDEF0000000000000000A3 /* Night ShiftTests */,
 				ABCDEF0000000000000000B3 /* Night ShiftUITests */,
+				ABCDEF00000000000000MW04 /* BulavaMacWidgets */,
 			);
 		};
 /* End PBXProject section */
@@ -274,9 +359,33 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		ABCDEF00000000000000MW07 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		ABCDEF00000000000000MW15 /* Stamp the build number */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "Stamp the build number";
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/build-number-stamped",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "sh \"$SRCROOT/scripts/stamp-build-number.sh\"\n";
+		};
 		ABCDEF00000000000000BLD0 /* Stamp the build number */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -332,6 +441,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		ABCDEF00000000000000MW05 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -344,6 +460,11 @@
 			isa = PBXTargetDependency;
 			target = CEBE1DFD30102DFF003C4304 /* Night Shift */;
 			targetProxy = ABCDEF0000000000000000BA /* PBXContainerItemProxy */;
+		};
+		ABCDEF00000000000000MW14 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = ABCDEF00000000000000MW04 /* BulavaMacWidgets */;
+			targetProxy = ABCDEF00000000000000MW13 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -603,7 +724,8 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
 				MARKETING_VERSION = 1.12;
-				PRODUCT_BUNDLE_IDENTIFIER = "stepanok.com.Night-Shift.dev";
+				BULAVA_BUNDLE_BASE = "stepanok.com.Night-Shift.dev";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(BULAVA_BUNDLE_BASE)";
 				PRODUCT_NAME = Bulava;
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -650,7 +772,8 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
 				MARKETING_VERSION = 1.12;
-				PRODUCT_BUNDLE_IDENTIFIER = "stepanok.com.Night-Shift";
+				BULAVA_BUNDLE_BASE = "stepanok.com.Night-Shift";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(BULAVA_BUNDLE_BASE)";
 				PRODUCT_NAME = Bulava;
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -658,6 +781,72 @@
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		ABCDEF00000000000000MW09 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = BulavaMacWidgets/BulavaMacWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = KHU94Q2JSS;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BulavaMacWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Bulava;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.6;
+				MARKETING_VERSION = 1.12;
+				BULAVA_BUNDLE_BASE = "stepanok.com.Night-Shift.dev";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(BULAVA_BUNDLE_BASE).widgets";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "WEEK_WIDGETS $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		ABCDEF00000000000000MW10 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = BulavaMacWidgets/BulavaMacWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = KHU94Q2JSS;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BulavaMacWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Bulava;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.6;
+				MARKETING_VERSION = 1.12;
+				BULAVA_BUNDLE_BASE = "stepanok.com.Night-Shift";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(BULAVA_BUNDLE_BASE).widgets";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "WEEK_WIDGETS $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
 			};
 			name = Release;
@@ -697,6 +886,15 @@
 			buildConfigurations = (
 				CEBE1E0A30102E00003C4304 /* Debug */,
 				CEBE1E0B30102E00003C4304 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		ABCDEF00000000000000MW08 /* Build configuration list for PBXNativeTarget "BulavaMacWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				ABCDEF00000000000000MW09 /* Debug */,
+				ABCDEF00000000000000MW10 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

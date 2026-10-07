@@ -7,6 +7,10 @@ nonisolated struct ChatSessionBinding: Codable, Equatable, Sendable {
     var claudeSessionID: String?
 
     var codexThreadID: String?
+    /// A fingerprint of the context the Codex thread was last given. A Codex turn carries nothing
+    /// but the message; the context goes in at the start of a thread, and again whenever it changes —
+    /// a new folder, a new word about the product, a newer engine.
+    var codexContextDigest: String?
     var activeRunID: String?
     var branch: String?
     var startedAt: Date
@@ -18,7 +22,7 @@ nonisolated struct ChatSessionBinding: Codable, Equatable, Sendable {
     var reportPaths: [String]
 
     init(primaryProjectID: UUID?, projectPath: String, claudeSessionID: String? = nil,
-         codexThreadID: String? = nil,
+         codexThreadID: String? = nil, codexContextDigest: String? = nil,
          activeRunID: String? = nil, branch: String? = nil, startedAt: Date = Date(),
          outcomeAt: Date? = nil, lastCompletedTurnKey: String? = nil,
          lastReportedTurnKey: String? = nil, reportPaths: [String] = []) {
@@ -26,6 +30,7 @@ nonisolated struct ChatSessionBinding: Codable, Equatable, Sendable {
         self.projectPath = projectPath
         self.claudeSessionID = claudeSessionID
         self.codexThreadID = codexThreadID
+        self.codexContextDigest = codexContextDigest
         self.activeRunID = activeRunID
         self.branch = branch
         self.startedAt = startedAt
@@ -56,6 +61,7 @@ nonisolated struct ChatSessionBinding: Codable, Equatable, Sendable {
         projectPath = (try? c.decode(String.self, forKey: .projectPath)) ?? ""
         claudeSessionID = try? c.decodeIfPresent(String.self, forKey: .claudeSessionID)
         codexThreadID = try? c.decodeIfPresent(String.self, forKey: .codexThreadID)
+        codexContextDigest = try? c.decodeIfPresent(String.self, forKey: .codexContextDigest)
         activeRunID = try? c.decodeIfPresent(String.self, forKey: .activeRunID)
         branch = try? c.decodeIfPresent(String.self, forKey: .branch)
         startedAt = (try? c.decode(Date.self, forKey: .startedAt)) ?? Date()

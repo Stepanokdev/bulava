@@ -810,6 +810,26 @@ nonisolated final class ModelChoiceTests: XCTestCase {
             .contains("-m"))
     }
 
+    /// A chat turn may write where Bulava takes requests, and every command it runs is told which
+    /// chat it is — as config Codex applies itself, so his own config cannot drop them — before
+    /// `resume` too. Paths with spaces and quotes reach TOML intact.
+    func testACodexTurnIsLetLeaveBulavaARequest() {
+        let root = #"/Users/x/.claude/supervisor/automation-requests "q""#
+        let args = CodexChatRunner.arguments(threadID: "t1", effort: "low", prompt: "hi",
+                                             environment: ["BULAVA_CHAT_TURN": "w1", "SUPERVISOR_STATE_DIR": "/s d"],
+                                             writableRoots: [root])
+        XCTAssertTrue(args.contains(#"sandbox_workspace_write.writable_roots=["/Users/x/.claude/supervisor/automation-requests \"q\""]"#), "\(args)")
+        XCTAssertTrue(args.contains(#"shell_environment_policy.set.BULAVA_CHAT_TURN="w1""#))
+        XCTAssertTrue(args.contains(#"shell_environment_policy.set.SUPERVISOR_STATE_DIR="/s d""#))
+        guard let set = args.firstIndex(of: #"shell_environment_policy.set.BULAVA_CHAT_TURN="w1""#),
+              let resume = args.firstIndex(of: "resume") else { return XCTFail("expected both") }
+        XCTAssertLessThan(set, resume)
+        XCTAssertFalse(CodexChatRunner.arguments(threadID: nil, effort: "low", prompt: "hi")
+            .contains { $0.hasPrefix("sandbox_workspace_write") || $0.hasPrefix("shell_environment_policy") },
+                       "nothing extra when there is nothing to give")
+        XCTAssertEqual(CodexChatRunner.tomlString("a\\b\n"), #""a\\b\n""#)
+    }
+
     /// A chat's Claude session used to be started with no model and no depth at all: night runs
     /// got them, a conversation got the engine's fallback, and the composer's label was a claim
     /// about a flag nobody passed.

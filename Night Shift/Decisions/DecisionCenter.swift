@@ -8,9 +8,22 @@ nonisolated struct DecisionAnswerLog: Codable, Equatable, Sendable {
     var chatID: UUID?
     /// What is ticked and written so far, not sent yet. The phone keeps its own until it sends.
     var draft: DecisionAnswers = DecisionAnswers()
+    /// The draft is his own — kept even when he emptied it. Nil when there is none: the panel then
+    /// opens with the answer last sent. (Absent from records written before it; a non-empty draft
+    /// there is his all the same.)
+    var draftIsHis: Bool?
     var submissions: [DecisionSubmission] = []
 
     var latest: DecisionSubmission? { submissions.last }
+
+    /// His unsent answer, an emptied one included; nil when he has none.
+    var ownDraft: DecisionAnswers? { draftIsHis == true || !draft.isEmpty ? draft : nil }
+
+    /// What the panel opens with: his own draft, even one he emptied, or else the answer last sent —
+    /// as far as it still fits these questions.
+    func opening(for set: DecisionSet) -> DecisionAnswers {
+        ownDraft ?? latest?.answers.fitted(to: set) ?? DecisionAnswers()
+    }
 }
 
 /// What the Mac's panel knows about the answers already sent: which one he had in front of him.
@@ -39,8 +52,10 @@ nonisolated struct DecisionReview: Equatable, Sendable {
     /// He read it: his answer will correct it.
     mutating func acknowledge(_ record: DecisionAnswerLog) { seen = record.latest?.id }
 
-    func canSend(_ answers: DecisionAnswers, in record: DecisionAnswerLog) -> Bool {
-        !answers.isEmpty && unseen(in: record) == nil
+    /// Something to send: not nothing, nothing unseen in between, and not word for word the answer
+    /// that is already there — as the panel shows it for these questions, without what no longer fits.
+    func canSend(_ answers: DecisionAnswers, in record: DecisionAnswerLog, for set: DecisionSet) -> Bool {
+        !answers.isEmpty && unseen(in: record) == nil && answers != corrected(in: record)?.answers.fitted(to: set)
     }
 
     /// The answer his would correct.
@@ -122,10 +137,14 @@ final class DecisionCenter {
         return (set, record(for: report))
     }
 
-    func saveDraft(_ answers: DecisionAnswers, for report: URL) {
+    /// Keeps his unsent answer — or, with nil, that he has none of his own: the answer sent stands.
+    func saveDraft(_ answers: DecisionAnswers?, for report: URL) {
         var r = record(for: report)
-        guard r.draft != answers else { return }
-        r.draft = answers
+        let draft = answers ?? DecisionAnswers()
+        let his: Bool? = answers == nil ? nil : true
+        guard r.draft != draft || r.draftIsHis != his else { return }
+        r.draft = draft
+        r.draftIsHis = his
         store(r)
     }
 
@@ -170,6 +189,7 @@ final class DecisionCenter {
         r.chatID = chat.id
         r.submissions.append(submission)
         r.draft = DecisionAnswers()
+        r.draftIsHis = nil
         store(r)
         return .success(submission)
     }

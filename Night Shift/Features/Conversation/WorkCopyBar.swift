@@ -134,7 +134,9 @@ struct WorkCopyBar: View {
                 problem = await model.mergeChatCopy(chatID)
             }
             working = false
-            if problem == nil {
+            if problem == nil, copy?.integrating != nil {
+                model.toast = ToastMessage(text: String(localized: "It could not be merged by itself, so the chat is merging it."), kind: .info)
+            } else if problem == nil {
                 model.toast = ToastMessage(text: String(localized: "Merged. The copy is cleaned up."), kind: .info)
             }
             await refresh()

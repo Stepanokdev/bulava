@@ -43,7 +43,9 @@ struct DecisionPanel: View {
         .background(Palette.chrome)
         .overlay(alignment: .leading) { Rectangle().fill(Palette.line).frame(width: Metrics.hairline) }
         .task(id: report) { load() }
-        .onChange(of: answers) { _, new in model.decisions.saveDraft(new, for: report) }
+        // What he changes is his draft, an emptied one included; back to exactly what was sent, it
+        // is no draft of his own any more, and the answer sent is what opens next time.
+        .onChange(of: answers) { _, new in model.decisions.saveDraft(isAsSent ? nil : new, for: report) }
         .sheet(isPresented: $confirming) {
             if let set { confirmation(set) }
         }
@@ -53,8 +55,10 @@ struct DecisionPanel: View {
         guard let state = model.decisions.state(for: report) else { set = nil; return }
         set = state.set
         if loadedFor != report.path {
-            answers = state.record.draft
-            openComments = Set(state.record.draft.comments.keys)
+            // What he has not sent yet — even if he emptied it — or else what he sent: an answered
+            // report opens answered.
+            answers = state.record.opening(for: state.set)
+            openComments = Set(answers.comments.keys)
             loadedFor = report.path
             review = DecisionReview()
             review.open(state.record)
@@ -86,6 +90,12 @@ struct DecisionPanel: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
+    }
+
+    /// The controls show exactly the answer already sent.
+    private var isAsSent: Bool {
+        guard let seen = review.corrected(in: record), let set else { return false }
+        return answers == seen.answers.fitted(to: set)
     }
 
     private func progress(_ set: DecisionSet) -> String {
@@ -182,7 +192,14 @@ struct DecisionPanel: View {
             Text("What you send now replaces it.")
                 .font(Typo.panelMeta)
                 .foregroundStyle(Palette.textFaint)
-            Button { review.acknowledge(record); problem = nil } label: { Text("Got it") }
+            Button {
+                // Nothing of his own changed since: the new answer is what the panel shows now.
+                if answers == (review.corrected(in: record)?.answers.fitted(to: set) ?? DecisionAnswers()) {
+                    answers = other.answers.fitted(to: set)
+                    openComments = Set(answers.comments.keys)
+                }
+                review.acknowledge(record); problem = nil
+            } label: { Text("Got it") }
                 .buttonStyle(.bulava(.secondary))
         }
         .padding(12)
@@ -212,7 +229,8 @@ struct DecisionPanel: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
-                Text("Undecided items stay undecided: nothing is started on them.")
+                Text(isAsSent ? "This is what you sent. Change anything to send a correction."
+                              : "Undecided items stay undecided: nothing is started on them.")
                     .font(Typo.panelMeta)
                     .foregroundStyle(Palette.textFaint)
                     .fixedSize(horizontal: false, vertical: true)
@@ -221,7 +239,7 @@ struct DecisionPanel: View {
                     Text(review.seen == nil ? "Send" : "Send a correction")
                 }
                 .buttonStyle(.bulava(.primary))
-                .disabled(!review.canSend(answers, in: record))
+                .disabled(!review.canSend(answers, in: record, for: set))
             }
         }
         .padding(14)
@@ -253,7 +271,7 @@ struct DecisionPanel: View {
                 Button { send(set) } label: { Text("Send") }
                     .buttonStyle(.bulava(.primary))
                     .keyboardShortcut(.defaultAction)
-                    .disabled(!review.canSend(answers, in: record))
+                    .disabled(!review.canSend(answers, in: record, for: set))
             }
         }
         .padding(20)
@@ -264,9 +282,10 @@ struct DecisionPanel: View {
         confirming = false
         let result = model.decisions.send(from: &review, report: report, answers: answers, revision: set.revision)
         switch result {
-        case .success:
-            answers = DecisionAnswers()
-            openComments = []
+        case .success(let submission):
+            // What went stays on the controls, as it will when the report is opened again.
+            answers = submission.answers.fitted(to: set)
+            openComments = Set(answers.comments.keys)
             problem = nil
             model.toast = ToastMessage(text: String(localized: "Decisions sent to the chat."), kind: .success)
         case .failure(let refusal):

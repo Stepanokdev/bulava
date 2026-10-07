@@ -386,6 +386,18 @@ nonisolated struct AppSettings: Codable, Equatable {
 
     var limitsCollapsed: Bool = true
 
+    /// The week's statistics for the widgets, counted on this Mac. Off: nothing is counted and every
+    /// widget says so.
+    var weeklyStats: Bool = true
+    /// Once a week, an anonymous summary of how Bulava was used goes to its author — the closed
+    /// list in `UsageReport`. A setting like any other, on unless the person turns it off.
+    var shareUsage: Bool = true
+    /// When this Mac first had `shareUsage` to consider. A week is reported only if it began after
+    /// this: nothing from before the setting was there to be seen.
+    var usageSince: Date?
+    /// The ISO week whose summary was last delivered, so a week is sent once.
+    var usageReportedWeek: String?
+
     var chatMode: ChatEngineMode = .claudeAndCodex
 
     // MARK: What the work runs on
@@ -564,6 +576,9 @@ nonisolated struct AppSettings: Codable, Equatable {
 
 nonisolated extension AppSettings {
 
+    /// Keys read once and written no more.
+    private enum LegacyKeys: String, CodingKey { case usageNoticeShownAt }
+
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         stateDirPath = try c.decode(String.self, forKey: .stateDirPath)
@@ -577,6 +592,12 @@ nonisolated extension AppSettings {
         askUserWaitMinutes = try c.decodeIfPresent(Int.self, forKey: .askUserWaitMinutes) ?? 60
         foremanLive = try c.decodeIfPresent(Bool.self, forKey: .foremanLive) ?? true
         limitsCollapsed = try c.decodeIfPresent(Bool.self, forKey: .limitsCollapsed) ?? true
+        weeklyStats = try c.decodeIfPresent(Bool.self, forKey: .weeklyStats) ?? true
+        shareUsage = try c.decodeIfPresent(Bool.self, forKey: .shareUsage) ?? true
+        // Kept under the name of the notice that once came before the first summary.
+        usageSince = try c.decodeIfPresent(Date.self, forKey: .usageSince)
+            ?? decoder.container(keyedBy: LegacyKeys.self).decodeIfPresent(Date.self, forKey: .usageNoticeShownAt)
+        usageReportedWeek = try c.decodeIfPresent(String.self, forKey: .usageReportedWeek)
         // PINNED while the mode switch is out of the interface: the stored value is deliberately
         // not read. Anyone who had chosen "Codex only" before this change would otherwise stay in
         // it with no way back — no review gate, and no control on screen to explain why. The key

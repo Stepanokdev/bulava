@@ -100,3 +100,41 @@ nonisolated struct CapacitySnapshot: Sendable, Equatable {
     var claude: UsageSnapshot = .empty
     var codex: UsageSnapshot = .empty
 }
+
+/// Where an even pace would stand in a limit window, and how the use so far compares with it.
+///
+/// A window resets on its own clock, not the calendar's: how much of it has passed is read from its
+/// reset time and its length. "Ahead" means more than three points over an even pace — at this rate
+/// it runs out before it resets; "behind", more than three under.
+nonisolated struct LimitPace: Equatable, Sendable {
+    /// How much of the window has passed, 0…100.
+    var elapsed: Int
+    /// ahead | even | behind.
+    var key: String
+
+    init?(used: Int, resetsAt: Date?, windowMinutes: Double, now: Date = Date()) {
+        guard let elapsed = Self.elapsedPercent(resetsAt: resetsAt, windowMinutes: windowMinutes, now: now) else { return nil }
+        self.elapsed = elapsed
+        self.key = Self.key(used: used, elapsed: elapsed)
+    }
+
+    static func elapsedPercent(resetsAt: Date?, windowMinutes: Double, now: Date) -> Int? {
+        guard let resetsAt, resetsAt > now, windowMinutes > 0 else { return nil }
+        let share = 1 - resetsAt.timeIntervalSince(now) / (windowMinutes * 60)
+        return min(100, max(0, Int((100 * share).rounded())))
+    }
+
+    static func key(used: Int, elapsed: Int) -> String {
+        let d = used - elapsed
+        return d > 3 ? "ahead" : d < -3 ? "behind" : "even"
+    }
+
+    /// The pace in the interface's language.
+    var words: String {
+        switch key {
+        case "ahead": String(localized: "ahead of an even pace")
+        case "behind": String(localized: "with room to spare")
+        default: String(localized: "on an even pace")
+        }
+    }
+}

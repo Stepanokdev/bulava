@@ -41,6 +41,7 @@ struct NightShiftApp: App {
                        minHeight: Metrics.minimumWindowHeight)
                 .environment(updates)
                 .task { model.start() }
+                .onOpenURL { url in model.open(link: url) }
                 .task {
                     // The updater must not put a window in front of a run in progress.
                     updates.isWorkInFlight = { !model.activeInstances.isEmpty }

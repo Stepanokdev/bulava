@@ -235,6 +235,60 @@ nonisolated final class BrowserBrokerTests: XCTestCase {
         run.close()
     }
 
+    /// Google refuses to sign in to a browser an agent drives, whatever is typed into it. A run's tab
+    /// that reaches Google's sign-in is told to Bulava, with the page the sign-in was for and the run
+    /// that waits — once per tab — so he signs in where nobody drives.
+    func testGooglesSignInInADrivenTabIsHandedToHim() async throws {
+        final class Heard: @unchecked Sendable {
+            let lock = NSLock()
+            var calls: [(URL, String)] = []
+        }
+        let heard = Heard()
+        broker.onSignInNeeded = { url, run in heard.lock.withLock { heard.calls.append((url, run.slug)) } }
+        let run = Client(port: port, token: attended.token)
+        _ = try await run.call(1, "Browser.getVersion")
+        let signIn = #"{"method":"Target.targetInfoChanged","params":{"targetInfo":{"targetId":"G1","type":"page","url":"https://accounts.google.com/v3/signin/identifier?continue=https%3A%2F%2Fsearch.google.com%2Fsearch-console&flowName=GlifWebSignIn"}}}"#
+        fake.emit(signIn)
+        fake.emit(signIn)
+        fake.emit(#"{"method":"Target.targetInfoChanged","params":{"targetInfo":{"targetId":"G2","type":"page","url":"https://console.example/dashboard"}}}"#)
+        try await settle(0.2)
+        let calls = heard.lock.withLock { heard.calls }
+        XCTAssertEqual(calls.map(\.0.absoluteString), ["https://search.google.com/search-console"],
+                       "where the sign-in was for, once, and nothing for an ordinary page")
+        XCTAssertEqual(calls.first?.1, attended.slug, "with the run that waits for it")
+
+        // The run lets go: a sign-in page in a tab nobody drives asks him for nothing.
+        XCTAssertTrue(broker.release(token: attended.token))
+        fake.emit(#"{"method":"Target.targetCreated","params":{"targetInfo":{"targetId":"G3","type":"page","url":"https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fanalytics.google.com%2F"}}}"#)
+        try await settle(0.2)
+        XCTAssertEqual(heard.lock.withLock { heard.calls.count }, 1, "no run holds the browser: nothing is asked")
+        run.close()
+
+        // The next run, in the very same tab at the very same sign-in: asked for afresh.
+        try await settle(0.3)
+        let next = Client(port: port, token: night.token)
+        _ = try await next.call(1, "Browser.getVersion")
+        fake.emit(signIn)
+        try await settle(0.2)
+        let after = heard.lock.withLock { heard.calls }
+        XCTAssertEqual(after.count, 2, "what the last run was told is not this run's")
+        XCTAssertEqual(after.last?.1, night.slug)
+        XCTAssertEqual(after.last?.0.absoluteString, "https://search.google.com/search-console")
+        next.close()
+    }
+
+    func testWhichPagesOnlyHeCanSignInOn() {
+        let rejected = URL(string: "https://accounts.google.com/v3/signin/rejected?continue=https%3A%2F%2Fsearch.google.com%2Fsearch-console&dsh=S1")!
+        XCTAssertEqual(BrowserBroker.signInOnlyHeCanDo(rejected)?.absoluteString, "https://search.google.com/search-console")
+        XCTAssertEqual(BrowserBroker.signInOnlyHeCanDo(URL(string: "https://accounts.google.com/o/oauth2/v2/auth?client_id=x")!)?.absoluteString,
+                       "https://accounts.google.com/", "a sign-in for another site: Google's own page")
+        XCTAssertEqual(BrowserBroker.signInOnlyHeCanDo(URL(string: "https://accounts.google.com/signin?continue=javascript:alert(1)")!)?.absoluteString,
+                       "https://accounts.google.com/", "nothing but a web page is opened for him")
+        XCTAssertNil(BrowserBroker.signInOnlyHeCanDo(URL(string: "https://search.google.com/search-console")!))
+        XCTAssertNil(BrowserBroker.signInOnlyHeCanDo(URL(string: "http://accounts.google.com/")!))
+        XCTAssertNil(BrowserBroker.signInOnlyHeCanDo(URL(string: "https://accounts.google.com.evil.example/signin")!))
+    }
+
     func testARunWithoutHimCannotOpenTheSitesHeKeeps() async throws {
         broker.setBlocked(["bank.example"])
         let run = Client(port: port, token: night.token)
@@ -340,6 +394,44 @@ nonisolated final class AccountBrowserChromeTests: XCTestCase {
 
         broker.setUnavailable("test over")
         XCTAssertTrue(pipe.waitForExit(seconds: 10), "Chrome closes when the browser is taken for signing in")
+    }
+
+    /// Why he cannot sign in to Google in the window a run drives, and what Bulava does about it,
+    /// against a real Chrome on a pipe: the page says it is driven (`navigator.webdriver`), which is
+    /// what Google refuses; and a run's tab that opens Google's sign-in is handed to him at once.
+    func testARealDrivenChromeSaysSoAndItsGoogleSignInIsHandedToHim() async throws {
+        let chrome = try XCTUnwrap(ChromeApp.find(), "Google Chrome is not installed here")
+        let profile = FileManager.default.temporaryDirectory.appendingPathComponent("bulava-browser-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: profile) }
+        ChromeApp.prepare(profile: profile)
+        let broker = BrowserBroker()
+        broker.makeTransport = {
+            try ChromePipe.launch(executable: ChromeApp.executable(of: chrome),
+                                  arguments: ChromeApp.baseArguments(profile: profile) + ["--remote-debugging-pipe", "--headless=new", "about:blank"])
+        }
+        let handed = LockedBox<URL?>(nil)
+        broker.onSignInNeeded = { url, _ in handed.set(url) }
+        let port = broker.start(preferredPort: 0)
+        defer { broker.stop(); broker.setUnavailable("test over") }
+        let token = String(repeating: "d", count: 48)
+        broker.setRuns([.init(token: token, slug: "real", title: "Real", unattended: false)])
+
+        let client = BrowserBrokerTests.Client(port: port, token: token)
+        _ = try await client.call(1, "Target.setDiscoverTargets", ["discover": true])
+        let blank = try await client.call(2, "Target.createTarget", ["url": "about:blank"])
+        let blankID = try XCTUnwrap((blank["result"] as? [String: Any])?["targetId"] as? String)
+        let attached = try await client.call(3, "Target.attachToTarget", ["targetId": blankID, "flatten": true])
+        let session = try XCTUnwrap((attached["result"] as? [String: Any])?["sessionId"] as? String)
+        let driven = try await client.call(4, "Runtime.evaluate", ["expression": "navigator.webdriver", "returnByValue": true], session: session)
+        let value = ((driven["result"] as? [String: Any])?["result"] as? [String: Any])?["value"] as? Bool
+        XCTAssertEqual(value, true, "a browser on a DevTools pipe tells every page it is driven — Google reads that")
+
+        _ = try await client.call(5, "Target.createTarget",
+                                  ["url": "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fsearch.google.com%2Fsearch-console"])
+        for _ in 0..<50 where handed.get() == nil { try await Task.sleep(for: .milliseconds(100)) }
+        XCTAssertEqual(handed.get()?.absoluteString, "https://search.google.com/search-console",
+                       "the sign-in is handed to him, for the page it was for")
+        client.close()
     }
 }
 

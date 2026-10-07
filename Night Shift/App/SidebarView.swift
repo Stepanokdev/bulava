@@ -251,8 +251,8 @@ struct SidebarView: View {
 
     @ViewBuilder private func engine(_ name: String, _ usage: UsageSnapshot) -> some View {
         let stale = usage.isStale()
-        let five = window(usage.fiveHour)
-        let seven = usage.sevenDay.flatMap(window)
+        let five = window(usage.fiveHour, minutes: 300)
+        let seven = usage.sevenDay.flatMap { window($0, minutes: 10080) }
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 6) {
                 Text(name)
@@ -277,7 +277,7 @@ struct SidebarView: View {
         }
     }
 
-    @ViewBuilder private func meter(_ label: String, _ w: (used: Int, reset: String?),
+    @ViewBuilder private func meter(_ label: String, _ w: (used: Int, reset: String?, pace: LimitPace?),
                                     stale: Bool) -> some View {
         let pressure = UsagePressure(usedPercent: Double(w.used))
         let tint = switch pressure {
@@ -305,6 +305,13 @@ struct SidebarView: View {
                         Capsule()
                             .fill(tint)
                             .frame(width: max(2, geo.size.width * CGFloat(w.used) / 100))
+                        // Where an even pace would stand by now.
+                        if let pace = w.pace {
+                            Capsule()
+                                .fill(Palette.text)
+                                .frame(width: 2, height: 9)
+                                .offset(x: max(0, min(geo.size.width - 2, geo.size.width * CGFloat(pace.elapsed) / 100 - 1)))
+                        }
                     }
                 }
                 .frame(height: 4)
@@ -323,12 +330,20 @@ struct SidebarView: View {
                 .help(w.reset.map { Text(String(format: String(localized: "resets in %@"), $0)) }
                     ?? Text(verbatim: ""))
             }
+            if let pace = w.pace, !stale {
+                Text(pace.words)
+                    .font(Typo.panelMeta)
+                    .foregroundStyle(pace.key == "ahead" ? Palette.orange : Palette.textFaint)
+                    .lineLimit(1)
+                    .help(Text(String(format: String(localized: "The tick shows where an even pace would be: %lld%% of the window has passed."), pace.elapsed)))
+            }
         }
     }
 
-    private func window(_ w: UsageWindow?) -> (used: Int, reset: String?)? {
+    private func window(_ w: UsageWindow?, minutes: Double) -> (used: Int, reset: String?, pace: LimitPace?)? {
         guard let w, let used = w.shownPercent() else { return nil }
-        return (used: used, reset: Fmt.resetsCompact(w.resetsAt))
+        return (used: used, reset: Fmt.resetsCompact(w.resetsAt),
+                pace: LimitPace(used: used, resetsAt: w.resetsAt, windowMinutes: minutes))
     }
 
     private var footer: some View {

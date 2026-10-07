@@ -33,6 +33,7 @@ extension AppModel {
             }
         }
         advanceRuns(now: now)
+        followHandedMerges(now: now)
         if lastCopySweep.map({ now.timeIntervalSince($0) > 600 }) ?? true {
             lastCopySweep = now
             Task { await sweepCopies() }
@@ -784,16 +785,96 @@ extension AppModel {
                 automations.updateCopy(copy.id) { $0.state = .merged }
                 onMerged()
                 return nil
+            case .failure(let f) where Self.chatCanMerge(f):
+                return handMergeToChat(copy) ?? Self.handedOver
             case .failure(let f):
                 return Self.copyProblem(f)
             }
         }
+        if merged == Self.handedOver { return nil }
         guard merged == nil else { return merged }
         // Taken away after the merge, as its own step: a removal that does not go through leaves a
         // merged copy the sweep finishes later, never a merge reported as failed.
         _ = await removeCopy(copy.id, force: false, branch: .deleteIfIntegrated)
         await refreshCurrentBranches()
         return nil
+    }
+
+    // MARK: - A merge the chat finishes
+
+    /// What stops the app from merging alone, but not an agent that can put his changes aside and
+    /// resolve a conflict. He pressed «Merge»: being told to commit first is not an answer to that.
+    nonisolated static func chatCanMerge(_ failure: WorkCopies.Failure) -> Bool {
+        switch failure {
+        case .targetDirty, .conflict, .targetMoved: return true
+        default: return false
+        }
+    }
+
+    /// A marker `mergeCopy` returns from inside the copy's lock, never shown.
+    nonisolated static let handedOver = "\u{0}handed-over"
+
+    /// The chat a copy belongs to, if it has one to ask.
+    func chatID(ofCopy copy: WorkCopy) -> UUID? {
+        switch copy.owner {
+        case .chat(let id): return id
+        case .run(let runID): return automations.run(id: runID)?.chatID
+        case .task: return nil
+        }
+    }
+
+    /// Ask the copy's own chat to merge it. Returns why not, in words; nil once the message went.
+    func handMergeToChat(_ copy: WorkCopy) -> String? {
+        guard let chatID = chatID(ofCopy: copy), let chat = conversations.chat(id: chatID) else {
+            return String(localized: "This copy has no chat to finish the merge.")
+        }
+        automations.updateCopy(copy.id) { $0.integrating = Date() }
+        let text = String(format: String(localized: "Merge this copy into %@. Bulava could not do it by itself: your folder has uncommitted changes, or the branches have diverged. Keep my uncommitted changes, do not commit them."), copy.baseRef)
+        switch sendDirectMessage(text, productID: chat.productID, chatID: chatID) {
+        case .sent, .alreadySent:
+            return nil
+        case .noSuchProduct, .empty:
+            automations.updateCopy(copy.id) { $0.integrating = nil }
+            return String(localized: "This copy has no chat to finish the merge.")
+        }
+    }
+
+    /// A handed-over merge is over when its chat stops. Git decides how it went: an answer of
+    /// «done» proves nothing. Merged — the copy goes as after any merge; not merged — the button
+    /// comes back and the chat's answer says what stopped it.
+    func followHandedMerges(now: Date) {
+        for copy in automations.copies where copy.isLive {
+            guard let since = copy.integrating, now.timeIntervalSince(since) > 15,
+                  !mergingHandedCopies.contains(copy.id) else { continue }
+            if let chatID = chatID(ofCopy: copy),
+               directPhase(for: chatID).isActive || sendingChatIDs.contains(chatID) { continue }
+            mergingHandedCopies.insert(copy.id)
+            Task { [weak self] in
+                await self?.settleHandedMerge(copy.id)
+                self?.mergingHandedCopies.remove(copy.id)
+            }
+        }
+    }
+
+    func settleHandedMerge(_ copyID: UUID) async {
+        guard let copy = automations.copy(id: copyID), copy.isLive, copy.integrating != nil else { return }
+        guard await WorkCopies.isIntegrated(copy) else {
+            automations.updateCopy(copyID) { $0.integrating = nil }
+            return
+        }
+        let sha = await WorkCopies.tip(of: copy)
+        automations.updateCopy(copyID) { $0.state = .merged; $0.mergedSHA = sha; $0.integrating = nil }
+        switch copy.owner {
+        case .run(let runID):
+            automations.updateRun(runID) { $0.handoff = .merged; $0.mergedInto = copy.baseRef; $0.seen = true }
+        case .chat(let chatID):
+            conversations.setWorkCopy(nil, for: chatID)
+            conversations.setWantsCopy(false, for: chatID)
+        case .task:
+            break
+        }
+        _ = await removeCopy(copyID, force: false, branch: .deleteIfIntegrated)
+        await refreshCurrentBranches()
     }
 
     /// Why a run's copy must not be merged or thrown away right now: its conversation is working.

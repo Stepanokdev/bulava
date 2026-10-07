@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 
 /// Who is reading the message, and since when.
@@ -327,7 +328,22 @@ extension AppModel {
                                       to: chat.id)
         }
 
-        let thread = conversations.chat(id: chat.id)?.session?.codexThreadID
+        let binding = conversations.chat(id: chat.id)?.session
+        let thread = binding?.codexThreadID
+        // A new thread, or one told something else: Bulava and the product go in before the message.
+        let context = codexContext(product: product, primary: primary, chatID: chat.id,
+                                   automationCommand: automationCommand())
+        let contextDigest = Self.digest(context)
+        let toldContext = thread != nil && binding?.codexContextDigest == contextDigest
+        let prompt = toldContext ? message : context + message
+        // The word this turn's commands name the chat with (`automation`), good until it ends.
+        let turnWord = automationDoor.openCodexTurn(chatID: chat.id)
+        var environment = ["BULAVA_CHAT_TURN": turnWord]
+        var writableRoots: [String] = []
+        if let requests = automationDoor.requestsDirectory {
+            environment["SUPERVISOR_STATE_DIR"] = requests.deletingLastPathComponent().path
+            writableRoots.append(requests.path)
+        }
         // `Automatic` means the chosen model's own default depth, which the catalogue knows and
         // differs per model — not one fixed level for all of them.
         settleRunChoices(for: chat.id)
@@ -345,11 +361,13 @@ extension AppModel {
             defer {
                 sendingChatIDs.remove(chat.id)
                 codexTurns[chat.id] = nil
+                automationDoor.closeCodexTurn(turnWord)
             }
             let path = await ShellEnvironment.shared.path()
             let outcome = await runCodexTurn(CodexTurnRequest(
-                prompt: message, threadID: thread, cwd: cwd, effort: effort,
+                prompt: prompt, threadID: thread, cwd: cwd, effort: effort,
                 model: codexModel, path: path,
+                environment: environment, writableRoots: writableRoots,
                 register: { [weak self] runner in
                     Task { @MainActor in self?.codexTurns[chat.id] = runner }
                 },
@@ -365,7 +383,12 @@ extension AppModel {
                                        text: Self.proseOf(outcome.blocks), persist: true)
 
             if let id = outcome.threadID, !id.isEmpty {
-                conversations.updateSession(for: chat.id) { $0.codexThreadID = id }
+                // Told once the turn that carried it went through; a failed one tells it again next time.
+                conversations.updateSession(for: chat.id) {
+                    if $0.codexThreadID != id { $0.codexContextDigest = nil }
+                    $0.codexThreadID = id
+                    if !toldContext && outcome.failure == nil { $0.codexContextDigest = contextDigest }
+                }
             }
             if let reason = CodexStandIn.refusal(in: outcome.failure) {
                 // Sent, refused for want of quota, and there is still a question waiting for an
@@ -1238,58 +1261,35 @@ extension AppModel {
 
     // MARK: Project context
 
-    private func writeSessionContext(chatID: UUID, product: Product,
+    /// What every turn of a chat is started with, beside the engine's rules: what Bulava is and
+    /// which of its tools the run has, the product, its folders and their policy. Internal for tests.
+    func writeSessionContext(chatID: UUID, product: Product,
                                      primary: Project) -> (context: URL, directories: URL)? {
         let folder = AppSupport.root.appendingPathComponent("chats/\(chatID.uuidString)", isDirectory: true)
         let context = folder.appendingPathComponent("context.md")
         let directories = folder.appendingPathComponent("additional-directories.txt")
 
-        var resourceLines: [String] = []
-        var extraPaths: [String] = []
         let copy = liveCopy(forChat: chatID)
-        for resource in product.resources {
-            if let projectID = resource.projectID, let project = projects.project(id: projectID) {
-                let policy = resource.access == .workspace ? "можно изменять" : "сначала спросить перед изменением"
-                let role = project.id == primary.id ? "основная папка" : "дополнительная папка"
-                // In a copy, the main folder IS the copy; his own folder is named, and not to touch.
-                let path = project.id == primary.id ? primary.path : project.path
-                resourceLines.append("- \(resource.name) — \(role), \(policy): `\(path)`"
-                                      + (resource.note.isEmpty ? "" : " — \(resource.note)"))
-                if project.id == primary.id, let copy {
-                    resourceLines.append("- Папка пользователя для «\(resource.name)»: `\(copy.sourcePath)` — НЕ изменять, работа идёт в копии")
-                }
-                if project.id != primary.id { extraPaths.append(project.path) }
-            } else if let url = resource.urlString, !url.isEmpty {
-                resourceLines.append("- \(resource.name) — ссылка: \(url)"
-                                      + (resource.note.isEmpty ? "" : " — \(resource.note)"))
-            }
-        }
-        // Only for a product that has no folders at all. A primary that is not among the resources
-        // used to be written in here as writable, which is how a disconnected folder came back into
-        // the context with permission to edit it; `chatPrimary(for:chatID:)` now settles that
-        // before we get here.
-        if !product.resources.contains(where: { $0.projectID == primary.id }) {
-            resourceLines.insert("- \(primary.name) — основная папка, можно изменять: `\(primary.path)`",
-                                 at: 0)
-        }
-        extraPaths = Array(Set(extraPaths.map(Slug.canonicalPath))).sorted()
+        let (resourceLines, extraPaths) = folderLines(product: product, primary: primary, chatID: chatID)
 
         let contextText: String = """
         Ты работаешь в обычном долгоживущем диалоге Night Shift, который показан через приложение Bulava.
         Это не задача бригадира: не классифицируй сообщения, не создавай внутренние карточки и не считай
         уточнение новой задачей. Продолжай тот же разговор ровно как в интерактивном терминале.
 
-        ## Продукт
-        - Название: \(product.name)
-        - Кратко: \(product.summary.isEmpty ? "не указано" : product.summary)
-        - Что владелец написал о продукте: \(product.brief.isEmpty ? "ничего" : product.brief)
+        \(Self.aboutBulava(answeredBy: "ты, Claude Code в папке продукта; Codex проверяет сделанное"))
 
-        ## Папки и политика
-        \(resourceLines.isEmpty ? "- \(primary.name) — основная папка, можно изменять: `\(primary.path)`" : resourceLines.joined(separator: "\n"))
+        Что ты можешь сделать через Bulava сам (подробности — в правилах выше):
+        - `$IDIR/automation list` и `$IDIR/automation create …` — автоматизации продукта: посмотреть и
+          создать, когда он просит что-то делать регулярно или по расписанию;
+        - `$IDIR/decide <отчёт>` — несколько решений сразу, с вариантами на Mac и телефоне;
+        - `$IDIR/phone-link <файл или папка>` — показать результат на его телефоне;
+        - `$IDIR/capture` — снимок экрана; `$IDIR/ui` — нажать в интерфейсе другого приложения;
+        - браузеры `browser` и `accounts`; `$IDIR/browser` — кто занимает браузер, и вход на сайт;
+        - `$IDIR/history` — что он уже говорил в прошлых разговорах.
+        \(Self.notMadeUp)
 
-        Политика «сначала спросить» — договорённость, а не физическое ограничение. Читай такую папку
-        свободно. До первого изменения объясни, что именно нужно поменять, и попроси разрешение. Если
-        пользователь явно разрешил изменение в этом диалоге, продолжай без изменения настроек продукта.
+        \(productSection(product: product, primary: primary, folders: resourceLines))
 
         Отчёт не создавай автоматически. В конце кратко подведи итог обычным сообщением; приложение само
         предложит подготовить отдельный отчёт в правой панели. Если отчёт запрошен, он должен лежать в `artifacts/` основной
@@ -1310,6 +1310,145 @@ extension AppModel {
         } catch {
             return nil
         }
+    }
+
+    /// The product's folders as a chat is told them, and the ones beyond the main folder.
+    private func folderLines(product: Product, primary: Project, chatID: UUID) -> (lines: [String], extra: [String]) {
+        var resourceLines: [String] = []
+        var extraPaths: [String] = []
+        let copy = liveCopy(forChat: chatID)
+        for resource in product.resources {
+            if let projectID = resource.projectID, let project = projects.project(id: projectID) {
+                let policy = resource.access == .workspace ? "можно изменять" : "сначала спросить перед изменением"
+                let role = project.id == primary.id ? "основная папка" : "дополнительная папка"
+                // In a copy, the main folder IS the copy; his own folder is named, and not to touch.
+                let path = project.id == primary.id ? primary.path : project.path
+                resourceLines.append("- \(resource.name) — \(role), \(policy): `\(path)`"
+                                      + (resource.note.isEmpty ? "" : " — \(resource.note)"))
+                if project.id == primary.id, let copy {
+                    resourceLines.append(copy.integrating != nil
+                        ? "- Папка пользователя для «\(resource.name)»: `\(copy.sourcePath)` — изменять только чтобы влить копию (см. «Отдельная копия»)"
+                        : "- Папка пользователя для «\(resource.name)»: `\(copy.sourcePath)` — НЕ изменять, работа идёт в копии")
+                }
+                if project.id != primary.id { extraPaths.append(project.path) }
+            } else if let url = resource.urlString, !url.isEmpty {
+                resourceLines.append("- \(resource.name) — ссылка: \(url)"
+                                      + (resource.note.isEmpty ? "" : " — \(resource.note)"))
+            }
+        }
+        // Only for a product that has no folders at all. A primary that is not among the resources
+        // used to be written in here as writable, which is how a disconnected folder came back into
+        // the context with permission to edit it; `chatPrimary(for:chatID:)` now settles that
+        // before we get here.
+        if !product.resources.contains(where: { $0.projectID == primary.id }) {
+            resourceLines.insert("- \(primary.name) — основная папка, можно изменять: `\(primary.path)`",
+                                 at: 0)
+        }
+        extraPaths = Array(Set(extraPaths.map(Slug.canonicalPath))).sorted()
+        return (resourceLines, extraPaths)
+    }
+
+    private func productSection(product: Product, primary: Project, folders: [String]) -> String {
+        """
+        ## Продукт
+        - Название: \(product.name)
+        - Кратко: \(product.summary.isEmpty ? "не указано" : product.summary)
+        - Что владелец написал о продукте: \(product.brief.isEmpty ? "ничего" : product.brief)
+
+        ## Папки и политика
+        \(folders.isEmpty ? "- \(primary.name) — основная папка, можно изменять: `\(primary.path)`" : folders.joined(separator: "\n"))
+
+        Политика «сначала спросить» — договорённость, а не физическое ограничение. Читай такую папку
+        свободно. До первого изменения объясни, что именно нужно поменять, и попроси разрешение. Если
+        пользователь явно разрешил изменение в этом диалоге, продолжай без изменения настроек продукта.
+        """
+    }
+
+    /// What Bulava is: the same words for every chat, whichever engine answers it.
+    static func aboutBulava(answeredBy whoAnswers: String) -> String {
+        """
+        ## Bulava — где ты работаешь
+        Bulava — приложение на Mac, через которое владелец работает с агентами. В нём его продукты, у каждого
+        свои папки и сайты, а каждый чат — это \(whoAnswers).
+        Что ещё в ней есть:
+        - автоматизации — работа, которую Bulava запускает сама по расписанию: каждый раз новый чат в свежей
+          копии папки, только с текстом задания;
+        - ночные прогоны и очередь задач;
+        - приложение на телефоне (iPhone и Android): те же чаты, вопросы, решения и пуши, виджеты недели;
+        - правая панель чата: изменения, проверки, отчёты;
+        - свой браузер Bulava, в котором владелец вошёл на нужные сайты.
+        """
+    }
+
+    static let notMadeUp = """
+        Настройки продукта, папки, пайплайны и навыки он меняет в приложении сам. Если о Bulava спрашивают
+        то, чего здесь нет, скажи, что не знаешь, — не выдумывай.
+        """
+
+    // MARK: Codex context
+
+    static func digest(_ text: String) -> String {
+        SHA256.hash(data: Data(text.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// What a Codex thread is told before his message, at its start and whenever any of it
+    /// changes. A Codex turn carries nothing but the message — no rules, no product, no tools — so
+    /// without this a chat answered by Codex knew nothing of Bulava and could make no automation.
+    ///
+    /// Its tools are the ones that work from Codex's sandbox: the run folder (`$IDIR`) and what lives
+    /// there exist only for chats Claude answers, so automations are called by the engine's own path.
+    func codexContext(product: Product, primary: Project, chatID: UUID, automationCommand: String?) -> String {
+        let (folders, _) = folderLines(product: product, primary: primary, chatID: chatID)
+        let tools: String
+        if let automationCommand {
+            let cli = Self.shellQuoted(automationCommand)
+            tools = """
+            Что ты можешь сделать через Bulava сам в этом чате — автоматизации продукта:
+            - `\(cli) list` — какие уже есть;
+            - `\(cli) create --name "Еженедельная проверка SEO" --when "weekly mon 09:00" --brief-file <файл>` —
+              создать, когда он просит, чтобы что-то делалось само: каждый понедельник, каждое утро, раз в
+              несколько часов. Не отправляй его настраивать это в приложении и никогда не пиши файлы Bulava сам.
+              Сначала `list`: одна автоматизация на одну задачу, второй с тем же именем не будет. `--when` —
+              `manual`, `hourly N`, `daily HH:MM`, `weekdays HH:MM`, `weekly mon,thu HH:MM` или `monthly D HH:MM`,
+              по его часам; в конце можно `away` — тогда запуск, когда он отошёл от Mac. `--check-only` — если
+              запуски должны только читать, проверять и сообщать; `--confirm-first` — если каждый запуск ждёт,
+              пока он его запустит. Каждый запуск — новый чат в свежей копии папки, который ничего не знает об
+              этом разговоре и получает только бриф: пиши его самодостаточным — что сделать и где, как понять,
+              что готово, что оставить ему. Бриф положи во временный файл (`$TMPDIR`), не в папку продукта.
+              Автоматизация создаётся включённой, Bulava пишет об этом в чат и даёт ему её выключить; скажи ему
+              словами, что и когда она будет делать. Только когда он сам попросил.
+            """
+        } else {
+            tools = "Автоматизации из этого чата создать нельзя: движок Bulava на этом Mac устарел. Он может создать её в приложении."
+        }
+        return """
+        <bulava-context>
+        Это сообщение пришло через Bulava. Ниже — где ты работаешь; владелец этого текста не видит.
+        Отвечай на его сообщение после контекста.
+
+        \(Self.aboutBulava(answeredBy: "Codex или Claude Code в папке продукта; этот чат ведёшь ты, Codex"))
+
+        \(tools)
+        Остальные инструменты Bulava — решения с вариантами на телефоне, ссылки на телефон, снимки экрана,
+        её браузер — есть только в чатах, которые ведёт Claude Code. Здесь их нет: не обещай их.
+        \(Self.notMadeUp)
+
+        \(productSection(product: product, primary: primary, folders: folders))
+        </bulava-context>
+
+
+        """
+    }
+
+    /// The engine's `automation` command, when the installed engine has it.
+    static func automationCommandPath() -> String? {
+        guard let home = OrchestratorHome.detect() else { return nil }
+        let path = home.appendingPathComponent("bin/worker-automation.sh").path
+        return FileManager.default.isExecutableFile(atPath: path) ? path : nil
+    }
+
+    static func shellQuoted(_ text: String) -> String {
+        "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     // MARK: Transcript reconciliation

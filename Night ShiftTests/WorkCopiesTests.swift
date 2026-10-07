@@ -202,6 +202,69 @@ nonisolated final class WorkCopiesTests: XCTestCase {
         XCTAssertEqual(mainTip, tip, "main moved forward to the work")
     }
 
+    // MARK: A merge the app cannot do alone goes to the chat
+
+    func testWhatStopsTheAppButNotAnAgentGoesToTheChat() {
+        XCTAssertTrue(AppModel.chatCanMerge(.targetDirty("main")), "his uncommitted changes: the chat puts them aside")
+        XCTAssertTrue(AppModel.chatCanMerge(.conflict(["a.txt"])), "a conflict: the chat resolves it")
+        XCTAssertTrue(AppModel.chatCanMerge(.targetMoved))
+        XCTAssertFalse(AppModel.chatCanMerge(.notOurs), "a folder that is not ours is never handed on")
+        XCTAssertFalse(AppModel.chatCanMerge(.nothingToMerge))
+    }
+
+    @MainActor
+    func testAChatAskedToMergeIsAllowedHisFolderOnlyForThat() async {
+        let source = await repo()
+        var copy = await make(source)
+        let plain = AutomationBrief.copyRules(copy, buildCache: "/c", automation: true)
+        XCTAssertTrue(plain.contains("НЕ изменяй её"), plain)
+        copy.integrating = Date()
+        let merging = AutomationBrief.copyRules(copy, buildCache: "/c", automation: true)
+        XCTAssertFalse(merging.contains("НЕ изменяй её"), "the rule that made the chat refuse is gone: \(merging)")
+        XCTAssertTrue(merging.contains("git stash push -u"), merging)
+        XCTAssertTrue(merging.contains("--ff-only \(copy.branch)"), merging)
+    }
+
+    func testACopySavedBeforeHandedMergesStillLoads() throws {
+        let copy = WorkCopy(path: "/c", checkoutRoot: "/c", sourcePath: "/s", sourceRoot: "/s", projectID: UUID(),
+                            branch: "b", baseRef: "main", baseSHA: "abc", owner: .chat(UUID()))
+        var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(copy)) as! [String: Any]
+        json.removeValue(forKey: "integrating")
+        let back = try JSONDecoder().decode(WorkCopy.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertNil(back.integrating)
+    }
+
+    /// The steps the chat is given, done as written, on the case he hit: his folder dirty in every
+    /// way at once, and main moved on since the copy was made. The merge lands and his work stays his.
+    @MainActor
+    func testTheStepsTheChatIsGivenMergeIntoADirtyFolderAndKeepHisWork() async {
+        let source = await repo()
+        let copy = await make(source)
+        try? "two\n".write(toFile: copy.path + "/b.txt", atomically: true, encoding: .utf8)
+        await sh("git add b.txt && git commit -qm 'add b'", in: URL(fileURLWithPath: copy.path))
+        await sh("printf 'new\\n' > c.txt && git add c.txt && git commit -qm 'main moved'", in: source)
+        await sh("printf 'staged\\n' > s.txt && git add s.txt && printf 'dirty\\n' >> a.txt && printf 'fresh\\n' > u.txt", in: source)
+        let notMergedAlone = await WorkCopies.merge(copy, message: "x")
+        XCTAssertEqual(notMergedAlone.failureValue, .targetDirty("main"))
+
+        await sh("git rebase -q main", in: URL(fileURLWithPath: copy.path))
+        await sh("""
+            git stash push -q -u -m "bulava-merge \(copy.branch)" && git merge -q --ff-only \(copy.branch) && git stash pop -q
+            """, in: source)
+
+        let integrated = await WorkCopies.isIntegrated(copy)
+        XCTAssertTrue(integrated, "main has the copy's work")
+        XCTAssertEqual(try? String(contentsOf: source.appendingPathComponent("b.txt"), encoding: .utf8), "two\n")
+        XCTAssertTrue((try? String(contentsOf: source.appendingPathComponent("a.txt"), encoding: .utf8))?.hasSuffix("dirty\n") == true,
+                      "his unstaged change is there")
+        XCTAssertEqual(try? String(contentsOf: source.appendingPathComponent("u.txt"), encoding: .utf8), "fresh\n", "his new file too")
+        let status = await Shell.run("git status --porcelain", cwd: source).stdout
+        XCTAssertTrue(status.contains("s.txt") && status.contains("a.txt") && status.contains("u.txt"),
+                      "none of it was committed: \(status)")
+        let stashes = await Shell.run("git stash list", cwd: source).stdout
+        XCTAssertTrue(stashes.isEmpty, "nothing left behind in the stash: \(stashes)")
+    }
+
     @MainActor
     func testMergeRefusesWhenTheOpenBranchHasUncommittedChanges() async {
         let source = await repo()

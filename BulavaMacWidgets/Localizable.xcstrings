@@ -1,0 +1,312 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Without you" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Без тебя"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Без тебе"
+          }
+        }
+      }
+    },
+    "How long the agents worked this week, and how much work each of your messages started." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сколько агенты работали на этой неделе и сколько работы запускало каждое твоё сообщение."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скільки агенти працювали цього тижня і скільки роботи запускало кожне твоє повідомлення."
+          }
+        }
+      }
+    },
+    "How runs ended" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прогоны"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прогони"
+          }
+        }
+      }
+    },
+    "What review accepted this week, what it accepted with remarks, and what waited for you." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Что ревью приняло на этой неделе, что приняло с замечаниями и что ждало тебя."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Що рев'ю прийняло цього тижня, що прийняло із зауваженнями і що чекало на тебе."
+          }
+        }
+      }
+    },
+    "Receipt of the week" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чек недели"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чек тижня"
+          }
+        }
+      }
+    },
+    "What the week's work would have cost at API prices. An estimate, not what you pay." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сколько стоила бы работа недели по ценам API. Это оценка, а не то, что ты платишь."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скільки коштувала б робота тижня за цінами API. Це оцінка, а не те, що ти платиш."
+          }
+        }
+      }
+    },
+    "Rhythm of the week" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ритм недели"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ритм тижня"
+          }
+        }
+      }
+    },
+    "When the agents worked, day by day and hour by hour." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Когда работали агенты, по дням и часам."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Коли працювали агенти, по днях і годинах."
+          }
+        }
+      }
+    },
+    "Code changes" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Объём изменений"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обсяг змін"
+          }
+        }
+      }
+    },
+    "Lines the agents added and removed this week." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Строки, которые агенты добавили и удалили на этой неделе."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рядки, які агенти додали і прибрали цього тижня."
+          }
+        }
+      }
+    },
+    "Limits" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Лимиты"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ліміти"
+          }
+        }
+      }
+    },
+    "Claude's and Codex's limits, with a tick where an even pace would be." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Лимиты Claude и Codex с риской там, где был бы ровный темп."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ліміти Claude і Codex із рискою там, де був би рівний темп."
+          }
+        }
+      }
+    },
+    "Working now" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сейчас в работе"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зараз працюють"
+          }
+        }
+      }
+    },
+    "Which agents are working and which runs wait for you." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Какие агенты работают и какие прогоны ждут тебя."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Які агенти працюють і які прогони чекають на тебе."
+          }
+        }
+      }
+    },
+    "The week at a glance" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Неделя одним экраном"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тиждень одним екраном"
+          }
+        }
+      }
+    },
+    "Hours without you, accepted runs, the receipt and the week's rhythm on one face." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Часы без тебя, принятые прогоны, чек и ритм недели на одном виджете."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Години без тебе, прийняті прогони, чек і ритм тижня на одному віджеті."
+          }
+        }
+      }
+    },
+    "Open Bulava and this fills in within minutes." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открой Булаву, и через несколько минут здесь появятся цифры."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Відкрий Булаву, і за кілька хвилин тут з'являться цифри."
+          }
+        }
+      }
+    },
+    "Connect to Bulava on your Mac and this fills in." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключись к Булаве на Mac, и здесь появятся цифры."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Підключись до Булави на Mac, і тут з'являться цифри."
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

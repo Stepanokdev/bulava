@@ -8,8 +8,10 @@
 # throwaway one every run has to itself.
 #
 # USAGE
-#   browser status    # free | yours | busy (who has it, since when) | unavailable (why) | off
-#   browser release   # done with it: the next run gets it now, not after your run goes quiet
+#   browser status         # free | yours | busy (who has it, since when) | unavailable (why) | off
+#   browser release        # done with it: the next run gets it now, not after your run goes quiet
+#   browser sign-in <url>  # a page that wants him to sign in: Bulava asks him to, in a window
+#                          # nobody drives (Google refuses yours, whatever is typed into it)
 #
 #   Exit 3: Bulava is not running. Exit 1: it refused, and says why.
 set -u
@@ -27,10 +29,18 @@ TIMEOUT="${NS_BROWSER_TIMEOUT:-10}"
 usage() { sed -n '/^# USAGE/,/^set -u/p' "$SELF" | sed 's/^# \{0,1\}//; $d'; }
 
 op="${1:-}"
+url=""
 case "$op" in
   status|release) ;;
+  sign-in)
+    url="${2:-}"
+    case "$url" in
+      http://*|https://*) ;;
+      *) echo "browser: sign-in потребує адреси сторінки: browser sign-in https://…" >&2; exit 2 ;;
+    esac
+    op="signIn" ;;
   ""|-h|--help|help) usage; [ -n "$op" ]; exit $? ;;
-  *) echo "browser: невідома дія «${op}» (status або release)" >&2; exit 2 ;;
+  *) echo "browser: невідома дія «${op}» (status, release або sign-in)" >&2; exit 2 ;;
 esac
 token="$(jq -r '.token // empty' "$IDIR_SELF/browser.json" 2>/dev/null)"
 if [ -z "$token" ]; then
@@ -47,7 +57,8 @@ mkdir -p "$REQ_DIR" 2>/dev/null
 id="$(date +%s)-$$-$RANDOM"
 req="$REQ_DIR/$id.json"; done_file="$REQ_DIR/$id.done"
 trap 'rm -f "$req" "$req.tmp" "$done_file"' EXIT
-( umask 077; jq -n --arg op "$op" --arg token "$token" '{op:$op, token:$token}' > "$req.tmp" ) \
+( umask 077; jq -n --arg op "$op" --arg token "$token" --arg url "$url" \
+    '{op:$op, token:$token} + (if $url == "" then {} else {url:$url} end)' > "$req.tmp" ) \
   && mv -f "$req.tmp" "$req" || { echo "browser: не вдалося записати запит у $REQ_DIR" >&2; exit 1; }
 waited=0
 while [ ! -f "$done_file" ]; do
@@ -62,6 +73,12 @@ if [ "$(jq -r '.ok' "$done_file" 2>/dev/null)" != true ]; then
   exit 1
 fi
 case "$op" in
+  signIn)
+    if [ "$(jq -r '.asked' "$done_file")" != true ]; then
+      echo "browser: not asked — $(jq -r '.reason // "Bulava did not ask him."' "$done_file") Wait until \`browser status\` says free, then open the page again." >&2
+      exit 1
+    fi
+    echo "asked: Bulava asks him to sign in at $(printf '%s' "$url" | sed -E 's#^[a-z]+://([^/]+).*#\1#') in a window nobody drives. While he does, \`browser status\` says unavailable; when it is free again, open the page again — his sign-in is in the profile." ;;
   release)
     if [ "$(jq -r '.released' "$done_file")" = true ]; then echo "released"; else echo "not yours — nothing to release"; fi ;;
   status)

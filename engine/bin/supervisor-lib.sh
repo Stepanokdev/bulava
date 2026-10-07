@@ -4431,6 +4431,31 @@ _plural_repos() {   # $1=count → the Ukrainian noun form
   else echo "репозиторіїв"; fi
 }
 
+# A `.git` this engine made a moment ago, taken away again. `rm -rf` is not proof: a start reported
+# the removal while empty `hooks/ info/ objects/ refs/` stayed behind, and from then on every start
+# refused the folder as a broken repository. The removal is retried and then LOOKED at; 1 means it
+# is still there and the director must be told so, not told it is gone.
+remove_created_git() {   # $1=dir → 0 = gone · 1 = still there
+  local g="$1/.git" i
+  for i in 1 2 3; do
+    [ -e "$g" ] || [ -L "$g" ] || return 0
+    rm -rf "$g" 2>/dev/null
+    [ -e "$g" ] || [ -L "$g" ] || return 0
+    sleep 0.2
+  done
+  return 1
+}
+
+# A `.git` directory with nothing in it but directories: no HEAD, no config, no object — no history
+# of anybody's to lose. Exactly what a removal interrupted half-way leaves.
+git_skeleton_only() {   # $1=dir → 0 = only empty directories
+  local g="$1/.git" found
+  [ -d "$g" ] && [ ! -L "$g" ] || return 1
+  # Only a walk that finished proves emptiness: a directory it could not read may hold anything.
+  found="$(find "$g" ! -type d -print -quit 2>/dev/null)" || return 1
+  [ -z "$found" ]
+}
+
 # Why this folder must not be turned into, or staged as, a repository — in the words the director
 # reads. Nothing on stdout and rc 1 mean it is an ordinary project and the usual insurance applies.
 #

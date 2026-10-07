@@ -119,13 +119,41 @@ nonisolated final class LinkContractTests: XCTestCase {
                 over: false),
             limits: LimitsDTO(title: "Limits", engines: [
                 EngineLimitsDTO(name: "Claude", used: 81, pressure: "tight", windows: [
-                    LimitWindowDTO(label: "Session", used: 34, usedLabel: "34% used", pressure: "comfortable", resets: "2h 5m"),
-                    LimitWindowDTO(label: "Weekly", used: 81, usedLabel: "81% used", pressure: "tight", resets: "3d 4h"),
+                    LimitWindowDTO(label: "Session", used: 34, usedLabel: "34% used", pressure: "comfortable", resets: "2h 5m",
+                                   elapsed: 58, pace: "with room to spare", paceKey: "behind"),
+                    LimitWindowDTO(label: "Weekly", used: 81, usedLabel: "81% used", pressure: "tight", resets: "3d 4h",
+                                   elapsed: 55, pace: "ahead of an even pace", paceKey: "ahead"),
                 ], note: nil, stale: false, readAgo: nil),
                 EngineLimitsDTO(name: "Codex", used: nil, pressure: "comfortable", windows: [],
                                 note: "Not known yet — it fills in when something runs", stale: true, readAgo: "2 hours ago"),
             ]),
-            phoneApps: Self.phoneApps)), "home")
+            phoneApps: Self.phoneApps, week: Self.week)), "home")
+    }
+
+    /// A week as `WeekPresenter` says it, in English, from fixed numbers: every face filled, one day
+    /// ahead left empty, someone working and someone waiting.
+    static var week: WeekSnapshot {
+        var calendar = Calendar(identifier: .iso8601)
+        calendar.timeZone = TimeZone(identifier: "Europe/Kyiv")!
+        let now = Date(timeIntervalSince1970: 1_791_342_000)   // Wednesday 7 Oct 2026, 06:20 in Kyiv
+        var raw = WeekRaw.empty(now: now, calendar: calendar)
+        raw.agentSec = [60_900, 35_340, 20_340, 0, 0, 0, 0]
+        raw.wallSec = [46_380, 29_280, 19_560, 0, 0, 0, 0]
+        raw.heatSec[0][21] = 5_400; raw.heatSec[1][10] = 3_600; raw.heatSec[2][1] = 1_800
+        raw.prompts = [15, 28, 6, 0, 0, 0, 0]
+        raw.passed = [4, 4, 3, 0, 0, 0, 0]; raw.debt = [3, 6, 1, 0, 0, 0, 0]; raw.waiting = [4, 3, 0, 0, 0, 0, 0]
+        raw.added = [7_382, 4_045, 7_698, 0, 0, 0, 0]; raw.removed = [56, 88, 95, 0, 0, 0, 0]
+        raw.costPerDay = [275, 199, 181, 0, 0, 0, 0]
+        raw.files = 108; raw.tokensOut = 4_720_931; raw.cacheRead = 2_014_752_352; raw.cacheWrite = 21_000_000
+        raw.codexTokens = 17_799_694; raw.commits = 15; raw.tasksGiven = 20; raw.codexConsults = 9; raw.questions = 2
+        raw.longestSec = 14_280; raw.peakParallel = 2
+        let claude = UsageSnapshot(fiveHour: UsageWindow(usedPercent: 17, resetsAt: now.addingTimeInterval(3 * 3600)),
+                                   sevenDay: UsageWindow(usedPercent: 20, resetsAt: now.addingTimeInterval(141 * 3600)),
+                                   plan: "team", updatedAt: now, present: true)
+        let running = [WeekNowLine(name: "Widgets for the week", since: now.addingTimeInterval(-47 * 60), waiting: false),
+                       WeekNowLine(name: "Export fix", since: nil, waiting: true)]
+        return WeekPresenter(raw: raw, capacity: CapacitySnapshot(claude: claude, codex: .empty), running: running,
+                             off: false, now: now, locale: Locale(identifier: "en"), calendar: calendar).snapshot()
     }
 
     func testChat() throws {

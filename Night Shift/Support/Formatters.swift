@@ -37,15 +37,15 @@ nonisolated enum Fmt {
         return String(format: String(localized: "resets in %@"), elapsed(remaining))
     }
 
-    static func resetsCompact(_ date: Date?) -> String? {
+    static func resetsCompact(_ date: Date?, now: Date = Date(), locale: Locale = .current) -> String? {
         guard let date else { return nil }
-        let left = date.timeIntervalSinceNow
+        let left = date.timeIntervalSince(now)
         if left <= 0 { return String(localized: "now") }
         let f = DateComponentsFormatter()
         f.unitsStyle = .abbreviated
         f.maximumUnitCount = 2
         f.allowedUnits = left >= 86400 ? [.day, .hour] : (left >= 3600 ? [.hour, .minute] : [.minute])
-        f.calendar = { var c = Calendar.current; c.locale = Locale.current; return c }()
+        f.calendar = { var c = Calendar.current; c.locale = locale; return c }()
         return f.string(from: left)
     }
 

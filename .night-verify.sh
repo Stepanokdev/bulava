@@ -37,7 +37,7 @@ echo "→ xcodebuild test -scheme '$SCHEME' (derivedDataPath: $DD)"
 # CODE_SIGNING_ALLOWED=NO: an unattended run has no interactive keychain, and signing is
 # irrelevant to whether the code compiles and the tests pass.
 #
-# PRODUCT_BUNDLE_IDENTIFIER: the other half of the fix the comment above describes, and the half
+# BULAVA_BUNDLE_BASE: the other half of the fix the comment above describes, and the half
 # that was missing. Building somewhere else stopped verification from OVERWRITING the installed
 # app — but the suite still LAUNCHES what it built, and what it built is ad-hoc signed (code
 # identifier `Bulava`, no team) while still claiming `stepanok.com.Night-Shift`. macOS keys a
@@ -48,7 +48,9 @@ echo "→ xcodebuild test -scheme '$SCHEME' (derivedDataPath: $DD)"
 # screenshot — which is exactly what it did, twice, and cost an evening the second time.
 #
 # Under its own identifier the test build is simply a different application, and running the
-# suite can no longer touch what the director granted.
+# suite can no longer touch what the director granted. The identifier is set through
+# BULAVA_BUNDLE_BASE, which the app and its widget extension both build theirs from: overriding
+# PRODUCT_BUNDLE_IDENTIFIER itself would give the extension the app's own identifier.
 run_tests() {
   xcodebuild \
     -project "$PROJECT" \
@@ -57,7 +59,7 @@ run_tests() {
     -destination 'platform=macOS' \
     -derivedDataPath "$DD" \
     CODE_SIGNING_ALLOWED=NO \
-    PRODUCT_BUNDLE_IDENTIFIER=stepanok.com.Night-Shift.verify \
+    BULAVA_BUNDLE_BASE=stepanok.com.Night-Shift.verify \
     test > "$LOG" 2>&1
 }
 

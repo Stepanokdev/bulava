@@ -1038,6 +1038,11 @@ nonisolated final class LocalizationSourceScanTests: XCTestCase {
         "Rounds back to the worker, at most: %lld", "Rounds back to the worker, at most: %lld (was %lld)",
         "Sends back: %@ · rounds at most: %lld",
         "More waiting for you: %lld.", "Decided: %lld of %lld",
+
+        // The week's faces: a number and a phrase that does not lean on it ("із зауваженнями",
+        // "до", a percentage sign).
+        "%lld with remarks", "%lld without remarks", "of them %lld with remarks", "up to %lld",
+        "The tick shows where an even pace would be: %lld%% of the window has passed.",
     ]
 
     func testEveryCountingStringHasPluralFormsInBothLanguages() throws {

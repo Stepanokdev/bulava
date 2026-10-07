@@ -143,6 +143,11 @@ case "$cmd" in
     # touched: a refusal must not cost the director anything that was already working.
     # `workspace_container_reason` answers an established repository without walking the tree, so
     # an ordinary start pays nothing for this.
+    # Our own leftover first: a `.git` the director let us make, with not a single file in it, is
+    # what an interrupted removal leaves — nothing to repair, and not a reason to refuse forever.
+    if git_consent_given "$PROJECT_DIR" && git_skeleton_only "$PROJECT_DIR"; then
+      remove_created_git "$PROJECT_DIR" || true
+    fi
     if _container="$(workspace_container_reason "$PROJECT_DIR")"; then
       refuse_start "$PROJECT_DIR" "$_container"
       exit 1
@@ -311,8 +316,11 @@ $_git_how
         # director's secrets in its index. Anything older than this run is left strictly alone.
         if [ "${GIT_CREATED:-0}" = 1 ] && [ -d "$PROJECT_DIR/.git" ] \
            && ! ( cd "$PROJECT_DIR" && git rev-parse HEAD >/dev/null 2>&1 ); then
-          rm -rf "$PROJECT_DIR/.git"
-          msg="$msg Прибрав .git, який щойно створив — тека лишилась такою, якою була."
+          if remove_created_git "$PROJECT_DIR"; then
+            msg="$msg Прибрав .git, який щойно створив — тека лишилась такою, якою була."
+          else
+            msg="$msg Не зміг до кінця прибрати .git, який щойно створив: $PROJECT_DIR/.git — його можна просто видалити."
+          fi
         else
           msg="$msg Перевір репо вручну."
         fi
@@ -386,8 +394,11 @@ $how"
         tracked="$(jq -r ".files[] | select(.tracked) | $mb" "$rec" 2>/dev/null | head -8)"
         if [ "${GIT_CREATED:-0}" = 1 ] && [ -d "$PROJECT_DIR/.git" ] \
            && ! ( cd "$PROJECT_DIR" && git rev-parse HEAD >/dev/null 2>&1 ); then
-          rm -rf "$PROJECT_DIR/.git"
-          gone="Прибрав .git, який щойно створив, — тека така, як була."
+          if remove_created_git "$PROJECT_DIR"; then
+            gone="Прибрав .git, який щойно створив, — тека така, як була."
+          else
+            gone="Не зміг до кінця прибрати .git, який щойно створив: $PROJECT_DIR/.git. Історії в ньому немає — його можна просто видалити."
+          fi
         fi
         if [ "$(question_reader heavy)" = button ]; then
           how="Bulava запропонує не брати їх у чекпоінт. Самі файли нікуди не дінуться."
@@ -697,6 +708,8 @@ $gone}"
       || cp -f "$BIN_DIR/worker-decide.sh" "$IDIR/decide" 2>/dev/null || true
     ln -sf "$BIN_DIR/worker-browser.sh" "$IDIR/browser" 2>/dev/null \
       || cp -f "$BIN_DIR/worker-browser.sh" "$IDIR/browser" 2>/dev/null || true
+    ln -sf "$BIN_DIR/worker-automation.sh" "$IDIR/automation" 2>/dev/null \
+      || cp -f "$BIN_DIR/worker-automation.sh" "$IDIR/automation" 2>/dev/null || true
     ln -sf "$BIN_DIR/web-shot.py" "$IDIR/web-shot" 2>/dev/null \
       || cp -f "$BIN_DIR/web-shot.py" "$IDIR/web-shot" 2>/dev/null || true
     ln -sf "$BIN_DIR/web-video.py" "$IDIR/web-video" 2>/dev/null \
@@ -1127,6 +1140,8 @@ $gone}"
       || cp -f "$BIN_DIR/worker-decide.sh" "$IDIR/decide" 2>/dev/null || true
     ln -sf "$BIN_DIR/worker-browser.sh" "$IDIR/browser" 2>/dev/null \
       || cp -f "$BIN_DIR/worker-browser.sh" "$IDIR/browser" 2>/dev/null || true
+    ln -sf "$BIN_DIR/worker-automation.sh" "$IDIR/automation" 2>/dev/null \
+      || cp -f "$BIN_DIR/worker-automation.sh" "$IDIR/automation" 2>/dev/null || true
     ln -sf "$BIN_DIR/web-shot.py" "$IDIR/web-shot" 2>/dev/null \
       || cp -f "$BIN_DIR/web-shot.py" "$IDIR/web-shot" 2>/dev/null || true
     ln -sf "$BIN_DIR/web-video.py" "$IDIR/web-video" 2>/dev/null \

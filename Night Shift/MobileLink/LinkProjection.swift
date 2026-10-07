@@ -109,12 +109,14 @@ extension LinkProjection {
         func engine(_ name: String, _ usage: UsageSnapshot) -> EngineLimitsDTO? {
             guard usage.present else { return nil }
             var windows: [LimitWindowDTO] = []
-            for (label, window) in [("Session", Optional(usage.fiveHour)), ("Weekly", usage.sevenDay)] {
+            for (label, window, minutes) in [("Session", Optional(usage.fiveHour), 300.0), ("Weekly", usage.sevenDay, 10080.0)] {
                 guard let window, let used = window.shownPercent(now: now) else { continue }
+                let pace = LimitPace(used: used, resetsAt: window.resetsAt, windowMinutes: minutes, now: now)
                 windows.append(LimitWindowDTO(
                     label: localized(label), used: used,
                     usedLabel: String(format: localized("%lld%% used"), used), pressure: pressure(used),
-                    resets: Fmt.resetsCompact(window.resetsAt)))
+                    resets: Fmt.resetsCompact(window.resetsAt, now: now),
+                    elapsed: pace?.elapsed, pace: pace?.words, paceKey: pace?.key))
             }
             let stale = usage.isStale(now: now)
             let tightest = usage.tightestShown(now: now)
@@ -174,7 +176,7 @@ private struct Builder {
         return HomeDTO(desktop: desktop, products: products, attention: attention,
                        composer: composerOptions(), readiness: readiness(), finished: done,
                        summary: SummaryDTO(working: working, waiting: attention.count, ready: done.count),
-                       limits: LinkProjection.limits(model.capacity))
+                       limits: LinkProjection.limits(model.capacity), week: model.week)
     }
 
     /// Every task whose report is in and waits for the director — the same ones the Mac's menu
@@ -291,6 +293,19 @@ private struct Builder {
                     chatID: chat.id.uuidString, kind: "question", title: chat.title,
                     body: q.headline, tone: "attention", atMs: LinkCoding.ms(question.at), actions: []))
             }
+            // A sign-in the chat's run reached that only he can do, in Bulava's browser with nobody
+            // driving it: done at the Mac, where that browser is.
+            if !asked, let request = model.browser.signInRequest,
+               chat.session.flatMap({ model.matchingInstance(for: $0) })?.slug == request.runSlug {
+                asked = true
+                out.append(AttentionDTO(
+                    id: "signin:\(chat.id.uuidString):\(request.site)", productID: product.id.uuidString,
+                    chatID: chat.id.uuidString, kind: "ask", title: chat.title,
+                    body: String(format: String(localized: "%@ needs you to sign in"), request.site) + ". "
+                        + AccountBrowser.signInWhy(google: request.url.host?.hasSuffix("google.com") == true),
+                    tone: "attention", atMs: LinkCoding.ms(request.at),
+                    actions: [Self.onMac(String(localized: "Sign in at the Mac"))]))
+            }
             // A report that asks him to decide and has no answer to its questions as they are now.
             if !asked, let paths = chat.session?.reportPaths, let index = paths.indices.last {
                 let report = URL(fileURLWithPath: paths[index])
@@ -298,13 +313,13 @@ private struct Builder {
                    model.decisions.record(for: report).latest?.revision != set.revision {
                     asked = true
                     let target = "chatReport:\(chat.id.uuidString):\(index)"
-                    reports[target] = LinkProjection.ReportTarget(task: nil, chatReportPath: report.path, title: chat.title)
+                    reports[target] = LinkProjection.ReportTarget(task: nil, chatReportPath: report.path, title: set.title)
                     out.append(AttentionDTO(
                         id: "decide:\(chat.id.uuidString):\(set.revision)", productID: product.id.uuidString,
                         chatID: chat.id.uuidString, kind: "decide", title: chat.title,
                         body: String(format: String(localized: "“%@” waits for your decisions"), set.title),
                         tone: "attention", atMs: LinkCoding.ms(chat.updatedAt),
-                        actions: [ActionDTO(id: target, label: String(localized: "Open the report"),
+                        actions: [ActionDTO(id: target, label: String(localized: "Open the questions"),
                                             style: "primary", kind: "report", target: target)]))
                 }
             }
@@ -491,8 +506,10 @@ private struct Builder {
         }
         for (index, path) in (chat.session?.reportPaths ?? []).enumerated().reversed().prefix(1) {
             let target = "chatReport:\(chat.id.uuidString):\(index)"
-            reports[target] = LinkProjection.ReportTarget(task: nil, chatReportPath: path, title: chat.title)
-            buttons.append(ActionDTO(id: target, label: String(localized: "Open the report"),
+            let questions = DecisionSet.load(besides: URL(fileURLWithPath: path))
+            reports[target] = LinkProjection.ReportTarget(task: nil, chatReportPath: path, title: questions?.title ?? chat.title)
+            buttons.append(ActionDTO(id: target, label: questions != nil ? String(localized: "Open the questions")
+                                        : String(localized: "Open the report"),
                                      style: "secondary", kind: "report", target: target))
         }
         let phaseActive = phase.isActive

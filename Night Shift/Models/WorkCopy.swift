@@ -51,6 +51,10 @@ nonisolated struct WorkCopy: Identifiable, Codable, Equatable, Sendable {
     var copiedFiles: [String]
     var mergedSHA: String?
     var note: String?
+    /// Since when its chat has been asked to merge it, because merging by itself was not possible
+    /// (his folder had uncommitted changes, or the branches conflicted). Its rules then allow the
+    /// one thing they otherwise forbid; the app still decides by git whether the merge happened.
+    var integrating: Date?
 
     init(id: UUID = UUID(), path: String, checkoutRoot: String, sourcePath: String,
          sourceRoot: String, projectID: UUID, branch: String, baseRef: String, baseSHA: String,
