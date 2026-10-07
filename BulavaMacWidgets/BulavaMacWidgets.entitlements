@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- A widget extension must run in the sandbox; the app that contains it does not. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<!-- The one door out of the sandbox: the folder Bulava writes the week into. Prefixed with the
+	     team, which on macOS needs no provisioning profile and asks the person nothing. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>KHU94Q2JSS.group.bulava.week</string>
+	</array>
+</dict>
+</plist>

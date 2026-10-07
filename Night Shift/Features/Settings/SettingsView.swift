@@ -10,6 +10,7 @@ struct SettingsView: View {
     @State private var checking = false
     @State private var testing = false
     @State private var advancedOpen = false
+    @State private var usagePreviewOpen = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -19,6 +20,7 @@ struct SettingsView: View {
                     learningSection
                     engineSection
                     diagnosticsSection
+                    weekSection
                     advancedSection
                     about
                 }
@@ -400,6 +402,63 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - The week and its widgets
+
+    private var weekSection: some View {
+        SettingsSection("The week and its widgets") {
+            VStack(alignment: .leading, spacing: 13) {
+                toggleRow("Count the week for the widgets",
+                          help: "Hours without you, how runs ended, the receipt, the rhythm and code changes, counted on this Mac from Claude Code's, Codex's and Bulava's own files for the widgets. Off, nothing is counted and the widgets say so; the limits still show.",
+                          isOn: Binding(get: { model.settings.weeklyStats },
+                                        set: { on in
+                                            model.settings.weeklyStats = on
+                                            model.weeklyStatsChanged()
+                                        }))
+                Hairline()
+                toggleRow("Send Bulava's author a weekly summary",
+                          help: "Once a week, ranges rather than numbers: how many runs and agent-hours, the share review accepted, on how many days agents worked, whether the night shift, Codex, a phone, automations and which widgets were used, with the app's version, macOS and the interface language. No code, names, folders, paths, prompts, chat text, times or anything that identifies you or this Mac. It helps decide what to build next.",
+                          isOn: liveBinding(\.shareUsage))
+                usagePreview
+            }
+            .padding(Metrics.cardPadding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder private var usagePreview: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(Motion.standard) { usagePreviewOpen.toggle() }
+            } label: {
+                Label(usagePreviewOpen ? "Hide" : "What this week's summary holds",
+                      systemImage: usagePreviewOpen ? "chevron.up" : "chevron.down")
+            }
+            .buttonStyle(.bulava(.quiet))
+            if usagePreviewOpen {
+                if let report = model.usageReportPreview(),
+                   let data = try? { () -> Data in
+                       let e = JSONEncoder(); e.outputFormatting = [.prettyPrinted, .sortedKeys]; return try e.encode(report)
+                   }(), let text = String(data: data, encoding: .utf8) {
+                    Text(verbatim: text)
+                        .font(Typo.mono(10.5))
+                        .foregroundStyle(Palette.textSecondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(9)
+                        .background(RoundedRectangle(cornerRadius: Metrics.radiusPanel, style: .continuous).fill(Palette.field))
+                    Text("This is the week so far; the one that is sent describes a whole week, after it ends. Which widgets are on the desktop is filled in when it is sent.")
+                        .font(Typo.panelMeta)
+                        .foregroundStyle(Palette.textFaint)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("The week has not been counted yet.")
+                        .font(Typo.panelMeta)
+                        .foregroundStyle(Palette.textFaint)
+                }
+            }
+        }
+    }
+
     // MARK: - Advanced
 
     private var advancedSection: some View {
@@ -560,6 +619,10 @@ struct SettingsView: View {
         settings.workersMayDriveApps = model.settings.workersMayDriveApps
         settings.autoRepair = model.settings.autoRepair
         settings.shareErrorReports = model.settings.shareErrorReports
+        settings.weeklyStats = model.settings.weeklyStats
+        settings.shareUsage = model.settings.shareUsage
+        settings.usageSince = model.settings.usageSince
+        settings.usageReportedWeek = model.settings.usageReportedWeek
         // The switch is live, like every other switch here. The profile is NOT: it is typed, and
         // a live binding on a text field would write the whole settings file — and re-publish the
         // engine's configuration — once per keystroke. It goes through draft and Save.

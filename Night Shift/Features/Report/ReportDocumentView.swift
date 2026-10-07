@@ -56,8 +56,10 @@ struct ReportDocumentView: View {
                 .help(Text("Close"))
 
             VStack(alignment: .leading, spacing: 1) {
-                Eyebrow(viewer.itemID != nil ? "One task · one report"
-                                             : (viewer.isVideo ? "Recorded result" : "Result"))
+                // A page with questions beside it is not a report on work: it asks him to decide.
+                Eyebrow(asksToDecide ? "Questions for you"
+                        : (viewer.itemID != nil ? "One task · one report"
+                                                : (viewer.isVideo ? "Recorded result" : "Result")))
                 Text(viewer.title)
 
                     .accessibilityIdentifier("report-title")

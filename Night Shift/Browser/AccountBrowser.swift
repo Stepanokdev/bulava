@@ -7,7 +7,8 @@ import Observation
 ///
 /// It has two modes, never both at once, because they are one profile:
 /// - **signing in** — plain Chrome, no debugging at all, so a site sees an ordinary browser (Google
-///   refuses sign-in to one that is being driven). He opens it from Settings, signs in, quits it.
+///   refuses sign-in to one that is being driven). He opens it from Settings, signs in, quits it —
+///   or from where Bulava asks him to, when a run reached a sign-in (`askToSignIn`).
 /// - **working** — the same profile with DevTools on a pipe only Bulava holds, lent to one run at a
 ///   time through `BrowserBroker`. Started when a run first needs it, kept open afterwards: some
 ///   sign-ins live only as long as the browser does.
@@ -23,11 +24,29 @@ import Observation
 final class AccountBrowser {
     enum Mode: Equatable { case idle, working, signingIn }
 
+    /// A sign-in a run reached that only he can do, in Chrome with nobody driving it.
+    struct SignInRequest: Equatable, Sendable {
+        var url: URL
+        /// The run that waits for it.
+        var runSlug: String
+        var runTitle: String
+        var runToken: String
+        /// Seen by Bulava in the run's tab, rather than asked for by the run: it belongs to that
+        /// run's lease of the browser, and goes when the lease does.
+        var automatic: Bool
+        var at: Date
+
+        var site: String { url.host ?? url.absoluteString }
+    }
+
     @ObservationIgnored weak var model: AppModel?
     @ObservationIgnored let broker = BrowserBroker()
     @ObservationIgnored private let folder: URL
     @ObservationIgnored private var stateDir: URL?
     @ObservationIgnored private var timer: Task<Void, Never>?
+    /// Waiting for him: a site to sign in to that a run reached. Shown in Bulava, in what waits for
+    /// him on the Mac and the phone, and in Settings until he signs in or dismisses it.
+    private(set) var signInRequest: SignInRequest?
     @ObservationIgnored private var signInProcess: Process?
     @ObservationIgnored private var inFlight: Set<String> = []
 
@@ -69,6 +88,9 @@ final class AccountBrowser {
         broker.onChange = { [weak self] lease in
             Task { @MainActor in self?.leaseChanged(lease) }
         }
+        broker.onSignInNeeded = { [weak self] url, run in
+            Task { @MainActor in self?.signInSeen(at: url, by: run) }
+        }
         if let requests { try? FileManager.default.createDirectory(at: requests, withIntermediateDirectories: true) }
         setEnabled(enabled)
         timer = Task { [weak self] in
@@ -108,6 +130,8 @@ final class AccountBrowser {
 
     private func leaseChanged(_ lease: BrowserBroker.Lease?) {
         self.lease = lease
+        // A sign-in Bulava saw in a run's tab waits only while that run has the browser.
+        if let waiting = signInRequest, waiting.automatic, lease?.run.token != waiting.runToken { dismissSignInRequest() }
         if mode != .signingIn { mode = broker.browserRunning ? .working : .idle }
     }
 
@@ -149,12 +173,15 @@ final class AccountBrowser {
 
     static var signingInReason: String { String(localized: "He is signing in to a site in Bulava's browser right now.") }
 
-    /// Plain Chrome on Bulava's profile, at `site`, for him to sign in. Whoever was using the
-    /// browser loses it — the profile cannot be open twice — so the caller asks him first.
-    func signIn(_ site: BrowserSite?) async {
+    /// Plain Chrome on Bulava's profile, at `address` or else `site`, for him to sign in. Whoever was
+    /// using the browser loses it — the profile cannot be open twice — so the caller asks him first,
+    /// unless it was that run's own sign-in he was asked for.
+    func signIn(_ site: BrowserSite?, at address: URL? = nil) async {
         guard enabled, let chrome, mode != .signingIn else { return }
         mode = .signingIn
         signingIn = site
+        signInRequest = nil
+        model?.resolveToast(key: Self.signInToastKey)
         let broker = self.broker
         let reason = Self.signingInReason
         await Task.detached { broker.setUnavailable(reason) }.value
@@ -162,7 +189,7 @@ final class AccountBrowser {
         ChromeApp.prepare(profile: profile)
         let process = Process()
         process.executableURL = ChromeApp.executable(of: chrome)
-        process.arguments = ChromeApp.baseArguments(profile: profile) + [site?.url ?? "about:blank"]
+        process.arguments = ChromeApp.baseArguments(profile: profile) + [address?.absoluteString ?? site?.url ?? "about:blank"]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         process.terminationHandler = { [weak self] _ in
@@ -199,6 +226,56 @@ final class AccountBrowser {
         announce()
     }
 
+    static let signInToastKey = "browser-sign-in"
+
+    /// A run's browser is at a sign-in only he can do: Google's, seen by Bulava, or any site a run
+    /// asked about (`$IDIR/browser sign-in`). Typed into the run's own window it fails — Google
+    /// refuses a driven browser, whatever is typed — so he is asked to sign in in the window this
+    /// opens instead: Bulava's profile, nobody driving. The run then goes on with his sign-in. One
+    /// request at a time; the same site again is the same request.
+    func askToSignIn(at url: URL, for run: BrowserBroker.Run, automatic: Bool = false) {
+        // Only for a run that may use the browser now: one that ended asks him for nothing.
+        guard enabled, mode != .signingIn, let host = url.host, !host.isEmpty,
+              broker.run(token: run.token) != nil else { return }
+        // The same run at the same site is the same request; another run there is its own.
+        if let waiting = signInRequest, waiting.url.host == host, waiting.runToken == run.token { return }
+        let request = SignInRequest(url: url, runSlug: run.slug, runTitle: run.title, runToken: run.token,
+                                    automatic: automatic, at: Date())
+        signInRequest = request
+        model?.toast = ToastMessage(
+            title: String(format: String(localized: "%@ needs you to sign in"), request.site),
+            text: Self.signInWhy(google: url.host?.hasSuffix("google.com") == true),
+            kind: .info, key: Self.signInToastKey,
+            actions: [
+                ToastAction(title: String(localized: "Sign in")) { [weak self] in
+                    Task { await self?.signIn(nil, at: url) }
+                },
+                ToastAction(title: String(localized: "Later"), primary: false) {},
+            ])
+        model?.mobileLink.scheduleRefresh()
+    }
+
+    /// Bulava saw a run's tab reach Google's sign-in. By the time this is read the run may have let
+    /// go of the browser, or ended: then nobody waits, and he is asked for nothing.
+    func signInSeen(at url: URL, by run: BrowserBroker.Run) {
+        guard broker.currentLease?.run.token == run.token else { return }
+        askToSignIn(at: url, for: run, automatic: true)
+    }
+
+    /// Why he signs in in another window, in his words.
+    static func signInWhy(google: Bool) -> String {
+        google
+            ? String(localized: "Google does not let anyone sign in to a browser an agent is driving. Sign in in the window that opens: the same browser of Bulava's, with nobody driving it. The run goes on with your sign-in.")
+            : String(localized: "Sign in in the window that opens: the same browser of Bulava's, with nobody driving it. The run goes on with your sign-in.")
+    }
+
+    /// He does not want to sign in now.
+    func dismissSignInRequest() {
+        signInRequest = nil
+        model?.resolveToast(key: Self.signInToastKey)
+        model?.mobileLink.scheduleRefresh()
+    }
+
     /// He takes the browser back from the run that has it.
     func endLease() {
         broker.endCurrentLease()
@@ -225,6 +302,8 @@ final class AccountBrowser {
                               unattended: object["unattended"] as? Bool ?? false))
         }
         broker.setRuns(runs)
+        // A sign-in asked for by a run that has ended waits for nobody any more.
+        if let slug = signInRequest?.runSlug, !runs.contains(where: { $0.slug == slug }) { dismissSignInRequest() }
         if mode != .signingIn { mode = broker.browserRunning ? .working : .idle }
     }
 
@@ -259,7 +338,7 @@ final class AccountBrowser {
         }
     }
 
-    /// `{"op": "status" | "release", "token"}` from a run.
+    /// `{"op": "status" | "release" | "signIn", "token", "url"?}` from a run.
     func serve(_ request: URL) -> [String: Any] {
         guard let data = try? Data(contentsOf: request),
               let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
@@ -271,6 +350,20 @@ final class AccountBrowser {
         switch op {
         case "release":
             return ["ok": true, "released": broker.release(token: token)]
+        case "signIn":
+            guard enabled else { return ["ok": false, "error": "Bulava's browser is off."] }
+            guard let raw = object["url"] as? String, let url = URL(string: raw),
+                  ["https", "http"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else {
+                return ["ok": false, "error": "sign-in needs the address of the site's page, http(s)://…"]
+            }
+            // Only a run that may use the browser now asks him for anything.
+            guard let run = broker.run(token: token) else {
+                return ["ok": false, "error": "this run may not use Bulava's browser now"]
+            }
+            if mode == .signingIn { return ["ok": true, "asked": false, "reason": Self.signingInReason] }
+            askToSignIn(at: url, for: run)
+            let asked = signInRequest?.url.host == url.host
+            return asked ? ["ok": true, "asked": true] : ["ok": true, "asked": false, "reason": "Bulava did not ask him."]
         case "status":
             var answer: [String: Any] = ["ok": true, "enabled": enabled,
                                          "sites": sites.map { ["host": $0.host, "withoutMe": $0.withoutMe] }]

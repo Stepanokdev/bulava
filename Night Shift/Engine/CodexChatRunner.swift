@@ -17,10 +17,13 @@ nonisolated final class CodexChatRunner: @unchecked Sendable {
                      effort: String,
                      model: String = "",
                      path: String,
+                     environment: [String: String] = [:],
+                     writableRoots: [String] = [],
                      register: ((CodexChatRunner) -> Void)? = nil,
                      onProgress: (@Sendable ([ConversationBlock]) -> Void)? = nil) async -> Outcome {
         let runner = CodexChatRunner(prompt: prompt, threadID: threadID, cwd: cwd,
                                      effort: effort, model: model, path: path,
+                                     environment: environment, writableRoots: writableRoots,
                                      onProgress: onProgress)
 
         register?(runner)
@@ -35,6 +38,8 @@ nonisolated final class CodexChatRunner: @unchecked Sendable {
     private let effort: String
     private let model: String
     private let path: String
+    private let environment: [String: String]
+    private let writableRoots: [String]
     private let onProgress: (@Sendable ([ConversationBlock]) -> Void)?
 
     private var retained: CodexChatRunner?
@@ -52,20 +57,34 @@ nonisolated final class CodexChatRunner: @unchecked Sendable {
     private static let turnBudget: Duration = .seconds(30 * 60)
 
     private init(prompt: String, threadID: String?, cwd: URL, effort: String, model: String,
-                 path: String, onProgress: (@Sendable ([ConversationBlock]) -> Void)?) {
+                 path: String, environment: [String: String], writableRoots: [String],
+                 onProgress: (@Sendable ([ConversationBlock]) -> Void)?) {
         self.prompt = prompt
         self.threadID = threadID
         self.cwd = cwd
         self.effort = effort
         self.model = model
         self.path = path
+        self.environment = environment
+        self.writableRoots = writableRoots
         self.onProgress = onProgress
     }
 
     static func arguments(threadID: String?, effort: String, prompt: String,
-                          model: String = "") -> [String] {
+                          model: String = "", environment: [String: String] = [:],
+                          writableRoots: [String] = []) -> [String] {
         var args = ["exec", "--sandbox", "workspace-write", "--skip-git-repo-check",
                     "-c", "approval_policy=\"never\""]
+        // Beyond the folder: where Bulava takes requests from (`automation`), which the sandbox
+        // would otherwise refuse to let a command write to.
+        if !writableRoots.isEmpty {
+            args += ["-c", "sandbox_workspace_write.writable_roots=["
+                     + writableRoots.map(tomlString).joined(separator: ",") + "]"]
+        }
+        // Set for every command Codex runs, whatever his own config passes through to them.
+        for key in environment.keys.sorted() {
+            args += ["-c", "shell_environment_policy.set.\(key)=\(tomlString(environment[key] ?? ""))"]
+        }
         // An effort is ALWAYS named. Sending no flag does not mean "let the CLI be sensible" —
         // it means "use ~/.codex/config.toml", and that file is set to xhigh here. Every message
         // in the app was therefore running at the deepest setting while the menu said Automatic.
@@ -84,6 +103,27 @@ nonisolated final class CodexChatRunner: @unchecked Sendable {
         return args
     }
 
+    /// A TOML basic string, for a value given to `-c`.
+    static func tomlString(_ text: String) -> String {
+        var out = "\""
+        for scalar in text.unicodeScalars {
+            switch scalar {
+            case "\\": out += "\\\\"
+            case "\"": out += "\\\""
+            case "\n": out += "\\n"
+            case "\t": out += "\\t"
+            case "\r": out += "\\r"
+            default:
+                if scalar.value < 0x20 || scalar.value == 0x7F {
+                    out += String(format: "\\u%04X", scalar.value)
+                } else {
+                    out.unicodeScalars.append(scalar)
+                }
+            }
+        }
+        return out + "\""
+    }
+
     private func run() async -> Outcome {
         retained = self
         defer { retained = nil }
@@ -92,10 +132,13 @@ nonisolated final class CodexChatRunner: @unchecked Sendable {
         self.process = process
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["codex"] + Self.arguments(threadID: threadID, effort: effort,
-                                                       prompt: prompt, model: model)
+                                                       prompt: prompt, model: model,
+                                                       environment: environment,
+                                                       writableRoots: writableRoots)
         process.currentDirectoryURL = cwd
         var env = ProcessInfo.processInfo.environment
         env["PATH"] = path
+        env.merge(environment) { _, new in new }
         process.environment = env
 
         let out = Pipe()

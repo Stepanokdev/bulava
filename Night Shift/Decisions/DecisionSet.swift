@@ -137,6 +137,17 @@ nonisolated struct DecisionAnswers: Codable, Equatable, Sendable {
         out.general = general
         return .success(out)
     }
+
+    /// What of an earlier answer still fits these questions: a choice of an item that is gone, or
+    /// of an option it no longer offers, is left out rather than shown as chosen.
+    func fitted(to set: DecisionSet) -> DecisionAnswers {
+        var out = DecisionAnswers(general: general)
+        for item in set.items {
+            if let choice = choices[item.id], item.options.contains(choice) { out.choices[item.id] = choice }
+            if let comment = comments[item.id], !comment.isEmpty { out.comments[item.id] = comment }
+        }
+        return out
+    }
 }
 
 /// One answer that was sent: what it answered, what it built on, and when.

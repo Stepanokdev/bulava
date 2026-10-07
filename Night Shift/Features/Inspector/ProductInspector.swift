@@ -398,15 +398,18 @@ struct ProductInspector: View {
                     .disabled(generating || chat.archived)
 
                     ForEach(Array(paths.reversed().enumerated()), id: \.element) { index, path in
+                        // A page that asks him to decide is named for what it is, not as a report.
+                        let questions = DecisionSet.load(besides: URL(fileURLWithPath: path))
                         Hairline()
-                        Button { model.openChatReport(path: path, title: chat.title) } label: {
+                        Button { model.openChatReport(path: path, title: questions?.title ?? chat.title) } label: {
                             HStack(spacing: 9) {
-                                Image(systemName: "doc.richtext")
+                                Image(systemName: questions != nil ? "questionmark.bubble" : "doc.richtext")
                                     .font(.system(size: 11))
                                     .foregroundStyle(Palette.accentEmphasis)
                                     .frame(width: 18)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(index == 0 ? String(localized: "Latest report") : String(localized: "Report"))
+                                    Text(questions != nil ? String(localized: "Questions for you")
+                                         : index == 0 ? String(localized: "Latest report") : String(localized: "Report"))
                                         .font(Typo.panelRow)
                                         .foregroundStyle(Palette.textSecondary)
                                     // Every report is an `index.html`; its folder says what and when.

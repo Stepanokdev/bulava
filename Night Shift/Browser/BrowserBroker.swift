@@ -46,6 +46,11 @@ nonisolated final class BrowserBroker: @unchecked Sendable {
     var makeTransport: (@Sendable () throws -> CDPTransport)?
     /// The lease changed, or the browser stopped. Called on `queue`.
     var onChange: (@Sendable (Lease?) -> Void)?
+    /// A tab of the run's reached a sign-in only he can do here: Google refuses to sign in to a
+    /// browser a program is driving — and this one is driven — so he has to, in Chrome with nobody
+    /// at the wheel. The address to sign in at, and the run that holds the browser — only while one
+    /// does: a page no run is driving asks him for nothing. Once per tab and address. Called on `queue`.
+    var onSignInNeeded: (@Sendable (URL, Run) -> Void)?
 
     private var listener: NWListener?
     private var boundPort: UInt16 = 0
@@ -71,6 +76,9 @@ nonisolated final class BrowserBroker: @unchecked Sendable {
     private var hidden: Set<String> = []
     /// What each tab shows, as last heard.
     private var targetURLs: [String: String] = [:]
+    /// Tabs and addresses already said to need him (`onSignInNeeded`) in this lease, so a page that
+    /// reloads is not news again. A lease's own: the next run in the same tab is asked for afresh.
+    private var signInsTold: Set<String> = []
 
     /// What no run may ask of the account browser.
     static let forbidden: Set<String> = [
@@ -189,6 +197,8 @@ nonisolated final class BrowserBroker: @unchecked Sendable {
     }
 
     var currentLease: Lease? { queue.sync { lease } }
+    /// The run a token belongs to, while it may use the browser.
+    func run(token: String) -> Run? { queue.sync { runs[token] } }
     var browserRunning: Bool { queue.sync { transport?.isRunning == true } }
 
     // MARK: Handshake
@@ -346,6 +356,19 @@ nonisolated final class BrowserBroker: @unchecked Sendable {
     }
 
     func isBlocked(_ url: URL) -> Bool { BrowserSite.covers(url, anyOf: blocked) }
+
+    /// Where he has to sign in himself when a driven tab is at `url`, or nil when it is not such a
+    /// page. Google's sign-in — every page on accounts.google.com, the "Couldn't sign you in" one
+    /// included — refuses a browser a program controls (`navigator.webdriver` is true under
+    /// `--remote-debugging-pipe`), whatever is typed into it. The page the sign-in was for
+    /// (`continue`) is where he goes, when it names one on the web; Google asks him to sign in there.
+    static func signInOnlyHeCanDo(_ url: URL) -> URL? {
+        guard url.scheme?.lowercased() == "https", url.host?.lowercased() == "accounts.google.com" else { return nil }
+        let after = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+            .first { $0.name == "continue" }?.value.flatMap(URL.init(string:))
+        if let after, after.scheme?.lowercased() == "https", after.host != nil { return after }
+        return URL(string: "https://accounts.google.com/")
+    }
     private func isBlocked(_ text: String) -> Bool { URL(string: text).map(isBlocked) ?? false }
 
     /// Every string in a command's parameters that reads as a web address or an origin.
@@ -392,6 +415,11 @@ nonisolated final class BrowserBroker: @unchecked Sendable {
         let target = info?["targetId"] as? String
         let url = info?["url"] as? String
         if let target, let url { targetURLs[target] = url }
+        if let run = lease?.run, let target, let url, (info?["type"] as? String ?? "page") == "page",
+           let page = URL(string: url), let address = Self.signInOnlyHeCanDo(page),
+           signInsTold.insert(target + " " + (address.host ?? "")).inserted {
+            onSignInNeeded?(address, run)
+        }
         switch method {
         case "Target.attachedToTarget":
             guard let session = params["sessionId"] as? String else { return true }
@@ -540,6 +568,7 @@ nonisolated final class BrowserBroker: @unchecked Sendable {
         guard lease != nil || peer != nil else { return }
         if let peer { self.peer = nil; peer.onClose = nil; peer.close(code: 1001) }
         cleanUp()
+        signInsTold.removeAll()
         lease = nil
         onChange?(nil)
     }
@@ -552,6 +581,7 @@ nonisolated final class BrowserBroker: @unchecked Sendable {
         sessionParents.removeAll()
         hidden.removeAll()
         targetURLs.removeAll()
+        signInsTold.removeAll()
         pending.removeAll()
         own.removeAll()
         ownCallbacks.removeAll()

@@ -209,8 +209,21 @@ final class AppModel {
     let shares = ShareCenter()
     /// Reports that ask him to decide, and what he answered — on the Mac and from the phone.
     let decisions = DecisionCenter()
+    /// A run in one of his chats seeing and making the product's automations (`$IDIR/automation`).
+    let automationDoor = AutomationDoor()
     /// Bulava's own Chrome, signed in to once and lent to one run at a time.
     let browser = AccountBrowser()
+
+    /// This calendar week as the widgets and the phone show it (`AppModel+Week`).
+    var week: WeekSnapshot?
+    let weekCollector = WeekCollector()
+    /// The numbers the last collection read; the faces are re-said from them between collections.
+    var weekRaw: WeekRaw?
+    var weekCollectedAt: Date?
+    var weekTask: Task<Void, Never>?
+    var weekWidgetsReloadedAt: Date?
+    /// Last week's usage report being put together and sent (`AppModel+Usage`).
+    var usageTask: Task<Void, Never>?
     var generatingReport: Set<UUID> = []
 
     struct ReportViewer: Equatable {
@@ -302,6 +315,8 @@ final class AppModel {
     /// Automations whose watch is out looking.
     var automationChecking: Set<UUID> = []
     var lastCopySweep: Date?
+    /// Handed-over merges being checked right now, so a tick does not check one twice.
+    var mergingHandedCopies: Set<UUID> = []
     var sweepingCopies = false
     @ObservationIgnored var folderWatchers: [UUID: FolderWatcher] = [:]
     /// A watched folder changed and has not been looked at since.
@@ -416,6 +431,7 @@ final class AppModel {
             ShareCenter.current = shares
             decisions.attach(self, stateDir: settings.paths.stateDir)
             DecisionCenter.current = decisions
+            automationDoor.attach(self, stateDir: settings.paths.stateDir)
             browser.attach(self, enabled: settings.accountBrowserEnabled, stateDir: settings.paths.stateDir)
         }
         if let drive = TestDrive.make() { testDrive = drive; drive.start(self) }
@@ -487,6 +503,7 @@ final class AppModel {
                 guard let self, !Task.isCancelled else { break }
                 self.tick += 1
                 await self.refresh(codex: self.tick % 12 == 0)
+                self.tickWeek()
                 await self.refreshModelCataloguesIfStale()
             }
         }
@@ -495,11 +512,14 @@ final class AppModel {
     func stop() {
         loop?.cancel()
         loop = nil
+        weekTask?.cancel()
+        weekTask = nil
         stopRepairs()
         foremanSessions.shutdownAll()
         uiControl?.stop()
         shares.detach()
         decisions.detach()
+        automationDoor.detach()
         browser.detach()
         mobileLink.shutdown()
         power.hold(false)
@@ -719,8 +739,12 @@ final class AppModel {
     var runCodexTurn: @MainActor (CodexTurnRequest) async -> CodexChatRunner.Outcome = { request in
         await CodexChatRunner.send(prompt: request.prompt, threadID: request.threadID, cwd: request.cwd,
                                    effort: request.effort, model: request.model, path: request.path,
+                                   environment: request.environment, writableRoots: request.writableRoots,
                                    register: request.register, onProgress: request.onProgress)
     }
+    /// The engine's `automation` command a Codex chat is told to call. The installed engine's in the
+    /// app; a live test points it at the checkout it is testing.
+    var automationCommand: () -> String? = { AppModel.automationCommandPath() }
     /// Told the choices a delivery to Claude starts with. Nil in the app; a test listens here.
     var claudeDeliveryStarted: ((UUID, RunChoices) -> Void)?
 
@@ -1186,6 +1210,10 @@ struct CodexTurnRequest {
     var effort: String
     var model: String
     var path: String
+    /// Set for the commands Codex runs: which chat this turn is, and Bulava's state folder.
+    var environment: [String: String] = [:]
+    /// Folders beyond `cwd` the turn may write to — where Bulava takes its requests.
+    var writableRoots: [String] = []
     var register: ((CodexChatRunner) -> Void)?
     var onProgress: (@Sendable ([ConversationBlock]) -> Void)?
 }

@@ -133,6 +133,17 @@ nonisolated enum AutomationBrief {
     /// The rules for any conversation working in a copy, run or not.
     static func copyRules(_ copy: WorkCopy, buildCache: String, automation: Bool) -> String {
         let base = String(copy.baseSHA.prefix(8))
+        if copy.integrating != nil {
+            let text = """
+            - Работа шла в отдельной копии `\(copy.path)` на ветке `\(copy.branch)`, начатой с `\(copy.baseRef)` (\(base)). \
+            Человек нажал «Влить в \(copy.baseRef)», и сейчас твоя задача — влить эту ветку в `\(copy.baseRef)` \
+            в папке пользователя `\(copy.sourcePath)`. Это единственное, ради чего её можно трогать; всё остальное в ней \
+            по-прежнему не твоё.
+            \(integrationRules(copy))
+            - Кэш сборки клади в `\(buildCache)`, не внутрь копии.
+            """
+            return automation ? text : "## Отдельная копия\n" + text
+        }
         var text = """
         - Работа идёт в отдельной копии `\(copy.path)` на ветке `\(copy.branch)`, начатой с `\(copy.baseRef)` (\(base)). \
         Папка пользователя `\(copy.sourcePath)` — НЕ изменяй её ни при каких условиях, даже ради проверки.
@@ -145,6 +156,23 @@ nonisolated enum AutomationBrief {
             text = "## Отдельная копия\n" + text
         }
         return text
+    }
+
+    /// How a copy is merged by its chat when the app could not do it alone.
+    static func integrationRules(_ copy: WorkCopy) -> String {
+        """
+        - В копии закоммить всё, что не закоммичено, и перебазируй `\(copy.branch)` на текущий `\(copy.baseRef)` \
+        (`git rebase \(copy.baseRef)`). Конфликты разреши по смыслу обеих сторон, без маркеров; если в проекте есть \
+        сборка или тесты, затронутые конфликтом, прогони их.
+        - В папке пользователя его незакоммиченные изменения (в индексе, в файлах и новые) — его работа, возможно \
+        другого чата. Не коммить их и не выбрасывай: отложи `git stash push -u -m "bulava-merge \(copy.branch)"`, \
+        сделай `git merge --ff-only \(copy.branch)` на `\(copy.baseRef)` и верни их `git stash pop`. Если при \
+        возврате конфликт — разреши так, чтобы его изменения остались поверх влитого, и не оставляй запись в stash.
+        - Если в папке пользователя открыта другая ветка, не переключай её: влей через \
+        `git update-ref refs/heads/\(copy.baseRef) <новый HEAD копии> <старый \(copy.baseRef)>`.
+        - Не пушь, не создавай merge-коммитов и squash. Bulava сама проверит по git, что `\(copy.baseRef)` содержит \
+        ветку копии, и тогда уберёт копию. Если влить не получилось, скажи прямо, что мешает.
+        """
     }
 
     static func resultWord(_ run: AutomationRun) -> String {

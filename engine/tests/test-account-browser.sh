@@ -97,6 +97,17 @@ kill "$FAKE" 2>/dev/null; wait "$FAKE" 2>/dev/null; FAKE=""
 fake_bulava '{"ok":true,"released":true}'
 check "release" '[ "$("$CHAT/browser" release)" = released ]'
 kill "$FAKE" 2>/dev/null; wait "$FAKE" 2>/dev/null; FAKE=""
+fake_bulava '{"ok":true,"asked":true}'
+out="$("$CHAT/browser" sign-in "https://search.google.com/search-console" 2>&1)"; rc=$?
+check "sign-in: he is asked, in a window nobody drives" '[ "$rc" = 0 ] && printf "%s" "$out" | grep -q "^asked: .*search.google.com"'
+check "the request names the page" '[ "$(jq -r .op "$TMP/last-request.json")" = signIn ] && [ "$(jq -r .url "$TMP/last-request.json")" = "https://search.google.com/search-console" ]'
+kill "$FAKE" 2>/dev/null; wait "$FAKE" 2>/dev/null; FAKE=""
+fake_bulava '{"ok":true,"asked":false,"reason":"He is signing in to a site in Bulava'"'"'s browser right now."}'
+out="$("$CHAT/browser" sign-in "https://search.google.com/search-console" 2>&1)"; rc=$?
+check "not asked while he is already signing in: said so, and not a success" '[ "$rc" = 1 ] && printf "%s" "$out" | grep -q "not asked — He is signing in" && ! printf "%s" "$out" | grep -q "^asked"'
+kill "$FAKE" 2>/dev/null; wait "$FAKE" 2>/dev/null; FAKE=""
+"$CHAT/browser" sign-in "search console" >/dev/null 2>&1; rc=$?
+check "sign-in without an address is refused before Bulava is asked" '[ "$rc" = 2 ]'
 mkdir -p "$TMP/bare"; ln -s "$BIN_DIR/worker-browser.sh" "$TMP/bare/browser"
 "$TMP/bare/browser" status >/dev/null 2>&1; rc=$?
 check "a run with no token is told so" '[ "$rc" = 1 ]'

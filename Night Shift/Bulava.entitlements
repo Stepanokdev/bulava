@@ -24,5 +24,13 @@
 	     says, so the switch there would read on while the calendar stayed shut. -->
 	<key>com.apple.security.personal-information.calendars</key>
 	<true/>
+
+	<!-- The folder the week's widgets read. Bulava writes the week there; its widget extension,
+	     which runs in the sandbox, can open nothing else of Bulava's. Prefixed with the team: on
+	     macOS that needs no provisioning profile and asks the person nothing. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>KHU94Q2JSS.group.bulava.week</string>
+	</array>
 </dict>
 </plist>

@@ -111,13 +111,17 @@ extension MobileLink {
         var items: [ChatReportDTO] = []
         for (index, path) in paths.enumerated().reversed() {
             let target = "chatReport:\(chatID.uuidString):\(index)"
-            session.addReport(target, LinkProjection.ReportTarget(task: nil, chatReportPath: path, title: chat.title))
+            let set = DecisionSet.load(besides: URL(fileURLWithPath: path))
+            session.addReport(target, LinkProjection.ReportTarget(task: nil, chatReportPath: path, title: set?.title ?? chat.title))
             let detail = ([ReportName.date(path).map(Fmt.stamp)].compactMap { $0 } + [ReportName.title(path)])
                 .joined(separator: " · ")
+            let questions = set != nil
             items.append(ChatReportDTO(
-                title: items.isEmpty ? String(localized: "Latest report") : String(localized: "Report"),
+                title: questions ? String(localized: "Questions for you")
+                    : items.isEmpty ? String(localized: "Latest report") : String(localized: "Report"),
                 detail: detail,
-                open: ActionDTO(id: target, label: String(localized: "Open the report"), style: "secondary",
+                open: ActionDTO(id: target, label: questions ? String(localized: "Open the questions")
+                                    : String(localized: "Open the report"), style: "secondary",
                                 kind: "report", target: target)))
         }
         var create: ActionDTO?

@@ -13,6 +13,11 @@ struct AccountBrowserSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             status
+            if browser.enabled, let request = browser.signInRequest {
+                SignInRequestRow(request: request, signingIn: browser.mode == .signingIn,
+                                 onSignIn: { Task { await browser.signIn(nil, at: request.url) } },
+                                 onDismiss: { browser.dismissSignInRequest() })
+            }
             if browser.enabled {
                 if !browser.sites.isEmpty {
                     VStack(spacing: 0) {
@@ -157,5 +162,39 @@ struct AccountBrowserSection: View {
     private func open(_ site: BrowserSite?, force: Bool = false) {
         if browser.lease != nil, !force { confirmTaking = .some(site); return }
         Task { await browser.signIn(site) }
+    }
+}
+
+/// A sign-in a run reached that only he can do, in Bulava's browser with nobody driving it.
+struct SignInRequestRow: View {
+    let request: AccountBrowser.SignInRequest
+    var signingIn = false
+    var onSignIn: () -> Void
+    var onDismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "person.badge.key")
+                .foregroundStyle(Palette.orange)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(String(format: String(localized: "%@ needs you to sign in"), request.site))
+                    .font(Typo.panelRow)
+                    .foregroundStyle(Palette.text)
+                Text(AccountBrowser.signInWhy(google: request.url.host?.hasSuffix("google.com") == true))
+                    .font(Typo.panelMeta)
+                    .foregroundStyle(Palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Button(action: onSignIn) { Text("Sign in") }
+                .buttonStyle(.bulava(.primary))
+                .disabled(signingIn)
+            Button(action: onDismiss) { Image(systemName: "xmark") }
+                .buttonStyle(.icon(size: 24, glyph: 10))
+                .help(Text("Not now"))
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: Metrics.radiusPanel, style: .continuous).fill(Palette.orangeSoft))
     }
 }

@@ -92,7 +92,8 @@ was moved out of the composer for exactly this reason. A few that matter:
 | Readiness | `readiness.checks` |
 | Project context (the right-hand pane) | `resources(for:)`, `chatInspectorSnapshot(productID:chatID:)`, the chat's reports as `ProductInspector` lists them, `nowAndNext(for:)`, `workItems`, `streamTasks(of:)`, `hasFinishedWork(_:)` |
 | Skills and MCP | `skillInventory(fast:)`, `mcpInventory(fast:)`, `updateSkill`, `removeSkill` |
-| Limits (the foot of the sidebar) | `model.capacity`, shown by the sidebar's own rules: `UsageWindow.shownPercent`, `UsageSnapshot.tightestShown`, `isStale` — `LinkProjection.limits(_:)` |
+| Limits (the foot of the sidebar) | `model.capacity`, shown by the sidebar's own rules: `UsageWindow.shownPercent`, `UsageSnapshot.tightestShown`, `isStale`, and the pace tick from `LimitPace` — `LinkProjection.limits(_:)` |
+| The week's widgets (`home.week`) | `model.week`, the same `WeekSnapshot` the Mac's widgets read (`AppModel+Week`, `WeekPresenter`). Its JSON is decoded by `Wire.kt`'s `Week` and, on the iPhone, re-encoded for the widget extension: Swift needs every key back, which `theWeekSurvivesTheRoundTripToTheWidgetsKeyForKey` checks. New fields in `WeekSnapshot` are optional — Swift's decoder refuses a missing key for anything else |
 | What wakes an iPhone | the ids in `home.attention` — the orange marks in the chat list and the task dialogs — and, quietly, those in `home.finished` |
 | Ready to read | `openTasks(for:)` in `.review` — the tasks `reportsWaiting(forProductID:)` counts |
 | Working (the Live Activity's first count) | `PowerKeeper.keepsAwake(_:)` over `instances`, plus `codexTurns` — the same test that keeps the Mac awake |

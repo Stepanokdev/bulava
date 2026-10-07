@@ -174,7 +174,9 @@ struct AutomationRunRow: View {
             let result = await model.mergeRun(run.id)
             working = false
             problem = result
-            if result == nil, let copy {
+            if result == nil, let copy, model.automations.copy(id: copy.id)?.integrating != nil {
+                model.toast = ToastMessage(text: String(localized: "It could not be merged by itself, so the chat is merging it."), kind: .info)
+            } else if result == nil, let copy {
                 model.toast = ToastMessage(text: String(format: String(localized: "Merged into %@"), copy.baseRef), kind: .info)
             }
         }

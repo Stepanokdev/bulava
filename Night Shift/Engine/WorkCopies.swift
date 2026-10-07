@@ -584,6 +584,13 @@ enum WorkCopies {
         return nil
     }
 
+    /// The commit the copy stands on.
+    static func tip(of copy: WorkCopy) async -> String? {
+        let r = await git(["rev-parse", "HEAD"], in: copy.checkoutRoot)
+        let sha = out(r)
+        return r.ok && !sha.isEmpty ? sha : nil
+    }
+
     /// Whether every commit in the copy is already on its base branch.
     static func isIntegrated(_ copy: WorkCopy) async -> Bool {
         guard await isOurs(copy) else { return false }
