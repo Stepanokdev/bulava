@@ -149,6 +149,10 @@ for a in "$@"; do
   [ "$prev" = "-o" ] && out="$a"
   prompt="$a"; prev="$a"
 done
+# The triage choosing steps answers JSON, and only for the steps it was asked about.
+case "$prompt" in *"THE STEPS TO DECIDE ABOUT"*)
+  printf '%s' "$prompt" > "$REC/codex-pick.prompt"
+  [ -n "$out" ] && printf '%s\n' "${STUB_PICK_JSON:-}" > "$out"; exit 0 ;; esac
 kind=brief
 case "$prompt" in *"INDEPENDENT POSITION"*|*"separate preparation roles"*) kind=align ;; esac
 n="$(ls "$REC" 2>/dev/null | grep -c "^codex-$kind-.*\.prompt$")"
@@ -1083,6 +1087,52 @@ for failing in "STUB_CLAUDE_FAIL_ON=QA-ROLE tester" "STUB_ALIGN_FAIL=1 agreement
   jq -e --arg id "$mid" 'select(.stage == "pipeline" and .state == "failed" and .held == true and .message_id == $id)' "$(run_events_file "$IDIR")" >/dev/null 2>&1 \
     && ok "and the chat is told the step failed and the message was held" || bad "no held event for the app"
 done
+echo "===== the triage leaves a required role out: the work goes on without it, and says so ====="
+pkill -f "message-pump.sh $SLUG" 2>/dev/null || true; no_pump
+PP="$SUPERVISOR_STATE_DIR/pipelines/pick-chat"; mkdir -p "$PP"
+cat > "$PP/pipeline.json" <<'JSON'
+{"schema":"bulava.pipeline/1","id":"pick-chat","name":"За задачею","description":"тест","revision":1,
+ "nodes":[
+  {"id":"chat","module":"bulava/trigger.chat@1"},
+  {"id":"context","module":"bulava/prep.context@1"},
+  {"id":"triage","module":"bulava/prep.classify@1","title":"Тріаж"},
+  {"id":"ba","module":"bulava/prep.position@1","title":"Бізнес-аналітик","params":{"engine":"codex","when":"triage","required":true},"prompt":"BA-PICK: {{TASK}}"},
+  {"id":"qa","module":"bulava/prep.position@1","title":"Тестувальник","params":{"engine":"claude","required":true},"prompt":"QA-PICK: {{TASK}}"},
+  {"id":"agree","module":"bulava/prep.align@1","title":"Домовленість","params":{"required":true}},
+  {"id":"compose","module":"bulava/prep.compose@1"},
+  {"id":"deliver","module":"bulava/agent.claude@1"},
+  {"id":"review","module":"bulava/gate.review@1"},
+  {"id":"merge","module":"bulava/out.merge@1"}],
+ "edges":[
+  {"from":"chat.task","to":"context.task"},{"from":"chat.task","to":"triage.task"},
+  {"from":"context.context","to":"ba.context"},{"from":"triage.context","to":"ba.context"},
+  {"from":"context.context","to":"qa.context"},{"from":"triage.context","to":"qa.context"},
+  {"from":"ba.position","to":"agree.positions"},{"from":"qa.position","to":"agree.positions"},
+  {"from":"agree.checks","to":"compose.in"},{"from":"compose.brief","to":"deliver.brief"},
+  {"from":"deliver.work","to":"review.work"},{"from":"review.pass","to":"merge.work"},{"from":"review.fail","to":"deliver.feedback","loop":{"max":3}}]}
+JSON
+# A new task, so the triage runs: a follow-up keeps the steps its task was opened with.
+rm -rf "$REC"/* "$IDIR/held" "$IDIR/thread" "$IDIR/done" "$IDIR/outcome.json" "$IDIR/roles-chosen.json"; : > "$REC/injected.txt"
+export STUB_PICK_JSON='{"roles":[{"id":"ba","run":false,"why":"PICK-WHY-SENTINEL дрібна правка"}]}'
+STUB_SLEEP=0 send "PICK-TASK виправ опечатку в кнопці" "77777777-7777-7777-7777-777777777781" pick-chat >/dev/null
+wait_quiet 120 || bad "the pump never finished the pick pipeline"
+unset STUB_PICK_JSON
+pkill -f "message-pump.sh $SLUG" 2>/dev/null || true
+[ -s "$REC/codex-pick.prompt" ] && grep -q "Бізнес-аналітик" "$REC/codex-pick.prompt" \
+  && ok "the triage was asked which steps this task needs" || bad "no pick call"
+! grep -lq "BA-PICK" "$REC"/codex-brief-*.prompt 2>/dev/null && ok "the analyst it left out never ran" || bad "the analyst ran anyway"
+grep -lq "QA-PICK" "$REC"/claude-*.prompt 2>/dev/null && ok "the tester, always called, ran" || bad "the tester did not run"
+jq -e 'select(.stage == "ba" and .state == "skipped" and .reason == "triage")' "$(run_events_file "$IDIR")" >/dev/null 2>&1 \
+  && ok "the chat shows the analyst as skipped by the triage" || bad "no skipped event for the analyst: $(grep '"ba"' "$(run_events_file "$IDIR")" | tail -2)"
+ap="$(ls "$REC"/codex-align-*.prompt 2>/dev/null | head -1)"
+[ -n "$ap" ] && grep -q "цього разу не кликали" "$ap" && grep -q "PICK-WHY-SENTINEL" "$ap" \
+  && ok "the agreement ran on the one role, told why the other was not called" || bad "agreement: $(head -c 300 "$ap" 2>/dev/null)"
+inj="$(cat "$REC/injected.txt")"
+case "$inj" in *"PICK-TASK"*"Бізнес-аналітик"*"цього разу не кликали"*) ok "the worker got the task, with the analyst named as not called" ;;
+  *) bad "the worker's prompt: $(printf '%s' "$inj" | head -c 400)" ;; esac
+! jq -e 'select(.stage == "pipeline" and .held == true and .message_id == "77777777-7777-7777-7777-777777777781")' "$(run_events_file "$IDIR")" >/dev/null 2>&1 \
+  && ok "a required role the triage left out does not hold the message" || bad "the message was held"
+
 echo
 [ "$fails" = 0 ] && echo "✅ chat pipeline: all passed" || echo "❌ chat pipeline: $fails failure(s)"
 exit "$fails"

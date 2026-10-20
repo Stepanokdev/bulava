@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["roles"],
+  "properties": {
+    "roles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "run", "why"],
+        "properties": {
+          "id": { "type": "string" },
+          "run": { "type": "boolean" },
+          "why": { "type": "string", "maxLength": 200 }
+        }
+      }
+    }
+  }
+}

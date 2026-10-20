@@ -77,8 +77,12 @@ case "$hook" in *"NOT LIMITED TO THE OPTIONS OFFERED"*) ok "the prompt says the 
                 *) bad "the prompt still implies one of the options must be chosen" ;; esac
 case "$hook" in *"Being a lot of work is NOT a gate"*) ok "size alone cannot become an escalation" ;;
                 *) bad "nothing stops size being treated as a gate" ;; esac
-case "$hook" in *"tools.web_search=true"*) ok "the proxy may look up how the world solved it" ;;
-                *) bad "the proxy decides from first principles only" ;; esac
+# The flag comes from the engine's one helper now — the same switch every Codex call uses, so a run
+# without the web turns it off here too — and the helper is what has to say web search is on.
+case "$hook" in *'$(codex_web_search_flags)'*)
+  ( . "$HOOK_DIR/../bin/supervisor-lib.sh"; unset SUPERVISOR_NO_WEB; codex_web_search_flags ) | grep -q 'tools.web_search=true' \
+    && ok "the proxy may look up how the world solved it" || bad "the proxy's search flag does not turn search on" ;;
+  *) bad "the proxy decides from first principles only" ;; esac
 
 echo "===== and a genuine gate still reaches the director ====="
 stub '{"decision":"ask","reason_code":"missing_authority","headline":"Треба доступ до App Store Connect","recommendation":"Видати ключ","default_action":"Не робити і завершити blocked","unblock_action":"Дати ключ"}'
