@@ -52,6 +52,7 @@ skills_bg() {  # $1 = project dir
   local proj="$1"
   [ "${SUPERVISOR_SKILL_AUTONOMOUS:-1}" = 1 ] || return 0
   [ -n "${SUPERVISOR_NO_SKILL_PICK:-}" ] && return 0   # tests / opt-out
+  [ "${SUPERVISOR_NO_WEB:-}" = 1 ] && return 0          # the resolver fetches skills from the internet
   [ -n "$proj" ] && [ -d "$proj" ] || return 0
   nohup bash -c "
     $(shq "$BIN_DIR/skill-resolver.sh") index          >> $(shq "$SUP_STATE/supervisor.log") 2>&1
@@ -203,7 +204,16 @@ Claude питає, чи їх вмикати, ще до початку робот
     fi
 
     ORIG_REF=""; ORIG_HEAD=""; BRANCH=""; CHECKPOINTED=0; BRANCH_CREATED=0
-    if command -v git >/dev/null 2>&1; then
+    # A job, not a change to code: an automation that reads files and uses a service works in a
+    # plain folder of its own (SUPERVISOR_PLAIN_FOLDER=1, from Bulava). Git is what lets a run that
+    # changes code be rolled back and reviewed; here there is no code to roll back and no diff to
+    # review, so everything git-shaped below — the question about creating it, the checkpoint, the
+    # branch — is skipped rather than asked. What such a run did is what it declares
+    # (`report-outcome`), and the review gate takes it at its word once Bulava's signed record says
+    # the folder is a job's (`plain_folder_run`); this choice alone decides only what the start does.
+    PLAIN_FOLDER=0
+    [ "${SUPERVISOR_PLAIN_FOLDER:-}" = 1 ] && PLAIN_FOLDER=1
+    if [ "$PLAIN_FOLDER" = 0 ] && command -v git >/dev/null 2>&1; then
       _top="$(cd "$PROJECT_DIR" && git rev-parse --show-toplevel 2>/dev/null || true)"
       GIT_CREATED=0
       if [ "$_top" != "$PROJECT_DIR" ]; then
@@ -683,6 +693,7 @@ $gone}"
     # …and the same for every other repository this run may write in, or a night that does its work
     # in a sibling repository is measured as having done nothing.
     record_extra_repos "$IDIR"
+    record_writable_dirs "$IDIR"
     [ -n "$BRANCH" ] && printf '%s\n' "$BRANCH" > "$IDIR/base-branch"
     ln -sf "$BIN_DIR/worker-outcome.sh" "$IDIR/report-outcome" 2>/dev/null \
       || cp -f "$BIN_DIR/worker-outcome.sh" "$IDIR/report-outcome" 2>/dev/null || true
@@ -1116,6 +1127,7 @@ $gone}"
       ignored_manifest "$PROJECT_DIR" > "$IDIR/base-ignored" 2>/dev/null || true
     fi
     record_extra_repos "$IDIR"
+    record_writable_dirs "$IDIR"
     ln -sf "$BIN_DIR/worker-outcome.sh" "$IDIR/report-outcome" 2>/dev/null \
       || cp -f "$BIN_DIR/worker-outcome.sh" "$IDIR/report-outcome" 2>/dev/null || true
     ln -sf "$BIN_DIR/report-finding.sh" "$IDIR/report-finding" 2>/dev/null \

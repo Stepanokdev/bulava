@@ -15,9 +15,10 @@
 # USAGE
 #   ui apps                             what is running, with pids
 #   ui status                           whether Bulava may drive anything yet
-#   ui tree <pid> [--depth N]           the window tree, with a ref on every row
+#   ui tree <pid> [--depth N]           the window tree: a ref and where it is on screen on every row
 #   ui click <pid> <ref>                press the element at that ref
 #   ui click <pid> --at x,y             click a screen point
+#   ui drag <pid> --from x,y --to x,y   press, carry the pointer, release — pull a wire, move a box
 #   ui type <pid> <ref> <text…>         put text into that element
 #   ui type <pid> - <text…>             type into whatever has focus
 #   ui key <pid> <keys>                 return · escape · tab · cmd+s · cmd+shift+k
@@ -59,7 +60,7 @@ fi
 
 # Build the request. Every action carries only the fields it needs, so a malformed call is refused
 # by the app rather than half-performed.
-pid=""; ref=""; at=""; text=""; keys=""; mpath=""; depth=""
+pid=""; ref=""; at=""; to=""; text=""; keys=""; mpath=""; depth=""
 shift 2>/dev/null || true
 
 case "$action" in
@@ -76,6 +77,16 @@ case "$action" in
       "")   echo "ui: потрібен ref із дерева або --at x,y" >&2; exit 1 ;;
       *)    ref="$1" ;;
     esac ;;
+  drag)
+    pid="${1:?usage: ui drag <pid> --from x,y --to x,y}"; shift || true
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --from) at="${2:?--from needs x,y}"; shift 2 ;;
+        --to)   to="${2:?--to needs x,y}"; shift 2 ;;
+        *) echo "ui: drag знає лише --from і --to, а не «$1»" >&2; exit 1 ;;
+      esac
+    done
+    [ -n "$at" ] && [ -n "$to" ] || { echo "ui: для drag потрібні і --from x,y, і --to x,y" >&2; exit 1; } ;;
   type)
     pid="${1:?usage: ui type <pid> <ref|-> <text…>}"; shift || true
     ref="${1:?usage: ui type <pid> <ref|-> <text…>}"; shift || true
@@ -104,7 +115,7 @@ REQ="$REQ_DIR/$ID.json"
 DONE="$REQ_DIR/$ID.done"
 rm -f "$DONE" 2>/dev/null
 
-jq -nc --arg action "$action" --arg ref "$ref" --arg at "$at" --arg text "$text" \
+jq -nc --arg action "$action" --arg ref "$ref" --arg at "$at" --arg to "$to" --arg text "$text" \
        --arg keys "$keys" --arg path "$mpath" \
        --argjson pid "${pid:-null}" --argjson depth "${depth:-null}" '
   {action: $action}
@@ -112,6 +123,7 @@ jq -nc --arg action "$action" --arg ref "$ref" --arg at "$at" --arg text "$text"
   + (if $depth == null then {} else {depth: $depth} end)
   + (if $ref   == ""   then {} else {ref: $ref}     end)
   + (if $at    == ""   then {} else {at: $at}       end)
+  + (if $to    == ""   then {} else {to: $to}       end)
   + (if $text  == ""   then {} else {text: $text}   end)
   + (if $keys  == ""   then {} else {keys: $keys}   end)
   + (if $path  == ""   then {} else {path: $path}   end)' \

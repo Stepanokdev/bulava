@@ -18,6 +18,8 @@ import AppKit
 ///     {"do":"probe","probe":"transcribe","path":"/tmp/three-minutes.m4a","language":"uk"}
 ///     {"do":"probe","probe":"blankwatch","seconds":12}
 ///     {"do":"probe","probe":"order","to":"back"}
+///     {"do":"probe","probe":"press","label":"Пайплайн","exact":true}      — a click on what says that
+///     {"do":"probe","probe":"enter","label":"Message Night Shift…","text":"…"} — typing into that field
 extension TestDrive {
 
     func probe(_ obj: [String: Any], _ model: AppModel) {
@@ -33,6 +35,8 @@ extension TestDrive {
         case "thread":     note("thread: " + threadState())
         case "chat":       openChat(obj, model)
         case "click":      pointer(obj, drag: false)
+        case "press":      press(obj)
+        case "enter":      enter(obj)
         case "drag":       pointer(obj, drag: true)
         case "key":        key(obj)
         case "blur":       window?.makeFirstResponder(nil); note("blur: no field has the keyboard")
@@ -149,6 +153,60 @@ extension TestDrive {
         let run = model.chatRuns[chatID]
         return "path=\(binding.projectPath) events=\(events.count) users=\(ids.count) latest=\(latest ?? "-") "
             + "document=\(run?.document?.id ?? "-") overall=\(run.map { "\($0.graph.overall)" } ?? "-")"
+    }
+
+    // MARK: - Found by what it says
+
+    /// What the app's own accessibility tree says is on screen — this window, its sheets and its
+    /// popovers — with where it is. In-process, so no Accessibility grant is needed to read it.
+    private func labelled() -> [(window: NSWindow, object: AnyObject, label: String, role: String, frame: NSRect)] {
+        NSApp.setValue(true, forKey: "accessibilityEnhancedUserInterface")
+        var out: [(NSWindow, AnyObject, String, String, NSRect)] = []
+        func walk(_ e: Any, _ w: NSWindow, _ depth: Int) {
+            guard depth < 60 else { return }
+            let o = e as AnyObject
+            let label = [(o.accessibilityLabel?() as String?) ?? "", (o.accessibilityTitle?() as String?) ?? "",
+                         (o.accessibilityPlaceholderValue?() as String?) ?? ""].filter { !$0.isEmpty }.joined(separator: " | ")
+            let role = (o.accessibilityRole?() as NSAccessibility.Role?)?.rawValue ?? ""
+            if !label.isEmpty { out.append((w, o, label, role, o.accessibilityFrame?() ?? .zero)) }
+            for c in (o.accessibilityChildren?() as [Any]?) ?? [] { walk(c, w, depth + 1) }
+        }
+        let main = window
+        let front = NSApp.windows.filter { $0.isVisible && $0 !== main && ($0.sheetParent === main || String(describing: type(of: $0)).contains("Popover")) }
+        for w in front + [main].compactMap({ $0 }) { walk(w, w, 0) }
+        return out
+    }
+
+    private func find(_ obj: [String: Any]) -> (window: NSWindow, object: AnyObject, label: String, role: String, frame: NSRect)? {
+        let wanted = (obj["label"] as? String) ?? ""
+        let exact = obj["exact"] as? Bool == true
+        let role = obj["role"] as? String
+        let all = labelled().filter { role == nil || $0.role == role }
+        return all.first { exact ? $0.label == wanted : $0.label.hasPrefix(wanted) }
+    }
+
+    /// A click where the named thing is, into the window it is in.
+    private func press(_ obj: [String: Any]) {
+        guard let hit = find(obj) else { note("press: nothing says «\((obj["label"] as? String) ?? "")»"); return }
+        let at = hit.window.convertPoint(fromScreen: NSPoint(x: hit.frame.midX, y: hit.frame.midY))
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            guard let e = NSEvent.mouseEvent(with: type, location: at, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                             windowNumber: hit.window.windowNumber, context: nil, eventNumber: 0,
+                                             clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1) else { continue }
+            hit.window.sendEvent(e)
+        }
+        note("press: «\(hit.label.prefix(60))» \(hit.role)")
+    }
+
+    /// The named field takes the keyboard and the text arrives through the text input system,
+    /// where a person's typing ends up.
+    private func enter(_ obj: [String: Any]) {
+        guard let hit = find(obj) else { note("enter: nothing says «\((obj["label"] as? String) ?? "")»"); return }
+        let text = (obj["text"] as? String) ?? ""
+        if let view = hit.object as? NSView { hit.window.makeFirstResponder(view) }
+        guard let field = hit.window.firstResponder as? NSTextView else { note("enter: «\(hit.label)» did not take the keyboard"); return }
+        field.insertText(text, replacementRange: field.selectedRange())
+        note("enter: \(text.count) characters into «\(hit.label.prefix(40))»")
     }
 
     // MARK: - The window and what is in it

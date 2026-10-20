@@ -16,9 +16,14 @@ extension AppModel {
 
     /// Called on every poll. Cheap unless something is due: the schedules are arithmetic, and each
     /// check that goes out to git, the network or Mail runs at most once at a time per automation.
-    func automationsTick(now: Date = Date()) {
+    func automationsTick(now: Date = Date()) async {
         // First, so nothing below reads a run's conversation as an ordinary one.
         relinkCopyChats()
+        // A finished run whose branch was merged outside Bulava is reconciled HERE, before any
+        // schedule decision below. Otherwise, on a restart at a scheduled time, a due slot would be
+        // recorded "skipped" against a run that is really merged, and the advanced watermark would
+        // lose that occurrence for good — a later async reconcile cannot bring the slot back.
+        await reconcileWaitingRuns()
         // Before anything is handed over, and for automations switched off too, so what they show
         // as gathered is true.
         for automation in automations.automations { reconcileWatchItems(automation.id) }
@@ -36,6 +41,8 @@ extension AppModel {
         followHandedMerges(now: now)
         if lastCopySweep.map({ now.timeIntervalSince($0) > 600 }) ?? true {
             lastCopySweep = now
+            // Reconciliation already ran at the top of the tick; the sweep also reconciles any run it
+            // strands as it removes a copy (copyFate), so it needs no separate pass here.
             Task { await sweepCopies() }
         }
         syncFolderWatchers()
@@ -63,7 +70,7 @@ extension AppModel {
             beginRun(automation, occurrence: AutomationClock.occurrenceKey(due, schedule),
                      reason: late ? .caughtUp(due) : .scheduled(due), items: [], now: now)
         }
-        automations.update(automation.id) { $0.evaluatedThrough = owed.through }
+        automations.advanceWatermark(automation.id, to: owed.through)
     }
 
     // MARK: - Making and changing them
@@ -92,6 +99,9 @@ extension AppModel {
             a.workMode = edited.workMode
             a.carryFiles = edited.carryFiles
             a.pipelineID = edited.pipelineID
+            a.readFolders = edited.readFolders
+            a.allowedTools = edited.allowedTools
+            a.writesReport = edited.writesReport
         }
     }
 
@@ -111,14 +121,29 @@ extension AppModel {
     /// did can still be read and searched.
     func deleteAutomation(_ id: UUID) -> String? {
         let runs = automations.runs(for: id)
-        if runs.contains(where: { !$0.state.isTerminal }) {
+        // A finished run's conversation he went on with is working too, and a job's goes on in the
+        // folder that is about to go.
+        let talking = runs.contains { run in
+            run.chatID.map { directPhase(for: $0).isActive || sendingChatIDs.contains($0)
+                             || generatingChatReportIDs.contains($0) } ?? false
+        }
+        if talking || runs.contains(where: { !$0.state.isTerminal }) {
             return String(localized: "A run is still going. Stop it first.")
         }
         if runs.contains(where: { $0.state == .finished && $0.result == .changes && $0.handoff == .waiting }) {
             return String(localized: "A run's changes are still waiting. Merge or discard them first.")
         }
         for run in runs { if let chatID = run.chatID { conversations.releaseAutomationChat(chatID) } }
+        let job = automations.automation(id: id)?.doesJob == true || runs.contains(where: \.isJob)
         automations.remove(id)
+        // A job's folder is its own and has no other owner: it goes too, after what its runs wrote
+        // for him is carried out, and the chats that recorded a report there are pointed at it.
+        if job, let folder = JobFolders.existing(for: id) {
+            let from = Slug.canonicalPath(folder.appendingPathComponent("artifacts").path) + "/"
+            let path = folder.path
+            Task { await client.forgetPlainFolder(projectPath: path) }
+            if let kept = JobFolders.remove(for: id) { repointReports(from: from, to: kept.path + "/") }
+        }
         if route == .automation(id) { navigate(to: .automations) }
         return nil
     }
@@ -163,6 +188,13 @@ extension AppModel {
         }
         if mine.contains(where: { $0.state == .finished && $0.result == .changes && $0.handoff == .waiting }) {
             return String(localized: "The previous run's changes are still waiting for you — merge or discard them first, so the next run does not pile work on top of work nobody has looked at.")
+        }
+        // A job's runs all work in the automation's one folder. If an earlier run's conversation is
+        // still working there — he carried it on after it ended — the next run waits, so two sessions
+        // never write that one folder at the same time.
+        if automation.doesJob,
+           mine.contains(where: { r in r.chatID.map { directPhase(for: $0).isActive || sendingChatIDs.contains($0) } ?? false }) {
+            return String(localized: "An earlier run of this automation is still working in its folder.")
         }
         guard let project = projects.project(id: automation.projectID),
               products.product(id: automation.productID)?.allProjectIDs.contains(project.id) == true else {
@@ -220,6 +252,8 @@ extension AppModel {
         run.projectID = automation.projectID
         run.baseBranch = automation.baseBranch ?? ""
         run.checkOnly = automation.checksOnly ? true : nil
+        run.job = automation.doesJob ? true : nil
+        run.writesReport = automation.reportsAfterRun
         guard automations.record(run) else { return .duplicate }
         switch state {
         case .awaitingApproval:
@@ -270,6 +304,10 @@ extension AppModel {
         }
         let baseBranch: String? = run.baseBranch.map { $0.isEmpty ? nil : $0 } ?? automation.baseBranch
         let brief = run.brief ?? automation.brief
+        if run.isJob {
+            await startJob(run, automation: automation, product: product, brief: brief)
+            return
+        }
 
         let chatID = run.chatID ?? UUID()
         var copyID = run.workspaceID ?? UUID()
@@ -355,13 +393,41 @@ extension AppModel {
             return
         }
 
-        let title = "\(automation.name) · \(Fmt.dayLabel(Date()))"
         let chat = conversations.newAutomationChat(id: chatID, for: product.id, runID: runID,
-                                                   copyID: copy.id, title: title)
+                                                   copyID: copy.id, title: runChatTitle(automation))
+        send(run, brief: brief, automation: automation, product: product, chat: chat)
+    }
+
+    /// A job's run: its automation's plain folder, then the conversation. No copy and no git — the
+    /// folder is the automation's own and is kept, and nothing in it is reset or handed over. His
+    /// folders are given to the run to read (`jobReadFolders(_:)`).
+    private func startJob(_ run: AutomationRun, automation: Automation, product: Product, brief: String) async {
+        let runID = run.id
+        let chatID = run.chatID ?? UUID()
+        if run.chatID == nil { automations.updateRun(runID) { $0.chatID = chatID } }
+        guard let folder = JobFolders.prepare(for: automation.id, name: automation.name) else {
+            failRun(runID, String(format: String(localized: "Could not make the automation's own folder in %@."),
+                                  JobFolders.root.path))
+            return
+        }
+        await readyForUnattendedJob(folder.path)
+        guard automations.run(id: runID)?.state == .preparing else { return }
+        let chat = conversations.newAutomationChat(id: chatID, for: product.id, runID: runID,
+                                                   copyID: nil, title: runChatTitle(automation))
+        send(run, brief: brief, automation: automation, product: product, chat: chat)
+    }
+
+    private func runChatTitle(_ automation: Automation) -> String {
+        "\(automation.name) · \(Fmt.dayLabel(Date()))"
+    }
+
+    /// The brief goes into the run's conversation. Not as his work in the product: a run that starts
+    /// at night is not what he last worked on, and must not move the product up his list.
+    private func send(_ run: AutomationRun, brief: String, automation: Automation, product: Product, chat: Chat) {
         if let pipeline = automation.pipelineID, !pipeline.isEmpty {
             conversations.setPipeline(pipeline, for: chat.id)
         }
-        automations.updateRun(runID) {
+        automations.updateRun(run.id) {
             $0.state = .running
             $0.startedAt = Date()
         }
@@ -369,8 +435,16 @@ extension AppModel {
         if let send = sendAutomationBrief {
             send(message, product.id, chat.id, run.entryID)
         } else {
-            sendDirectMessage(message, productID: product.id, chatID: chat.id, entryID: run.entryID)
+            sendDirectMessage(message, productID: product.id, chatID: chat.id, entryID: run.entryID,
+                              countsAsWork: false)
         }
+    }
+
+    /// A job's folder is new to Claude like any copy: trusted now, so a run at night is not stopped
+    /// by the question.
+    func readyForUnattendedJob(_ folder: String) async {
+        if let override = readyJobOverride { await override(folder); return }
+        ClaudeFolderTrust.grant(forProjectPath: folder)
     }
 
     /// The automation's own folder, when this run may have it: no other record holds it. One that
@@ -535,9 +609,25 @@ extension AppModel {
 
         let binding = chat.session
         let instance = binding.flatMap { matchingInstance(for: $0) }
-        if let instance, instance.pendingQuestion != nil || instance.doneResult == "needs-user"
+        // A job that declared it failed, or stopped twice without saying how it ended, has nothing
+        // to answer: it is a failure, red and counted, and a question it never asked must not hold
+        // the next evening's run back.
+        let failedJob = run.isJob && instance?.pendingQuestion == nil && instance?.doneResult == "needs-user"
+            && (instance?.outcome == nil || instance?.outcome == .failed)
+        if let instance, !failedJob, instance.pendingQuestion != nil || instance.doneResult == "needs-user"
             || instance.outcome == .blocked || instance.outcome == .needsInput {
             settle(run, result: .needsYou, summary: instance.outcomeSummary, now: now)
+            return
+        }
+        // Given up on by the engine: frozen on its turn and not brought back by restarts, or silent
+        // past the engine's stall window, with no verdict and nothing asked. Nothing will end such a
+        // run by itself, and one that read "running" for ever would hold every later run back. A
+        // frozen worker can still read as busy — its status is the last thing it wrote — so the
+        // engine giving up on it counts whatever that status says.
+        if let instance, Self.engineGaveUp(stalled: instance.stalled, frozenGaveUp: instance.frozenRecovery == .gaveUp,
+                                           done: instance.doneResult, question: instance.pendingQuestion != nil,
+                                           outcome: instance.outcome, turnRunning: instance.turnRunning) {
+            failRun(run.id, String(localized: "It stopped responding, and the engine gave up on it."))
             return
         }
         let ended = instance.map { $0.doneResult != nil || ($0.outcome != nil && !$0.turnRunning) } ?? false
@@ -573,6 +663,16 @@ extension AppModel {
               conversations.entries(inChat: chatID).last(where: { $0.kind == .user })?.id == lastAsked,
               !directPhase(for: chatID).isActive, !sendingChatIDs.contains(chatID) else { return }
         guard status?.inspected != false else { return }
+        if run.isJob {
+            let result = Self.jobResult(outcome: outcome)
+            if result == .failed, outcome == nil {
+                automations.updateRun(runID) {
+                    $0.note = String(localized: "It stopped without saying how it ended.")
+                }
+            }
+            settle(run, result: result, summary: summary, now: Date())
+            return
+        }
         // A check hands nothing over: what it changed goes with its folder's reset, and is said.
         let checkOnly = automations.run(id: runID)?.checkOnly == true
         let hasWork = !checkOnly && (status?.hasWork ?? false)
@@ -598,8 +698,34 @@ extension AppModel {
         if outcome == .failed && !hasWork { return .failed }
         if hasWork { return .changes }
         if outcome == .succeededResearch { return .report }
+        // It said there was nothing to do, and its copy agrees. The gate writes `debt` for this —
+        // it cannot prove "nothing to do" from a diff — but the copy is the proof here, and calling
+        // it unreviewed asked him for a report and a look at a run that did nothing.
+        if outcome == .succeededNoChange { return .noChange }
         if done == "debt" { return .unverified }
         return .noChange
+    }
+
+    /// Whether the engine has given up on a run that will not end by itself: frozen and not brought
+    /// back by restarts — whatever status it last wrote — or parked silent with no turn going; and
+    /// in either case with no verdict, no declared outcome and no question waiting.
+    nonisolated static func engineGaveUp(stalled: Bool, frozenGaveUp: Bool, done: String?, question: Bool,
+                                         outcome: WorkerOutcome?, turnRunning: Bool) -> Bool {
+        guard done == nil, !question, outcome == nil else { return false }
+        return frozenGaveUp || (stalled && !turnRunning)
+    }
+
+    /// How a job's run ended (`AutomationWorkMode.job`): what it declared, since there is no copy to
+    /// read and nothing for a reviewer to check. Saying nothing is a failure — a job that quietly
+    /// broke must not read as a quiet evening.
+    nonisolated static func jobResult(outcome: WorkerOutcome?) -> AutomationRun.Result {
+        switch outcome {
+        case .succeededChanges?: return .done
+        case .succeededNoChange?: return .noChange
+        case .succeededResearch?: return .report
+        case .blocked?, .needsInput?: return .needsYou
+        case .failed?, nil: return .failed
+        }
     }
 
     nonisolated static func runSummary(turn: String?, turnOutcome: WorkerOutcome?, copyHasWork: Bool,
@@ -623,6 +749,12 @@ extension AppModel {
         if let copyID = run.workspaceID {
             automations.updateCopy(copyID) { $0.state = result == .changes ? .waiting : $0.state }
         }
+        // Save the branch tip while the worktree is still on disk, so a merge done later outside
+        // Bulava — which takes the worktree with it — can still be proven from the source repo. See
+        // reconcileHandoff.
+        if result == .changes, let copyID = run.workspaceID, let copy = automations.copy(id: copyID) {
+            Task { await saveSettledTip(run.id, copy: copy) }
+        }
         // A question is not an ending: what the run was handed is settled when it really ends.
         if result != .needsYou { settleWatchItems(run, succeeded: result != .failed) }
         if result == .failed { pauseAfterRepeatedFailures(run.automationID) }
@@ -639,22 +771,48 @@ extension AppModel {
         // the way the chat's "Make a report" does it. Before this a run that was never told to
         // write one left a folder of screenshots, and "Open report" opened that folder. Asked
         // before the sweep below, which keeps the copy while its report is being written.
-        if Self.wantsWrittenReport(result), let chatID = run.chatID, fresh.reportAsked != true {
+        //
+        // Unless its automation said not to: a job's run says in a line what it did, and a report
+        // nobody asked for is one more thing waiting to be read.
+        let reports = fresh.writesReport ?? true
+        if reports, Self.wantsWrittenReport(result), let chatID = run.chatID, fresh.reportAsked != true {
             automations.updateRun(run.id) { $0.reportAsked = true }
             generateChatReport(chatID: chatID, opensWhenDone: false)
         }
 
         let name = automations.automation(id: run.automationID)?.name ?? String(localized: "Automation")
-        switch result {
-        case .changes: notify(title: name, body: String(localized: "Finished with changes. They wait in their copy for you."))
-        case .report: notify(title: name, body: String(localized: "Finished with a report."))
-        case .needsYou: notify(title: name, body: String(localized: "Needs your answer."))
-        case .failed: notify(title: name, body: String(localized: "The run failed."))
-        case .unverified: notify(title: name, body: String(localized: "Finished, but the review could not be completed."))
-        case .noChange: break
-        }
+        if let body = Self.notice(for: result, writesReport: reports) { notify(title: name, body: body) }
+        // A job's run is over once it has settled, unless it waits for his answer: its session is
+        // let go, so the next run finds the folder free and nothing is left running all day.
+        if fresh.isJob, result != .needsYou { Task { await releaseJobSession(run) } }
         // Nothing to hand over: the copy has done its job.
         if result != .changes && result != .needsYou { Task { await sweepCopies() } }
+    }
+
+    /// What he is told when a run settles, or nil for a run that needs nothing from him. A failure,
+    /// a question and changes waiting always reach him; a run that went well does only when it
+    /// ends with a report he asked for.
+    nonisolated static func notice(for result: AutomationRun.Result, writesReport: Bool) -> String? {
+        switch result {
+        case .changes: return String(localized: "Finished with changes. They wait in their copy for you.")
+        case .needsYou: return String(localized: "Needs your answer.")
+        case .failed: return String(localized: "The run failed.")
+        case .report, .done: return writesReport ? String(localized: "Finished with a report.") : nil
+        case .unverified: return writesReport ? String(localized: "Finished, but the review could not be completed.") : nil
+        case .noChange: return nil
+        }
+    }
+
+    /// Stop what is left of a job's run in its folder — the conversation stays, and he can still
+    /// write into it; the next message starts it again there.
+    func releaseJobSession(_ run: AutomationRun) async {
+        guard let chatID = run.chatID, let path = conversations.chat(id: chatID)?.session?.projectPath else { return }
+        let live = await client.readInstances()
+        guard let instance = live.first(where: { Slug.canonicalPath($0.projectPath) == Slug.canonicalPath(path) }),
+              instance.runID == conversations.chat(id: chatID)?.session?.activeRunID,
+              !directPhase(for: chatID).isActive, !sendingChatIDs.contains(chatID),
+              !generatingChatReportIDs.contains(chatID) else { return }
+        _ = await releaseProject(path: path, session: instance.session)
     }
 
     func failRun(_ runID: UUID, _ why: String) {
@@ -671,6 +829,7 @@ extension AppModel {
             notify(title: name, body: why)
         }
         pauseAfterRepeatedFailures(run.automationID)
+        if run.isJob { Task { await releaseJobSession(run) } }
         Task { await sweepCopies() }
     }
 
@@ -741,6 +900,8 @@ extension AppModel {
     func openRunChat(_ run: AutomationRun) {
         guard let chatID = run.chatID, let chat = conversations.chat(id: chatID) else { return }
         markRunSeen(run.id)
+        // Opening a run whose changes wait is a good moment to notice a merge done outside Bulava.
+        if run.result == .changes, run.handoff == .waiting { Task { await reconcileHandoff(run.id) } }
         if chat.archived {
             conversations.viewArchived(chatID, for: chat.productID)
         } else {
@@ -888,17 +1049,81 @@ extension AppModel {
 
     /// Throw a run's changes away, with the copy and its branch. Nothing about the run or the copy
     /// changes unless the removal itself goes through.
+    ///
+    /// Works whether or not the copy is still here. When it is, the worktree and branch are removed as
+    /// before. When it is gone already (cleaned up outside Bulava), there is nothing to remove, but its
+    /// branch may still be in the repo — that is deleted if so — and the run is recorded as discarded,
+    /// so it stops waiting. Before this, a copy-less discard returned nil silently and changed nothing.
     func discardRun(_ runID: UUID) async -> String? {
-        guard let run = automations.run(id: runID), let copyID = run.workspaceID,
-              automations.copy(id: copyID)?.isLive == true else { return nil }
+        guard let run = automations.run(id: runID) else { return nil }
         if let busy = runIsWorking(run) { return busy }
-        let problem = await withCopy(copyID, busy: String(localized: "Something else is being done with this copy right now.")) {
-            await removeCopyLocked(copyID, force: true, branch: .delete)
+        if let copyID = run.workspaceID, automations.copy(id: copyID)?.isLive == true {
+            let problem = await withCopy(copyID, busy: String(localized: "Something else is being done with this copy right now.")) {
+                await removeCopyLocked(copyID, force: true, branch: .delete)
+            }
+            if problem == nil {
+                automations.updateRun(runID) { $0.handoff = .discarded; $0.seen = true }
+            }
+            return problem
         }
-        if problem == nil {
-            automations.updateRun(runID) { $0.handoff = .discarded; $0.seen = true }
+        if let copyID = run.workspaceID, let copy = automations.copy(id: copyID) {
+            await WorkCopies.deleteBranchIfPresent(copy.branch, inSourceRepo: copy.sourceRoot)
         }
-        return problem
+        automations.updateRun(runID) { $0.handoff = .discarded; $0.seen = true }
+        return nil
+    }
+
+    /// "I've already dealt with this." For a run whose copy is gone — merged by hand, or otherwise
+    /// handled outside Bulava. Records it as merged so the schedule stops waiting on it, without
+    /// proving or undoing anything in git: it keeps any branch. For the live-copy case the row offers
+    /// "Merge into …" and "Discard" instead; this is the copy-free way to say a waiting run is done.
+    func markRunHandled(_ runID: UUID) async -> String? {
+        guard let run = automations.run(id: runID) else { return nil }
+        if let busy = runIsWorking(run) { return busy }
+        let base = run.workspaceID.flatMap { automations.copy(id: $0)?.baseRef } ?? run.baseBranch
+        automations.updateRun(runID) { $0.handoff = .merged; $0.mergedInto = base; $0.seen = true }
+        return nil
+    }
+
+    /// A finished run whose changes still "wait" is reconciled against git. If its branch reached the
+    /// base — provable from the tip saved at settle, or from the branch if it is still in the repo,
+    /// both read in the SOURCE repository so no worktree is needed — the run is recorded as merged and
+    /// stops blocking the schedule. Without that proof it is left waiting: nothing is ever closed on
+    /// the strength of a missing folder alone (the row and copy bar then offer a copy-free way out).
+    /// Returns whether it closed the run.
+    @discardableResult
+    func reconcileHandoff(_ runID: UUID) async -> Bool {
+        guard let run = automations.run(id: runID),
+              run.state == .finished, run.result == .changes, run.handoff == .waiting,
+              let copyID = run.workspaceID, let copy = automations.copy(id: copyID) else { return false }
+        // A live copy that is still ours is the normal merge path's business, not this one.
+        if copy.isLive, await WorkCopies.isOurs(copy) { return false }
+        // Two ways to name the branch's tip, both resolved in the source repo: the SHA saved at settle,
+        // and the branch ref if it still exists. Either, contained in the base, proves a normal merge.
+        let candidates = [run.settledTip, "refs/heads/\(copy.branch)"].compactMap { $0 }
+        for tip in candidates {
+            if await WorkCopies.tipIsIntegrated(tip: tip, baseRef: copy.baseRef, inSourceRepo: copy.sourceRoot) {
+                automations.updateRun(runID) { $0.handoff = .merged; $0.mergedInto = copy.baseRef; $0.seen = true }
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Re-check every finished run whose changes still wait. A branch merged outside Bulava is picked
+    /// up here and stops blocking the schedule. Cheap: a live, still-ours copy returns at once, so only
+    /// a copy-free waiting run actually reaches git.
+    func reconcileWaitingRuns() async {
+        for run in automations.runs
+        where run.state == .finished && run.result == .changes && run.handoff == .waiting {
+            await reconcileHandoff(run.id)
+        }
+    }
+
+    /// Record a run's branch tip while its worktree is still on disk (see `settledTip`). Written once.
+    func saveSettledTip(_ runID: UUID, copy: WorkCopy) async {
+        guard automations.run(id: runID)?.settledTip == nil, let tip = await WorkCopies.tip(of: copy) else { return }
+        automations.updateRun(runID) { if $0.settledTip == nil { $0.settledTip = tip } }
     }
 
     /// Nothing may still be running in a folder that is about to move or go. Asked of the engine
@@ -955,6 +1180,14 @@ extension AppModel {
     /// What a run left in `artifacts/`: the copy's folder while the copy is there, the folder it was
     /// carried to once the copy is gone. Nil when it left nothing.
     func reportFolder(for run: AutomationRun) -> URL? {
+        if run.isJob {
+            // The job's own folder while the automation is there, the place it was carried to once
+            // it is gone. Every run of the job writes into the same one (`reportPage(for:)`).
+            if let live = JobFolders.existing(for: run.automationID)?.appendingPathComponent("artifacts", isDirectory: true),
+               Self.hasVisibleFiles(live) { return live }
+            let kept = JobFolders.kept(for: run.automationID)
+            return Self.hasVisibleFiles(kept) ? kept : nil
+        }
         guard let copyID = run.workspaceID, let copy = automations.copy(id: copyID) else { return nil }
         if copy.isLive {
             let live = URL(fileURLWithPath: copy.path).appendingPathComponent("artifacts", isDirectory: true)
@@ -973,33 +1206,41 @@ extension AppModel {
                 return URL(fileURLWithPath: path)
             }
         }
-        return reportFolder(for: run).flatMap(Self.newestWrittenReport(in:))
+        // A job's folder is shared by all its runs: only what this run wrote while it ran is its own.
+        if run.isJob {
+            guard let started = run.startedAt else { return nil }
+            let until = (run.finishedAt ?? Date()).addingTimeInterval(120)
+            return reportFolder(for: run).flatMap { Self.newestWrittenReport(in: $0, written: started...until) }
+        }
+        return reportFolder(for: run).flatMap { Self.newestWrittenReport(in: $0) }
     }
 
-    /// Files a run left with no written report beside them. Shown as what they are.
+    /// Files a run left with no written report beside them. Shown as what they are. Not for a job:
+    /// its folder holds every run's files, and none of them is evidence of this one.
     func evidenceOnlyFolder(for run: AutomationRun) -> URL? {
-        guard reportPage(for: run) == nil else { return nil }
+        guard !run.isJob, reportPage(for: run) == nil else { return nil }
         return reportFolder(for: run)
     }
 
     nonisolated static func wantsWrittenReport(_ result: AutomationRun.Result) -> Bool {
-        result == .changes || result == .report || result == .unverified
+        result == .changes || result == .done || result == .report || result == .unverified
     }
 
     /// The newest written report in an `artifacts/` folder: a dated report page as `artifact`
     /// builds it (`<date-title>/index.html`), else a document at the top — `.md`, `.html`, `.pdf`.
-    nonisolated static func newestWrittenReport(in artifacts: URL) -> URL? {
+    nonisolated static func newestWrittenReport(in artifacts: URL, written: ClosedRange<Date>? = nil) -> URL? {
         let fm = FileManager.default
         let names = ((try? fm.contentsOfDirectory(atPath: artifacts.path)) ?? [])
             .filter { !$0.hasPrefix(".") && $0 != "latest" }
         func modified(_ url: URL) -> Date {
             (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
         }
+        func inTime(_ url: URL) -> Bool { written.map { $0.contains(modified(url)) } ?? true }
         let pages = names.map { artifacts.appendingPathComponent($0).appendingPathComponent("index.html") }
-            .filter { fm.fileExists(atPath: $0.path) }
+            .filter { fm.fileExists(atPath: $0.path) && inTime($0) }
         if let page = pages.max(by: { modified($0) < modified($1) }) { return page }
         let documents = names.map { artifacts.appendingPathComponent($0) }
-            .filter { ["md", "html", "pdf"].contains($0.pathExtension.lowercased()) }
+            .filter { ["md", "html", "pdf"].contains($0.pathExtension.lowercased()) && inTime($0) }
         return documents.max(by: { modified($0) < modified($1) })
     }
 
@@ -1024,17 +1265,7 @@ extension AppModel {
     /// recorded follow it there, so "Open the report" — on the Mac and on the phone — still opens.
     func followCarriedReports(of copy: WorkCopy) {
         let from = Slug.canonicalPath(URL(fileURLWithPath: copy.path).appendingPathComponent("artifacts").path) + "/"
-        let to = WorkCopies.keptArtifacts(for: copy).path + "/"
-        for chat in conversations.chats {
-            guard let paths = chat.session?.reportPaths,
-                  paths.contains(where: { Slug.canonicalPath($0).hasPrefix(from) }) else { continue }
-            conversations.updateSession(for: chat.id) { session in
-                session.reportPaths = session.reportPaths.map { path in
-                    let canonical = Slug.canonicalPath(path)
-                    return canonical.hasPrefix(from) ? to + canonical.dropFirst(from.count) : path
-                }
-            }
-        }
+        repointReports(from: from, to: WorkCopies.keptArtifacts(for: copy).path + "/")
     }
 
     func openEvidence(of run: AutomationRun) {
@@ -1078,6 +1309,15 @@ extension AppModel {
             if chat.isAutomationRun {
                 return .failure(ChatCopyRefusal(message: String(localized: "This run's copy has already been cleaned up, so there is nowhere to continue it. Start the automation again for a fresh run.")))
             }
+        } else if let runID = chat.automationRunID, let run = automations.run(id: runID), run.isJob {
+            // A job works in its automation's own plain folder, kept between runs — so a run he
+            // answers or asks more of the next day still has somewhere to go on.
+            guard let folder = JobFolders.existing(for: run.automationID) else {
+                return .failure(ChatCopyRefusal(message: String(localized: "This run's folder is gone, so there is nowhere to continue it. Start the automation again for a fresh run.")))
+            }
+            var inFolder = primary
+            inFolder.path = folder.path
+            return .success(inFolder)
         } else if chat.isAutomationRun {
             return .failure(ChatCopyRefusal(message: String(localized: "This run has no copy to work in.")))
         }
@@ -1299,7 +1539,12 @@ extension AppModel {
             break
         }
         guard FileManager.default.fileExists(atPath: copy.checkoutRoot) else {
-            // Removed by hand. The record follows what is on disk.
+            // Removed by hand. The record follows what is on disk — and so must its run. Before this,
+            // the copy was marked gone while the run was left `handoff == .waiting` forever, which
+            // blocked every future run (reasonNotToStart), refused the automation's deletion, and hid
+            // the merge/discard buttons (they needed a live copy). Now: if the branch reached its base,
+            // the run is recorded as merged; otherwise it stays waiting but resolvable without a copy.
+            if case .run(let runID) = copy.owner { await reconcileHandoff(runID) }
             automations.updateCopy(copy.id) { $0.state = .removed; $0.removedAt = Date() }
             return nil
         }
@@ -1472,6 +1717,7 @@ extension AppModel {
     /// an automation run, the run's own section — why it started, what earlier runs found, and
     /// whatever the event carried, fenced off as data.
     func copyContext(chatID: UUID, copy: WorkCopy?) -> String {
+        if copy == nil, let job = jobContext(chatID: chatID) { return "\n\n" + job }
         guard let copy else { return "" }
         let cache = WorkCopies.buildCache(for: copy).path
         guard let runID = conversations.chat(id: chatID)?.automationRunID,
@@ -1484,8 +1730,88 @@ extension AppModel {
             automationName: automation.name, briefRevision: run.briefRevision,
             reasonText: AutomationBrief.reasonLine(run.reason, when: run.createdAt), copy: copy,
             buildCache: cache, pastRuns: past, items: run.items, untrustedPayload: true,
-            checkOnly: run.checkOnly == true, keptFolder: homeAutomation(of: copy) != nil))
+            checkOnly: run.checkOnly == true, keptFolder: homeAutomation(of: copy) != nil,
+            writesReport: run.writesReport))
         return "\n\n" + section
+    }
+
+    /// A job's run is told what it is, where it works, what it may read and use, and how to end —
+    /// in place of the copy's rules, which do not apply to it.
+    func jobContext(chatID: UUID) -> String? {
+        guard let runID = conversations.chat(id: chatID)?.automationRunID,
+              let run = automations.run(id: runID), run.isJob,
+              let automation = automations.automation(id: run.automationID),
+              let folder = JobFolders.existing(for: automation.id) else { return nil }
+        let past = automations.runs(for: automation.id).filter { $0.id != run.id && $0.state.isTerminal }
+        return AutomationBrief.jobSection(AutomationBrief.JobContext(
+            automationName: automation.name, briefRevision: run.briefRevision,
+            reasonText: AutomationBrief.reasonLine(run.reason, when: run.createdAt),
+            folder: folder.path, readFolders: jobReadFolders(automation),
+            tools: automation.allowedTools ?? [], writesReport: run.writesReport ?? automation.reportsAfterRun,
+            pastRuns: past, items: run.items))
+    }
+
+    /// The job run a conversation is, with its automation, or nil for any other conversation.
+    func jobRun(forChat chatID: UUID) -> (run: AutomationRun, automation: Automation)? {
+        guard let runID = conversations.chat(id: chatID)?.automationRunID,
+              let run = automations.run(id: runID), run.isJob,
+              let automation = automations.automation(id: run.automationID) else { return nil }
+        return (run, automation)
+    }
+
+    /// What the engine is told about a job's run, on its start and on every send, so a resumed run
+    /// stays one: no git (`SUPERVISOR_PLAIN_FOLDER`), and the services its automation may use
+    /// without anybody there to approve them (`SUPERVISOR_ALLOW_TOOLS`). Empty for any other chat.
+    func jobEnv(forChat chatID: UUID) -> [String: String] {
+        guard let job = jobRun(forChat: chatID) else { return [:] }
+        var env = ["SUPERVISOR_PLAIN_FOLDER": "1"]
+        let tools = (job.automation.allowedTools ?? []).filter { !$0.isEmpty }
+        if !tools.isEmpty { env["SUPERVISOR_ALLOW_TOOLS"] = tools.joined(separator: ",") }
+        return env
+    }
+
+    /// The start of an automation's run stopped on a question — no git, uncommitted work, the
+    /// project's MCP servers, files too big for a checkpoint. Nobody is there to answer it, so the
+    /// run fails now, with the reason, instead of waiting out the time a silent run is given.
+    func failAutomationStart(chatID: UUID, exitCode: Int32, detail: String) {
+        guard let runID = conversations.chat(id: chatID)?.automationRunID,
+              let run = automations.run(id: runID), !run.state.isTerminal else { return }
+        let why: String
+        switch exitCode {
+        case 76: why = String(localized: "It could not start: its folder has no git.")
+        case 77: why = String(localized: "It could not start: its folder has uncommitted changes.")
+        case 78: why = String(localized: "It could not start: the project's MCP servers have not been allowed or refused yet.")
+        default: why = String(localized: "It could not start: the folder is too big for a checkpoint.")
+        }
+        let first = detail.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+        failRun(runID, first.isEmpty ? why : why + " " + first)
+    }
+
+    /// What a job's run reads: his folders in the product, and the ones its automation names.
+    /// Given to the run as folders beside its own (`--add-dir`), and named in its context as for
+    /// reading only.
+    func jobReadFolders(_ automation: Automation) -> [String] {
+        var out: [String] = []
+        if let product = products.product(id: automation.productID) {
+            out += product.allProjectIDs.compactMap { projects.project(id: $0)?.path }
+        }
+        out += (automation.readFolders ?? []).filter { !$0.isEmpty }
+        var seen = Set<String>()
+        return out.filter { seen.insert(Slug.canonicalPath($0)).inserted }
+    }
+
+    /// The reports chats recorded under one folder, pointed at the folder they were carried to.
+    func repointReports(from: String, to: String) {
+        for chat in conversations.chats {
+            guard let paths = chat.session?.reportPaths,
+                  paths.contains(where: { Slug.canonicalPath($0).hasPrefix(from) }) else { continue }
+            conversations.updateSession(for: chat.id) { session in
+                session.reportPaths = session.reportPaths.map { path in
+                    let canonical = Slug.canonicalPath(path)
+                    return canonical.hasPrefix(from) ? to + canonical.dropFirst(from.count) : path
+                }
+            }
+        }
     }
 
     // MARK: - Telling him

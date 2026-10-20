@@ -248,7 +248,8 @@ extension SupervisorClient {
                    claudeEffort: String = "", claudeModel: String = "",
                    codexEffort: String = "", codexModel: String = "",
                    collaboration: String = "", language: String = "",
-                   dirty: DirtyTreeChoice? = nil, unattended: Bool = false) async -> CommandResult {
+                   dirty: DirtyTreeChoice? = nil, unattended: Bool = false,
+                   job: [String: String] = [:]) async -> CommandResult {
         guard let home = OrchestratorHome.detect()?.path else {
             return CommandResult(stdout: "", stderr: "engine not found", exitCode: -1, launched: false,
                                  endedBy: .neverStarted)
@@ -262,6 +263,8 @@ extension SupervisorClient {
         // An automation's run: nobody answers a dialog while it works (`hooks/permission-gate.sh`),
         // and it gets a browser of its own.
         if unattended { env["SUPERVISOR_UNATTENDED"] = "1" }
+        // A job's run: a plain folder with no git, and the services its automation may use.
+        env.merge(job) { _, new in new }
         env.merge(Self.screenAnswerEnv) { _, new in new }
         return await Shell.run("bash \"$1/bin/night-shift.sh\" start \"$2\" --no-attach 2>&1",
                                args: [home, projectPath], extraEnv: env,
@@ -371,6 +374,36 @@ extension SupervisorClient {
     enum ReviewGateError: Error {
 
         case couldNotApply
+    }
+
+    /// Say — and prove it was us — that this folder is a job's (`AutomationWorkMode.job`): the
+    /// review gate takes a run's word for how it ended only in a folder Bulava has signed for
+    /// (`plain_folder_run`), because a run that could say so itself could skip the review. Signed
+    /// over the folder's slug, so the record is worth nothing anywhere else, and kept beside the
+    /// instances rather than in one, so a run resumed into a fresh instance folder still has it.
+    func markPlainFolder(projectPath: String) throws {
+        let file = Self.plainFolderFile(stateDir: paths.stateDir, projectPath: projectPath)
+        DecisionSigner.publishPublicKey(stateDir: paths.stateDir)
+        guard let signature = DecisionSigner.sign(payload: "plain-folder|\(Slug.forEngine(projectPath))") else {
+            throw ReviewGateError.couldNotApply
+        }
+        do {
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let body: [String: Any] = ["signature": signature, "at": Date().timeIntervalSince1970]
+            try JSONSerialization.data(withJSONObject: body).write(to: file, options: .atomic)
+        } catch {
+            throw ReviewGateError.couldNotApply
+        }
+    }
+
+    /// The job's folder has gone with its automation: its record goes too.
+    func forgetPlainFolder(projectPath: String) {
+        try? FileManager.default.removeItem(at: Self.plainFolderFile(stateDir: paths.stateDir, projectPath: projectPath))
+    }
+
+    nonisolated static func plainFolderFile(stateDir: URL, projectPath: String) -> URL {
+        stateDir.appendingPathComponent("plain-folders", isDirectory: true)
+            .appendingPathComponent(Slug.forEngine(projectPath) + ".json")
     }
 
     /// Turn the supervisor's review off for this project — and prove it was us.

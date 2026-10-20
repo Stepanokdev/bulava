@@ -10,6 +10,8 @@ import SwiftUI
 struct AutomationNeedsSection: View {
     let trigger: AutomationTrigger
     let brief: String
+    /// Folders its runs read (a job's), asked about like a watched one.
+    var readFolders: [String] = []
     /// Something the trigger needs is still unsettled.
     @Binding var blocking: Bool
 
@@ -17,14 +19,16 @@ struct AutomationNeedsSection: View {
     @State private var asking: String?
 
     /// `known`: states already found, shown before the first check comes back.
-    init(trigger: AutomationTrigger, brief: String, blocking: Binding<Bool>, known: [String: NeedState] = [:]) {
+    init(trigger: AutomationTrigger, brief: String, readFolders: [String] = [], blocking: Binding<Bool>,
+         known: [String: NeedState] = [:]) {
         self.trigger = trigger
         self.brief = brief
+        self.readFolders = readFolders
         self._blocking = blocking
         self._states = State(initialValue: known)
     }
 
-    private var needs: [AutomationNeed] { AutomationNeeds.needs(trigger: trigger, brief: brief) }
+    private var needs: [AutomationNeed] { AutomationNeeds.needs(trigger: trigger, brief: brief, readFolders: readFolders) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -78,7 +82,7 @@ struct AutomationNeedsSection: View {
                 .frame(width: 18)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Nobody approves anything while it runs").font(Typo.rowLabel).foregroundStyle(Palette.text)
-                Text("Claude's own permission questions are answered for it: its browser is allowed, anything else is declined and listed in the run's report.")
+                Text("Claude's own permission questions are answered for it: its browser and the services you let it use are allowed, anything else is declined and listed in the run's report.")
                     .font(Typo.caption)
                     .foregroundStyle(Palette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -125,6 +129,7 @@ struct AutomationNeedsSection: View {
         case .calendar: "Calendar"
         case .mail: "Letters in Mail"
         case .folder: "The watched folder"
+        case .readFolder: "A folder it reads"
         case .browser: "Its own browser"
         case .screen: "Screen recording"
         }
@@ -134,7 +139,7 @@ struct AutomationNeedsSection: View {
         switch need {
         case .calendar: Text("To know when a meeting ends.")
         case .mail: Text("To read new letters. Mail has to be open while it watches.")
-        case .folder(let path): Text(verbatim: (path as NSString).abbreviatingWithTildeInPath)
+        case .folder(let path), .readFolder(let path): Text(verbatim: (path as NSString).abbreviatingWithTildeInPath)
         case .browser: Text("Chrome with no window and a profile of its own. It needs no permission and touches nothing of yours.")
         case .screen: Text("For screenshots of apps on this Mac, taken by Bulava.")
         }
@@ -145,6 +150,7 @@ struct AutomationNeedsSection: View {
         case .calendar: "calendar"
         case .mail: "envelope"
         case .folder: "folder"
+        case .readFolder: "folder.badge.questionmark"
         case .browser: "globe"
         case .screen: "rectangle.dashed.badge.record"
         }
@@ -170,10 +176,13 @@ struct AutomationNeedsSection: View {
         // A folder path being typed out is not checked one letter at a time.
         do { try await Task.sleep(for: .milliseconds(400)) } catch { return }
         for need in needs {
-            if case .folder = need {
+            switch need {
+            case .folder, .readFolder:
                 // Known only by reading it. He is here, in the form: if macOS asks, now is the time.
                 if states[need.id] != .ready { states[need.id] = await AutomationNeeds.ask(need) }
                 continue
+            default:
+                break
             }
             states[need.id] = await AutomationNeeds.state(of: need)
         }

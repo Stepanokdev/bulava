@@ -58,11 +58,11 @@ fi
 
 if [ "$GATE" = 1 ]; then
   perl -e 'alarm shift; exec @ARGV' "$TIME_CAP" \
-    codex exec $(codex_effort_flags) -c tools.web_search=true --sandbox read-only --skip-git-repo-check \
+    codex exec $(codex_effort_flags) $(codex_web_search_flags) --sandbox read-only --skip-git-repo-check \
     "$prompt" </dev/null > "$OUT" 2>>"$CODEX_LOG"
 else
   perl -e 'alarm shift; exec @ARGV' "$TIME_CAP" \
-    codex exec $(codex_effort_flags) -c tools.web_search=true --sandbox read-only --skip-git-repo-check \
+    codex exec $(codex_effort_flags) $(codex_web_search_flags) --sandbox read-only --skip-git-repo-check \
     "$prompt" </dev/null > "$OUT"
 fi
 

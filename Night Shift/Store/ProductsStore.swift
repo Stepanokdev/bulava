@@ -5,22 +5,40 @@ import Observation
 @Observable
 final class ProductsStore {
     private(set) var products: [Product] = []
+    /// Products taken off the list, kept so the removal can be undone — by the button on the
+    /// notice, or by adding the same folder again. A click on "Remove product" used to throw away
+    /// the product's history at once, while its run carried on unseen: 14 Oct a working chat was
+    /// recovered only by editing the app's files by hand.
+    private(set) var removed: [RemovedProduct] = []
+
+    nonisolated struct RemovedProduct: Codable, Equatable, Sendable {
+        var product: Product
+        var removedAt: Date
+    }
 
     private let file: JSONFile<[Product]>
+    private let removedFile: JSONFile<[RemovedProduct]>
     private let migrationFlag: JSONFile<Bool>
     private let summaryCleanupFlag: JSONFile<Bool>
 
     init(fileURL: URL = AppSupport.file("products.json"),
          migrationURL: URL = AppSupport.file("products-adopted.json"),
-         summaryCleanupURL: URL = AppSupport.file("products-summaries-cleaned.json")) {
+         summaryCleanupURL: URL = AppSupport.file("products-summaries-cleaned.json"),
+         removedURL: URL? = nil) {
         file = JSONFile<[Product]>(url: fileURL)
         migrationFlag = JSONFile<Bool>(url: migrationURL)
+        // Named after the products' own file — `products.json` → `products-removed.json` — so a store
+        // opened on another file keeps its own list.
+        removedFile = JSONFile<[RemovedProduct]>(
+            url: removedURL ?? URL(fileURLWithPath: fileURL.deletingPathExtension().path + "-removed.json"))
 
         summaryCleanupFlag = JSONFile<Bool>(url: summaryCleanupURL)
         products = file.load() ?? []
+        removed = removedFile.load() ?? []
     }
 
     private func persist() { file.save(products) }
+    private func persistRemoved() { removedFile.save(removed) }
 
     // MARK: - Adoption
 
@@ -79,6 +97,18 @@ final class ProductsStore {
         products.filter(\.pinned) + products.filter { !$0.pinned }
     }
 
+    /// The order his lists show them in, on the Mac and on the phone alike: pinned first, then the
+    /// one he worked in last — so a chat he has just started is at the top, whichever product it is
+    /// in. Products never worked in keep the order they were added in, below the rest.
+    var byRecentWork: [Product] {
+        sorted.enumerated().sorted { a, b in
+            if a.element.pinned != b.element.pinned { return a.element.pinned }
+            let x = a.element.lastWorkedAt ?? .distantPast, y = b.element.lastWorkedAt ?? .distantPast
+            if x != y { return x > y }
+            return a.offset < b.offset
+        }.map(\.element)
+    }
+
     // MARK: - Mutations
 
     @discardableResult
@@ -92,9 +122,44 @@ final class ProductsStore {
         return product
     }
 
-    func remove(_ id: UUID) {
+    func remove(_ id: UUID, at date: Date = Date()) {
+        guard let product = products.first(where: { $0.id == id }) else { return }
         products.removeAll { $0.id == id }
+        removed.removeAll { $0.product.id == id }
+        removed.append(RemovedProduct(product: product, removedAt: date))
         persist()
+        persistRemoved()
+    }
+
+    /// Puts a removed product back exactly as it was — same id, so its chats are its own again.
+    @discardableResult
+    func restore(_ id: UUID) -> Product? {
+        guard let entry = removed.first(where: { $0.product.id == id }) else { return nil }
+        removed.removeAll { $0.product.id == id }
+        if !products.contains(where: { $0.id == id }) { products.append(entry.product) }
+        persist()
+        persistRemoved()
+        return entry.product
+    }
+
+    /// Removed products that worked in any of these folders.
+    func removedProducts(sharingProjects projectIDs: Set<UUID>) -> [Product] {
+        removed.map(\.product).filter { !Set($0.allProjectIDs).isDisjoint(with: projectIDs) }
+    }
+
+    func forgetRemoved(_ id: UUID) {
+        guard removed.contains(where: { $0.product.id == id }) else { return }
+        removed.removeAll { $0.product.id == id }
+        persistRemoved()
+    }
+
+    /// Lets go of products removed before `date`, and says which, so their chats can go as well.
+    func expireRemoved(before date: Date) -> [UUID] {
+        let gone = removed.filter { $0.removedAt < date }.map(\.product.id)
+        guard !gone.isEmpty else { return [] }
+        removed.removeAll { gone.contains($0.product.id) }
+        persistRemoved()
+        return gone
     }
 
     func update(_ product: Product) {

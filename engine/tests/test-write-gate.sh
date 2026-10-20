@@ -165,6 +165,31 @@ check "…and that same path IS allowed by broad when it is not an engine" \
                                                  'is_allow "$(own_gate "$NEAR/notes.txt")"'
 rm -rf "$OWN" "$NEAR"
 
+echo "== the product's other folders: writable when the app says so, and only those =="
+# 13 Oct: the product's second folder was set to "can change" in the app, and the gate refused an
+# edit to the dashboard inside it.
+clearspec
+# Outside every temp folder: the gate lets scratch writes there through on their own.
+OUTSIDE="$(mktemp -d "$HOME/Library/Caches/bulava-write-gate.XXXXXX")"
+EXTRA="$(canon_path "$OUTSIDE")/extra"; OTHER="$(canon_path "$OUTSIDE")/other"; mkdir -p "$EXTRA" "$OTHER"; CHATDIR="$(mktemp -d)"
+printf '%s\n%s\n' "$EXTRA" "$OTHER" > "$CHATDIR/additional-directories.txt"
+check "no list from the app: the extra folder is refused" 'is_deny "$(gate "$EXTRA/dashboard/index.html")"'
+printf '%s\n/\n%s\n' "$EXTRA" "$HOME" > "$CHATDIR/writable-directories.txt"
+SUPERVISOR_EXTRA_DIRS_FILE="$CHATDIR/additional-directories.txt" record_writable_dirs "$IDIR"
+check "a folder the app marked writable is allowed"       'is_allow "$(gate "$EXTRA/dashboard/index.html")"'
+check "a folder handed only for reading is still refused" 'is_deny "$(gate "$OTHER/notes.md")"'
+check "'/' and the home folder never make it onto the list" '! grep -qx "/" "$IDIR/writable-dirs" && ! grep -qx "$(canon_path "$HOME")" "$IDIR/writable-dirs"'
+check "a lookalike sibling name is not inside it"         'is_deny "$(gate "${EXTRA}-evil/x.txt")"'
+setspec '{"schema":1,"mode":"patch","write_paths":["src/**"]}'
+check "a scoped run's write_paths fence still wins"       'is_deny "$(gate "$EXTRA/dashboard/index.html")"'
+clearspec
+bashgate(){ printf '{"tool_name":"Bash","cwd":"%s","tool_input":{"command":%s}}' "$CPROJ" "$(jq -Rn --arg c "$1" '$c')" \
+  | ORCHESTRATOR_RUN_ID="$RID" "$GATE" 2>/dev/null; }
+check "the worker cannot add a folder to the list itself" 'is_deny "$(bashgate "echo /etc >> $IDIR/writable-dirs")"'
+SUPERVISOR_EXTRA_DIRS_FILE="" record_writable_dirs "$IDIR"
+check "a launch without the app's list clears it"         '[ ! -e "$IDIR/writable-dirs" ]'
+rm -rf "$OUTSIDE" "$CHATDIR"
+
 echo ""
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -131,6 +131,9 @@ enum AutomationPresentation {
         case .awaitingAway:
             return Look(word: String(localized: "Waiting for you to step away"), symbol: "moon.zzz", tint: Palette.textSecondary, wash: Palette.panelMuted)
         case .preparing:
+            if run.isJob {
+                return Look(word: String(localized: "Getting ready"), symbol: "circle.dotted", tint: Palette.accent, wash: Palette.accentSoft)
+            }
             return Look(word: String(localized: "Getting its copy ready"), symbol: "square.on.square.dashed", tint: Palette.accent, wash: Palette.accentSoft)
         case .running:
             if let phase, phase.wantsAttention {
@@ -155,6 +158,8 @@ enum AutomationPresentation {
                 default:
                     return Look(word: String(localized: "Changes wait for you"), symbol: "arrow.triangle.branch", tint: Palette.orange, wash: Palette.orangeSoft)
                 }
+            case .done?:
+                return Look(word: String(localized: "Done"), symbol: "checkmark.circle", tint: Palette.green, wash: Palette.greenSoft)
             case .noChange?:
                 return Look(word: String(localized: "Nothing new"), symbol: "checkmark", tint: Palette.textTertiary, wash: Palette.panelMuted)
             case .report?:

@@ -16,6 +16,29 @@ nonisolated final class AccountBrowserTests: XCTestCase {
         try? FileManager.default.removeItem(at: state)
     }
 
+    /// A run that has reported an outcome but is still alive keeps the browser. Keying the token on
+    /// "no outcome yet" refused a live run the browser with 401 the instant it declared anything —
+    /// 8 Oct, a run that had declared `blocked` could not open appstoreconnect, and declared blocked
+    /// for exactly that.
+    func testALiveRunKeepsTheBrowserAfterItReportsAnOutcome() {
+        func inst(watchdog: Bool, done: String?) -> SupervisorInstance {
+            var i = SupervisorInstance(slug: "s", projectPath: "/tmp/p", session: "x",
+                                       watchdogAlive: watchdog, hasPlan: false, hasResearch: false)
+            i.doneResult = done
+            return i
+        }
+        // The bug: alive worker, outcome declared (needs-user / blocked / a change accepted).
+        XCTAssertTrue(inst(watchdog: true, done: "blocked").mayUseBrowser)
+        XCTAssertTrue(inst(watchdog: true, done: "needs-user").mayUseBrowser)
+        XCTAssertTrue(inst(watchdog: true, done: "succeeded_changes").mayUseBrowser)
+        // Still working, nothing reported yet — and a run starting up before its watchdog is seen.
+        XCTAssertTrue(inst(watchdog: true, done: nil).mayUseBrowser)
+        XCTAssertTrue(inst(watchdog: false, done: nil).mayUseBrowser)
+        // Truly over: the worker is gone and it has reported. Only then is the token dropped.
+        XCTAssertFalse(inst(watchdog: false, done: "succeeded_changes").mayUseBrowser)
+        XCTAssertFalse(inst(watchdog: false, done: "blocked").mayUseBrowser)
+    }
+
     @MainActor
     func testASiteIsKeptForHimUntilHeOpensItToRunsWithoutHim() throws {
         let folder = state.appendingPathComponent("browser")
@@ -93,16 +116,20 @@ nonisolated final class AccountBrowserTests: XCTestCase {
         XCTAssertNil(browser.signInRequest)
         XCTAssertFalse(model.toasts.contains { $0.key == AccountBrowser.signInToastKey })
 
-        // The run takes it, the way chrome-devtools-mcp would.
+        // The run uses it, the way chrome-devtools-mcp would.
         try await Task.sleep(for: .milliseconds(200))
         let client = BrowserBrokerTests.Client(port: browser.port, token: token)
         let fake = BrowserBrokerTests.FakeBrowser()
         browser.broker.makeTransport = { fake }
         _ = try await client.call(1, "Browser.getVersion")
-        XCTAssertEqual(try ask("status")["state"] as? String, "yours")
+        try await Task.sleep(for: .milliseconds(200))
+        let mine = try ask("status")
+        XCTAssertEqual(mine["state"] as? String, "yours")
+        XCTAssertEqual(mine["tabs"] as? Int, 1, "the blank tab it starts with")
+        // Another run asking meanwhile is not told "busy": it gets tabs of its own.
         let other = try ask("status", String(repeating: "0", count: 48))
-        XCTAssertEqual(other["state"] as? String, "busy")
-        XCTAssertEqual(other["holder"] as? String, "project", "named by its chat, or by its project when it has none")
+        XCTAssertEqual(other["state"] as? String, "free")
+        XCTAssertEqual(other["others"] as? [String], ["project"], "named by its chat, or by its project when it has none")
         XCTAssertEqual(try ask("release")["released"] as? Bool, true)
         client.close()
 
@@ -124,11 +151,11 @@ nonisolated final class AccountBrowserTests: XCTestCase {
         unsetenv("BULAVA_STATE_DIR")
     }
 
-    /// A sign-in Bulava saw in a run's tab belongs to that run's lease of the browser. Run A reaches
-    /// Google's sign-in: he is asked, in A's chat on the phone. A lets go of the browser: the request
-    /// goes. Run B then reaches the same sign-in in the same tab: he is asked again, for B, in B's chat.
+    /// A sign-in Bulava saw in a run's tab belongs to that run. Run A's tab reaches Google's sign-in:
+    /// he is asked, in A's chat on the phone. A lets go of the browser: the request goes. Run B's own
+    /// tab then reaches the same sign-in: he is asked again, for B, in B's chat.
     @MainActor
-    func testAnAutomaticSignInGoesWithItsLeaseAndTheNextRunIsAskedForItself() async throws {
+    func testAnAutomaticSignInGoesWithItsRunAndTheNextRunIsAskedForItself() async throws {
         guard ChromeApp.find() != nil else { throw XCTSkip("Google Chrome is not installed") }
         let supervisor = state.appendingPathComponent("supervisor")
         func run(_ name: String, _ token: String) throws -> URL {
@@ -169,11 +196,13 @@ nonisolated final class AccountBrowserTests: XCTestCase {
                 .home.attention.map(\.id).filter { $0.hasPrefix("signin:") }
         }
         func settle() async throws { try await Task.sleep(for: .milliseconds(400)) }
-        let signIn = #"{"method":"Target.targetInfoChanged","params":{"targetInfo":{"targetId":"G1","type":"page","url":"https://accounts.google.com/v3/signin/identifier?continue=https%3A%2F%2Fsearch.google.com%2Fsearch-console"}}}"#
+        let signIn = "https://accounts.google.com/v3/signin/identifier?continue=https%3A%2F%2Fsearch.google.com%2Fsearch-console"
 
         let a = BrowserBrokerTests.Client(port: browser.port, token: tokenA)
         _ = try await a.call(1, "Browser.getVersion")
-        fake.emit(signIn)
+        try await settle()
+        let tabA = try XCTUnwrap(browser.broker.tabs(of: tokenA).first)
+        fake.navigated(tabA, to: signIn)
         try await settle()
         XCTAssertEqual(browser.signInRequest?.runSlug, Slug.forPath(projectA.path))
         XCTAssertEqual(waiting(), ["signin:\(chatA.id.uuidString):search.google.com"], "asked, in A's chat")
@@ -187,9 +216,11 @@ nonisolated final class AccountBrowserTests: XCTestCase {
 
         let b = BrowserBrokerTests.Client(port: browser.port, token: tokenB)
         _ = try await b.call(1, "Browser.getVersion")
-        fake.emit(signIn)
         try await settle()
-        XCTAssertEqual(browser.signInRequest?.runSlug, Slug.forPath(projectB.path), "the same tab and site, now B's")
+        let tabB = try XCTUnwrap(browser.broker.tabs(of: tokenB).first)
+        fake.navigated(tabB, to: signIn)
+        try await settle()
+        XCTAssertEqual(browser.signInRequest?.runSlug, Slug.forPath(projectB.path), "the same site, in B's own tab")
         XCTAssertEqual(waiting(), ["signin:\(chatB.id.uuidString):search.google.com"], "asked again, in B's chat")
         b.close()
     }

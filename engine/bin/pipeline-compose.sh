@@ -41,6 +41,16 @@ if [ -s "$COMPILED" ]; then
     if [ "$(jq -r '.brief.research // false' "$COMPILED" 2>/dev/null)" = true ]; then
       printf '\n[ДОСЛІДЖЕННЯ] Результат цієї задачі — звіт, а не зміни коду. Код продукту не змінюй; звіт поклади в artifacts/ (HTML або Markdown). Коли він готовий, заяви результат succeeded_research і назви в підсумку шлях до звіту — Codex перевірятиме саме його зміст.\n'
     fi
+    # A role pipeline: the agreement is the plan above; each role's own result is named here so the
+    # implementer can go back to the analysis, the test cases and both architectures themselves.
+    if [ "$(jq -r '.brief.roles | length' "$COMPILED" 2>/dev/null)" -gt 0 ] 2>/dev/null; then
+      printf '\n[РОЛІ ПІДГОТОВКИ] Узгоджене рішення ролей — у плані вище (%s). Результати кожної ролі:\n' "$ART/peer-alignment.md"
+      jq -r '.brief.roles[] | "\(.id)\t\(.title)\t\(.engine)"' "$COMPILED" 2>/dev/null | while IFS="$(printf '\t')" read -r _rid _rt _re; do
+        if [ -s "$ART/role-$_rid.md" ]; then printf -- '- %s (%s): %s\n' "$_rt" "$_re" "$ART/role-$_rid.md"
+        else printf -- '- %s (%s): результату немає — %s\n' "$_rt" "$_re" "$(cat "$ART/role-$_rid.unavailable" 2>/dev/null || echo "причина невідома")"; fi
+      done
+      printf 'Тест-кейси з узгодженого рішення — це критерії готовності: перед завершенням перевір кожен і назви в підсумку, як. Якщо не згоден з узгодженим рішенням, скажи це першим рядком і поясни, перш ніж відходити від нього. Codex перевірятиме роботу саме проти цього рішення.\n'
+    fi
     _skills="$(jq -r '.brief.skills[]? // empty' "$COMPILED" 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')"
     if [ -n "$_skills" ]; then
       printf '\n[ОБОВ'"'"'ЯЗКОВІ СКІЛИ] Перед роботою виклич і застосуй: %s. Ворота шукатимуть виклик Skill у транскрипті цієї сесії; без нього робота повернеться.\n' "$_skills"

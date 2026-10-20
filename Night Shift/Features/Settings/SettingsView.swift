@@ -541,15 +541,9 @@ struct SettingsView: View {
             if !model.shares.store.links.isEmpty {
                 SharedLinksList(shares: model.shares)
             }
-
-            Hairline()
-
-            toggleRow("Bulava's browser",
-                      help: "Runs work in a Chrome of Bulava's own: you sign in to sites there once, and runs use them without asking you, one run at a time. Runs that need no sign-in get a throwaway browser. Off, runs use the browser your own Claude setup gives them.",
-                      isOn: $draft.accountBrowserEnabled)
-            if draft.accountBrowserEnabled {
-                AccountBrowserSection(browser: model.browser)
-            }
+            // Bulava's browser moved to its own sidebar section (Route.browser / BrowserScreen),
+            // beside Automations and Pipelines: which sites a run may reach is a standing decision,
+            // not a switch set once in Settings.
         }
         .padding(.top, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -603,32 +597,10 @@ struct SettingsView: View {
 
     // MARK: - Save bar
 
-    private var merged: AppSettings {
-        var settings = draft
-        settings.appearance = model.settings.appearance
-        settings.interfaceLanguage = model.settings.interfaceLanguage
-        settings.reportLanguage = model.settings.reportLanguage
-        settings.dictationLanguage = model.settings.dictationLanguage
-        settings.reportWriter = model.settings.reportWriter
-
-        settings.claudeModel = model.settings.claudeModel
-        settings.claudeEffort = model.settings.claudeEffort
-        settings.codexModel = model.settings.codexModel
-        settings.codexEffort = model.settings.codexEffort
-        settings.claudeStandsInForCodex = model.settings.claudeStandsInForCodex
-        settings.workersMayDriveApps = model.settings.workersMayDriveApps
-        settings.autoRepair = model.settings.autoRepair
-        settings.shareErrorReports = model.settings.shareErrorReports
-        settings.weeklyStats = model.settings.weeklyStats
-        settings.shareUsage = model.settings.shareUsage
-        settings.usageSince = model.settings.usageSince
-        settings.usageReportedWeek = model.settings.usageReportedWeek
-        // The switch is live, like every other switch here. The profile is NOT: it is typed, and
-        // a live binding on a text field would write the whole settings file — and re-publish the
-        // engine's configuration — once per keystroke. It goes through draft and Save.
-        settings.devLearningEnabled = model.settings.devLearningEnabled
-        return settings
-    }
+    // The draft holds the advanced fields; every live switch, picker and language menu — and the
+    // browser section in its own place — keeps its current value. One list, in `AppSettings`, so a
+    // new live field cannot be forgotten here (`applyingAdvancedDraft`, checked by a test).
+    private var merged: AppSettings { model.settings.applyingAdvancedDraft(draft) }
 
     private var dirty: Bool { merged != model.settings }
 

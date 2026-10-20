@@ -39,6 +39,10 @@ private sealed interface Loaded {
     data class Done(val image: ImageBitmap) : Loaded
 }
 
+/**
+ * A picture from the Mac: a spinner in its place while it comes, a picture mark if it cannot be had
+ * — or, for both, [fallback]: what the caller shows instead, as a product's initials stand for its icon.
+ */
 @Composable
 fun RemoteImage(
     controller: AppController,
@@ -46,6 +50,7 @@ fun RemoteImage(
     description: String?,
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop,
+    fallback: (@Composable () -> Unit)? = null,
 ) {
     val state by produceState<Loaded>(ImageCache.get(ref)?.let { Loaded.Done(it) } ?: Loaded.Loading, ref) {
         if (value is Loaded.Done) return@produceState
@@ -56,12 +61,14 @@ fun RemoteImage(
             Loaded.Done(image)
         } else Loaded.Failed
     }
-    when (val s = state) {
-        is Loaded.Done -> Image(s.image, contentDescription = description, modifier = modifier, contentScale = contentScale)
-        Loaded.Loading -> Box(modifier.background(Bulava.colors.surfaceMuted), contentAlignment = Alignment.Center) {
+    val s = state
+    when {
+        s is Loaded.Done -> Image(s.image, contentDescription = description, modifier = modifier, contentScale = contentScale)
+        fallback != null -> Box(modifier, contentAlignment = Alignment.Center) { fallback() }
+        s == Loaded.Loading -> Box(modifier.background(Bulava.colors.surfaceMuted), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Bulava.colors.textFaint)
         }
-        Loaded.Failed -> Box(modifier.background(Bulava.colors.surfaceMuted), contentAlignment = Alignment.Center) {
+        else -> Box(modifier.background(Bulava.colors.surfaceMuted), contentAlignment = Alignment.Center) {
             Icon(Icons.Image, description, tint = Bulava.colors.textFaint, modifier = Modifier.size(22.dp))
         }
     }

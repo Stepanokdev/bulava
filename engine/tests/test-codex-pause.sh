@@ -662,6 +662,26 @@ printf '%s\n' "$RID" > "$IDIR/run-id"
 codex_consultations_settled "$IDIR"
 check "answering one clears the queue"            '! codex_consultations_owed "$IDIR"'
 
+echo "===== a verdict settles the review that was owed (the ten-minute wake-up loop) ====="
+# 14–15 Oct: Codex ran out mid-run, the review was recorded as owed; the worker then declared
+# "nothing to change" with an empty tree, the gate settled that, and the owed marker stayed. Every
+# ten minutes the watchdog woke the chat to finish a review that the next stop skipped as "nothing
+# changed since the verdict" — 182 wake-ups in one chat.
+mkcase; codex_usage 28800
+rungate s-loop
+check "the review is owed while Codex is out"     '[ -e "$IDIR/review-pending" ]'
+git -C "$PROJ" checkout -q -- app.txt
+jq -n --arg rid "$RID" '{result:"succeeded_no_change", summary:"нічого міняти", run_id:$rid, ts:"2026-10-15 20:00:00"}' \
+  > "$IDIR/outcome.json"
+codex_available; rm -f "$IDIR/paused-for-limit.json"
+rungate s-loop
+check "the declared outcome got its verdict"      '[ -s "$IDIR/done" ]'
+check "and the owed review went with it"          '[ ! -e "$IDIR/review-pending" ]'
+: > "$IDIR/review-pending"                         # a marker left by an older engine
+rungate s-loop
+check "an unchanged stop after a verdict clears a stale owed review" '[ ! -e "$IDIR/review-pending" ]'
+rm -f "$IDIR/outcome.json"
+
 echo
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

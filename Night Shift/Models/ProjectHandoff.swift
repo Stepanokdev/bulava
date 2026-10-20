@@ -17,6 +17,12 @@ nonisolated enum ProjectHandoff: Equatable {
         var resumesOwnSession: Bool
     }
 
+    /// Work a finished-looking holder still has under way: a message accepted for it and not yet
+    /// delivered, or commands it left running in the background. Either makes it not takeable.
+    static func holderHasWorkUnderWay(queuedMessages: Int, backgroundCommands: Int) -> Bool {
+        queuedMessages > 0 || backgroundCommands > 0
+    }
+
     /// `holderIsTakeable` is the whole question, and it is deliberately not "is it running".
     ///
     /// A run holding a question for the director, paused on a usage window, parked on a deadline,

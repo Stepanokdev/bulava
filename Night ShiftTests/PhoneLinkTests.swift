@@ -623,7 +623,9 @@ nonisolated final class PhoneLinkTests: XCTestCase {
         XCTAssertEqual(model.products.product(id: product.id)?.pinned, true)
         _ = try await phone.request("product.remove", ["productID": product.id.uuidString])
         XCTAssertNil(model.products.product(id: product.id))
-        XCTAssertTrue(model.conversations.entries(inChat: chat.id).isEmpty)
+        // Removed, not destroyed: kept so the removal can be undone, or the folder added again.
+        XCTAssertEqual(model.products.removed.map(\.product.id), [product.id])
+        XCTAssertFalse(model.conversations.entries(inChat: chat.id).isEmpty)
         phone.close()
     }
 

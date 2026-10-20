@@ -137,6 +137,33 @@ n="$(grep -c '^artifacts/$' "$PROJ/.gitignore")"
 [ -f "$PROJ/artifacts/latest/index.html" ] && ok "and it resolves" || bad "latest does not resolve"
 
 echo
+echo "===== the same request built again goes back into its own folder ====="
+# 19 Oct: a report rebuilt after a correction landed in a new dated folder, the chat kept the first
+# one, and "Open report" said the file was missing.
+first="$("$BIN_DIR/artifact.sh" "$REPORT" "$PROJ" 2>&1 | sed -n 's/^✅ артефакт: //p')"
+jq '.title = "Зовсім інша назва після виправлення" | .summary = "REBUILT-SUMMARY"' "$REPORT/report.json" > "$TMP/r.json" \
+  && mv "$TMP/r.json" "$REPORT/report.json"
+again="$("$BIN_DIR/artifact.sh" "$REPORT" "$PROJ" 2>&1 | sed -n 's/^✅ артефакт: //p')"
+[ -n "$first" ] && [ "$first" = "$again" ] && ok "the same path, even under a new title" || bad "rebuilt elsewhere: $first → $again"
+grep -q "REBUILT-SUMMARY" "$again" 2>/dev/null && ok "with the new content" || bad "the old page is still there"
+[ -z "$(ls -A "$PROJ/artifacts" | grep -E '^\.(building|replaced)-')" ] && ok "and nothing half-built is left beside it" \
+  || bad "leftovers: $(ls -A "$PROJ/artifacts")"
+# A link to the folder (`latest`, or one standing where an old path was) sorts first: the rebuild
+# still goes into the real folder, and the link keeps pointing at it.
+real="$(dirname "$again")"
+ln -s "$(basename "$real")" "$PROJ/artifacts/0000-link-to-it"
+jq '.summary = "THIRD-BUILD"' "$REPORT/report.json" > "$TMP/r.json" && mv "$TMP/r.json" "$REPORT/report.json"
+fourth="$("$BIN_DIR/artifact.sh" "$REPORT" "$PROJ" 2>&1 | sed -n 's/^✅ артефакт: //p')"
+[ "$fourth" = "$again" ] && grep -q THIRD-BUILD "$again" && [ -L "$PROJ/artifacts/0000-link-to-it" ] \
+  && ok "a link to the folder is left a link, and the folder itself is rebuilt" \
+  || bad "rebuilt through the link: $fourth, link kept: $([ -L "$PROJ/artifacts/0000-link-to-it" ] && echo yes || echo no)"
+rm -f "$PROJ/artifacts/0000-link-to-it"
+OTHER="$TMP/other-request"; mkdir -p "$OTHER"; cp "$REPORT/report.json" "$OTHER/"
+third="$("$BIN_DIR/artifact.sh" "$OTHER" "$PROJ" 2>&1 | sed -n 's/^✅ артефакт: //p')"
+[ -n "$third" ] && [ "$third" != "$again" ] && [ -f "$again" ] && ok "another request gets its own folder and leaves this one alone" \
+  || bad "another request overwrote it: $third"
+
+echo
 echo "===== a run with no manifest is refused, not faked ====="
 mkdir -p "$TMP/empty"
 if "$BIN_DIR/artifact.sh" "$TMP/empty" "$PROJ" >/dev/null 2>&1; then

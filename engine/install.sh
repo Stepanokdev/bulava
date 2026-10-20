@@ -84,6 +84,28 @@ if [ "$WORKER_ONLY" = 0 ] && [ -d "$LEGACY_LESSONS" ]; then
   fi
 fi
 
+# python3 has to run before anything below is written.
+#
+# On a Mac without Apple's command line tools, /usr/bin/python3 is only a stand-in: it asks macOS to
+# install them and exits. This script found that out after it had already backed up Claude Code's
+# settings, so every attempt left one more backup behind and ended on Apple's "See `man
+# xcode-select` for more details." — which Bulava then showed as the reason the engine did not
+# install (a 1.13 user's report, 2026-10-11). Asked before the settings, it leaves them as they were
+# and says what is wrong; python3's own words come first, because they are the ones that know why.
+#
+# It runs python3 rather than reasoning about it, so that it holds for every reason python3 can fail
+# (an Xcode licence nobody accepted, a broken install). Bulava asks the disk before it ever starts
+# this script (DeveloperTools.swift), so the stand-in's dialog only meets someone who ran it from a
+# terminal — where typing python3 would have brought up the same dialog.
+if ! py_says="$(python3 -c 'import json, os, pathlib, shlex' 2>&1)"; then
+  {
+    if [ -n "$py_says" ]; then printf '%s\n\n' "$py_says"; fi
+    echo "❌ Движок не встановлено, налаштування Claude Code не змінено."
+    echo "   python3 на цьому Mac не запускається. Без інструментів командного рядка Apple він лише заглушка — їх ставить xcode-select --install."
+  } >&2
+  exit 1
+fi
+
 # A first install has no ~/.claude at all, and this used to die on the backup before doing
 # anything — the one moment the script exists for.
 mkdir -p ~/.claude
@@ -181,8 +203,8 @@ worker = {"hooks": {
         {"matcher": "Bash", "hooks": [
             {"type": "command", "command": cmd("hooks/control-guard.sh"), "timeout": 30}]},
     ],
-    # Where Claude Code would ask a person. An automation's run answers here instead of waiting
-    # for a click nobody can give; with a person there it only writes down what was asked.
+    # Where Claude Code would ask for permission. Chats approve ordinary commands here, with a
+    # removal guard; automations allow their own browser and decline other permission requests.
     "PermissionRequest": [{"matcher": "", "hooks": [
         {"type": "command", "command": cmd("hooks/permission-gate.sh"), "timeout": 30}]}],
     "PermissionDenied": [{"matcher": "", "hooks": [

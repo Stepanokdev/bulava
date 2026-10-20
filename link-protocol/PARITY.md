@@ -16,8 +16,9 @@ phone by decision · 🔜 not yet on the phone.
 | New chat | `+` beside the product, or the pencil in the top bar. The chat id is the phone's | ✅ |
 | Rename, pin, archive a chat | Top bar menu | ✅ |
 | Archived chats, read, unarchive | "Archived" under the product; the menu unarchives | ✅ |
+| An automation's runs, each a conversation, folded under the product's chats ("Automations") | "Automations · N" under each product's chats: folded, with an orange dot while one of them waits for you, and open while one is on screen. Waiting ones first, then the newest, each marked as a run so it never reads as one of your chats; opening one shows its conversation. The search finds them too, under the project and the automation | ✅ |
 | Go to a product or chat (⌘K) | Search at the top of the drawer, by chat title | ✅ |
-| Rename, pin, remove a product; product icon | `…` beside the product in the drawer; the icon is the Mac's own | ✅ |
+| Rename, pin, remove a product; product icon | `…` beside the product in the drawer. The icon is the Mac's own, sent as a small picture; the initials where there is none | ✅ |
 | Claude's and Codex's limits at the foot of the sidebar | At the foot of the drawer, above the settings: each engine's session and week, how much is used and when it comes back, dimmed when read long ago; folded to one line — each engine's tightest window — and the fold is kept; each meter with the tick where an even pace would be and the pace in the Mac's words | ✅ |
 | The week's widgets on the Mac's desktop (without you, how runs ended, receipt, rhythm, code changes, limits, working now, the week at a glance) | The same faces on the Home Screen — iPhone (with the Lock Screen's limits, without you and working now) and Android — drawn from `home.week`, kept for when the Mac is out of reach and saying how old they are; removed when the Mac is forgotten. The demo sends no week: its widgets say to connect a Mac | ✅ |
 | A tap on a week widget (`bulava://week/<face>`) opens Bulava | A tap on a widget opens the app | ✅ |

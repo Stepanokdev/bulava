@@ -140,3 +140,67 @@ nonisolated final class ReportOpensTests: XCTestCase {
         XCTAssertNil(rejected)
     }
 }
+
+/// "Open report" when the report it remembers was rebuilt elsewhere (19 Oct: "Файлу звіту немає",
+/// with the report right there under its new name).
+nonisolated final class ReportMovedTests: XCTestCase {
+
+    private var state: URL!
+
+    override func setUp() async throws {
+        state = FileManager.default.temporaryDirectory.appendingPathComponent("bulava-moved-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+        FixtureState.use(state.appendingPathComponent("app").path)
+    }
+
+    override func tearDown() async throws {
+        FixtureState.restore()
+        try? FileManager.default.removeItem(at: state)
+    }
+
+    /// A report folder as the engine leaves it: the page, and the request Bulava wrote, copied in.
+    private func report(_ name: String, title: String, request: String, in root: URL) throws -> String {
+        let folder = root.appendingPathComponent(name, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let marks = SupervisorClient.reportRequestMarks(title: title, originalRequest: request)
+        try "# ОКРЕМИЙ ХІД: ЛИШЕ ЗВІТ\n\n\(marks[0])\n\nПочатковий запит:\n\(marks[1])\n"
+            .write(to: folder.appendingPathComponent("REPORT-REQUEST.md"), atomically: true, encoding: .utf8)
+        let page = folder.appendingPathComponent("index.html")
+        try "<html>\(name)</html>".write(to: page, atomically: true, encoding: .utf8)
+        return page.path
+    }
+
+    @MainActor
+    func testAReportRebuiltUnderANewNameIsFoundForItsOwnChatOnly() throws {
+        let root = state.appendingPathComponent("project/artifacts", isDirectory: true)
+        let model = AppModel()
+        let product = model.products.add(name: "Bulava")
+        let chat = model.conversations.newChat(for: product.id)
+        model.conversations.appendUser("Знайди мені баги за тиждень", productID: product.id, chatID: chat.id)
+        model.conversations.bindSession(ChatSessionBinding(primaryProjectID: nil, projectPath: state.path, claudeSessionID: "S"), to: chat.id)
+        let mine = try XCTUnwrap(model.conversations.chat(id: chat.id))
+
+        let first = try report("2026-10-19-1106-баги", title: mine.title, request: mine.firstMessage, in: root)
+        model.conversations.addReport(first, to: chat.id)
+        let rebuilt = try report("2026-10-19-1123-баги", title: mine.title, request: mine.firstMessage, in: root)
+        // Another chat, same title, a different request — and the newest of all.
+        Thread.sleep(forTimeInterval: 1.1)
+        _ = try report("2026-10-19-1130-баги", title: mine.title, request: "Інша розмова зовсім", in: root)
+        try FileManager.default.removeItem(at: URL(fileURLWithPath: first).deletingLastPathComponent())
+        // The engine's `latest` link points at it too — but it is a pointer that moves, never a home.
+        try FileManager.default.createSymbolicLink(atPath: root.appendingPathComponent("latest").path,
+                                                   withDestinationPath: "2026-10-19-1123-баги")
+
+        XCTAssertTrue(model.healReportPaths(in: chat.id))
+        XCTAssertEqual(model.conversations.chat(id: chat.id)?.session?.reportPaths, [rebuilt],
+                       "this chat's report, rebuilt — not the newer one of another chat with the same title")
+        model.openChatReport(chatID: chat.id, path: first, title: "")
+        XCTAssertEqual(model.reportViewer?.htmlURL.path, rebuilt, "the button opens it, not an error")
+        XCTAssertFalse(model.healReportPaths(in: chat.id), "nothing left to repair")
+
+        // Nothing of this chat's left at all: nothing is taken in its place.
+        try FileManager.default.removeItem(at: URL(fileURLWithPath: rebuilt).deletingLastPathComponent())
+        XCTAssertFalse(model.healReportPaths(in: chat.id))
+        XCTAssertEqual(model.conversations.chat(id: chat.id)?.session?.reportPaths, [rebuilt])
+    }
+}

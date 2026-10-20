@@ -278,6 +278,11 @@ data class Product(
     val lastWorkedAtMs: Long? = null,
     val chats: List<ChatSummary> = emptyList(),
     val archivedChats: List<ChatSummary> = emptyList(),
+    /**
+     * Its automations' runs, each a conversation of its own: those waiting for the director first,
+     * then the newest. Not among [chats]. Empty from an older Mac.
+     */
+    val automationChats: List<ChatSummary> = emptyList(),
 )
 
 @Serializable
@@ -290,6 +295,8 @@ data class ChatSummary(
     val createdAtMs: Long = 0,
     val updatedAtMs: Long = 0,
     val status: Status = Status(),
+    /** The automation whose run this chat is, by its name. Null for the director's own chats. */
+    val automation: String? = null,
 )
 
 @Serializable

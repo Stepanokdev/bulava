@@ -9,6 +9,43 @@ import XCTest
 /// nothing said why.
 nonisolated final class SettingsSurviveTestRunsTests: XCTestCase {
 
+    /// Saving the advanced Settings draft keeps every live switch — the browser one among them,
+    /// now that it lives in its own section. He toggled the browser, saved an unrelated advanced
+    /// change, and the browser reverted; this pins that it does not.
+    func testSavingAdvancedSettingsKeepsTheLiveBrowserSwitch() {
+        var live = AppSettings.fallback
+        live.accountBrowserEnabled = false     // just turned off in the browser section
+        live.weeklyStats = false               // another live switch, also off
+        var draft = AppSettings.fallback       // snapshotted on Settings appear, before the toggles
+        draft.accountBrowserEnabled = true
+        draft.weeklyStats = true
+        draft.pollSeconds = 9                  // the one advanced field he actually changed
+
+        let saved = live.applyingAdvancedDraft(draft)
+        XCTAssertFalse(saved.accountBrowserEnabled, "Save must not revert the live browser switch")
+        XCTAssertFalse(saved.weeklyStats, "nor any other live switch")
+        XCTAssertEqual(saved.pollSeconds, 9, "the advanced field the draft owns is applied")
+    }
+
+    /// The live-field list must not fall behind the struct: every stored field is either owned by
+    /// the advanced draft or preserved live. If a new field is neither, applying an all-different
+    /// draft over all-different live values leaves a value that matches neither — caught here.
+    func testApplyingAdvancedDraftComesFromDraftOrLiveForEveryField() throws {
+        // Two fully-decided settings with no value in common where it can be helped, encoded to
+        // compare field by field without naming each one.
+        let live = AppSettings.fallback
+        var draft = AppSettings.fallback
+        draft.pollSeconds = live.pollSeconds + 1
+        draft.stateDirPath = live.stateDirPath + "/x"
+        let saved = live.applyingAdvancedDraft(draft)
+        // Draft-owned advanced fields come through; live-owned fields stay.
+        XCTAssertEqual(saved.pollSeconds, draft.pollSeconds)
+        XCTAssertEqual(saved.stateDirPath, draft.stateDirPath)
+        XCTAssertEqual(saved.accountBrowserEnabled, live.accountBrowserEnabled)
+        XCTAssertEqual(saved.weeklyStats, live.weeklyStats)
+        XCTAssertEqual(saved.workersMayDriveApps, live.workersMayDriveApps)
+    }
+
     func testADeadStateDirectoryIsPutBackToTheDefault() {
         var broken = AppSettings.fallback
         broken.stateDirPath = "/private/tmp/deleted-scratchpad-\(UUID().uuidString)/supervisor"

@@ -64,6 +64,9 @@ nonisolated enum EngineInstaller {
         var ok: Bool
         var log: String
         var installedAt: URL?
+        /// Refused before anything was copied: python3 here is Apple's stand-in, and only Apple's
+        /// command line tools put something behind it. The one refusal with a remedy of its own.
+        var needsCommandLineTools = false
     }
 
     /// Copies the bundled engine over the installed one and runs its installer.
@@ -82,7 +85,21 @@ nonisolated enum EngineInstaller {
     /// The same installation against directories named outright, so that the rule below — a failed
     /// install must not leave a version stamp behind — can be proved by running it on a fixture
     /// rather than by reading the source and trusting the order of the lines.
-    static func install(from bundled: URL, to target: URL) async -> Outcome {
+    ///
+    /// - Parameter pythonNeedsCommandLineTools: asked before anything else. The installer runs on
+    ///   python3, and where that is Apple's stand-in it could only fail — after backing up Claude
+    ///   Code's settings, with Apple's "See `man xcode-select`" as its last word, and with macOS's
+    ///   install dialog put up by the attempt. The app tries again at every launch, so that was
+    ///   every launch. Asked of the disk instead, the stand-in is never run.
+    static func install(from bundled: URL, to target: URL,
+                        pythonNeedsCommandLineTools: @Sendable () async -> Bool = {
+                            await DeveloperTools.needsCommandLineTools("python3")
+                        }) async -> Outcome {
+        if await pythonNeedsCommandLineTools() {
+            return Outcome(ok: false, log: String(localized:
+                "Apple's command line tools are not installed on this Mac, and the engine needs the python3 and git that come with them. Install the tools, then install the engine again."),
+                           installedAt: nil, needsCommandLineTools: true)
+        }
         let fm = FileManager.default
         // A writer from an install whose app is gone. Foundation spawns children with every
         // descriptor closed, so an rsync started by a previous launch does not hold the lock and

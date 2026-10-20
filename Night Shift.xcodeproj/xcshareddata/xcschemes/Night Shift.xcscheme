@@ -66,11 +66,6 @@
                ReferencedContainer = "container:Night Shift.xcodeproj">
             </BuildableReference>
          </TestableReference>
-         <!-- Skipped in THIS scheme on purpose: a UI test needs a window server, an Aqua session
-              and the automation grant that comes with it. Run headlessly — a verifier, a hook, a
-              machine with the screen locked — its runner is killed before it can connect, the
-              whole test action exits 65, and a green unit suite is reported as unproven. The
-              "Night Shift UITests" scheme runs it where those exist. -->
          <TestableReference
             skipped = "YES">
             <BuildableReference

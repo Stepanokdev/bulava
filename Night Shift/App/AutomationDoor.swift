@@ -97,7 +97,8 @@ final class AutomationDoor {
     // MARK: Answering
 
     /// `{"op": "list" | "create", "project", …}` from a run: `name`, `when`, `brief`, `mode`
-    /// ("branch" | "check") and `confirmFirst` for a new one. `turn` when it is from a Codex chat.
+    /// ("branch" | "check" | "job"), `confirmFirst`, and for a job `reads` (folders), `tools` (MCP
+    /// servers) and `report`, for a new one. `turn` when it is from a Codex chat.
     func serve(_ request: URL) -> [String: Any] {
         guard let model, let data = try? Data(contentsOf: request),
               let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
@@ -136,7 +137,7 @@ final class AutomationDoor {
                 "name": a.name,
                 "when": AutomationPresentation.triggerLine(a.trigger),
                 "on": a.enabled,
-                "mode": a.checksOnly ? "check" : "branch",
+                "mode": a.doesJob ? "job" : a.checksOnly ? "check" : "branch",
             ]
             if let why = a.pausedReason { line["paused"] = why }
             if let last = model.automations.runs.filter({ $0.automationID == a.id }).map(\.createdAt).max() {
@@ -171,9 +172,33 @@ final class AutomationDoor {
         guard let folder = model.chatPrimary(for: product, chatID: chat.id) else {
             return refusal(String(localized: "The product has no folder for an automation to work in."))
         }
+        let mode: AutomationWorkMode = switch (object["mode"] as? String) ?? "" {
+        case "check": .checkOnly
+        case "job": .job
+        default: .branch
+        }
+        // Work on code runs in a git copy of the folder: in a folder with no git it would fail at
+        // its first run, every night, until it switched itself off.
+        if mode != .job, !Self.isInsideGit(folder.path) {
+            return refusal(String(format: String(localized: "“%@” has no git, so an automation cannot work on its code. If the job is not about code, make it with --job."), folder.name))
+        }
+        let reads = (object["reads"] as? [String] ?? []).map { ($0 as NSString).expandingTildeInPath }
+        var isDirectory: ObjCBool = false
+        if let missing = reads.first(where: { !$0.hasPrefix("/") || !FileManager.default.fileExists(atPath: $0, isDirectory: &isDirectory) || !isDirectory.boolValue }) {
+            return refusal(String(format: String(localized: "--reads: “%@” is not a folder on this Mac."), missing))
+        }
+        if mode != .job, !reads.isEmpty || !(object["tools"] as? [String] ?? []).isEmpty {
+            return refusal("--reads and --tools are for a job (--job)")
+        }
         var automation = Automation(productID: product.id, projectID: folder.id, name: name, brief: brief,
                                     trigger: trigger, confirmFirst: object["confirmFirst"] as? Bool ?? false)
-        automation.workMode = (object["mode"] as? String) == "check" ? .checkOnly : .branch
+        automation.workMode = mode
+        if mode == .job {
+            automation.readFolders = reads.isEmpty ? nil : reads
+            let tools = (object["tools"] as? [String] ?? []).map(AutomationTools.rule(for:)).filter { !$0.isEmpty }
+            automation.allowedTools = tools.isEmpty ? nil : Array(Set(tools)).sorted()
+        }
+        automation.writesReport = object["report"] as? Bool
         model.automations.add(automation)
 
         let when = AutomationPresentation.triggerLine(trigger)
@@ -182,7 +207,9 @@ final class AutomationDoor {
         let id = automation.id
         model.toast = ToastMessage(
             title: said,
-            text: String(localized: "Made at your request in this chat. It runs by itself from now on; each run is a new chat in a copy of the folder."),
+            text: automation.doesJob
+                ? String(localized: "Made at your request in this chat. It runs by itself from now on; each run is a new chat in a folder of its own, and your folders are only read.")
+                : String(localized: "Made at your request in this chat. It runs by itself from now on; each run is a new chat in a copy of the folder."),
             kind: .success, key: "automation-made-\(id.uuidString)",
             actions: [
                 ToastAction(title: String(localized: "Open")) { [weak model] in model?.navigate(to: .automation(id)) },
@@ -190,7 +217,20 @@ final class AutomationDoor {
                     model?.setAutomationEnabled(id, false)
                 },
             ])
-        return ["ok": true, "id": id.uuidString, "name": name, "when": when, "folder": folder.name]
+        return ["ok": true, "id": id.uuidString, "name": name, "when": when, "folder": folder.name,
+                "mode": mode == .job ? "job" : mode == .checkOnly ? "check" : "branch"]
+    }
+
+    /// Whether a folder is in a git repository: it or a folder above it has a `.git`. Asked without
+    /// running git, because the answer is given while the command waits.
+    static func isInsideGit(_ path: String) -> Bool {
+        var url = URL(fileURLWithPath: path).standardizedFileURL
+        while true {
+            if FileManager.default.fileExists(atPath: url.appendingPathComponent(".git").path) { return true }
+            let parent = url.deletingLastPathComponent()
+            if parent.path == url.path { return false }
+            url = parent
+        }
     }
 
     /// The chat whose run is working in this project: the one that asked. With the run's id (from

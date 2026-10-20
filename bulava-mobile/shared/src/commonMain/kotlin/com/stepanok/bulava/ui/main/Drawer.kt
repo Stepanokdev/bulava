@@ -28,7 +28,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,6 +42,7 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -63,6 +66,7 @@ import com.stepanok.bulava.resources.remove_product_body
 import com.stepanok.bulava.resources.remove_product_title
 import com.stepanok.bulava.resources.rename_product_title
 import com.stepanok.bulava.resources.drawer_archived
+import com.stepanok.bulava.resources.drawer_automations
 import com.stepanok.bulava.resources.drawer_new_chat
 import com.stepanok.bulava.resources.drawer_no_chats
 import com.stepanok.bulava.resources.drawer_no_products
@@ -81,6 +85,7 @@ import com.stepanok.bulava.ui.components.ListRow
 import com.stepanok.bulava.ui.components.Monogram
 import com.stepanok.bulava.ui.components.StatusDot
 import com.stepanok.bulava.ui.components.dismissKeyboardOnTapOrDrag
+import com.stepanok.bulava.ui.media.RemoteImage
 import com.stepanok.bulava.ui.theme.Bulava
 import com.stepanok.bulava.ui.theme.Icons
 import com.stepanok.bulava.ui.theme.Metrics
@@ -101,6 +106,7 @@ fun Drawer(
     var query by remember { mutableStateOf("") }
     val collapsed = remember { mutableStateMapOf<String, Boolean>() }
     val archivesOpen = remember { mutableStateMapOf<String, Boolean>() }
+    val runsOpen = remember { mutableStateMapOf<String, Boolean>() }
     val products = home?.products.orEmpty().sortedWith(compareByDescending<Product> { it.pinned }.thenByDescending { it.lastWorkedAtMs ?: 0L })
     val attention = home?.attention.orEmpty()
     val waiting = attention.mapNotNull { it.chatID }.toSet()
@@ -139,12 +145,14 @@ fun Drawer(
             }
             val q = query.trim()
             if (q.isNotEmpty()) {
-                val hits = products.flatMap { p -> (p.chats + p.archivedChats).filter { it.title.contains(q, ignoreCase = true) }.map { p to it } }
+                val hits = products.flatMap { p ->
+                    (p.chats + p.archivedChats + p.automationChats).filter { it.title.contains(q, ignoreCase = true) }.map { p to it }
+                }
                 if (hits.isEmpty()) {
                     item { Text(stringResource(Res.string.drawer_no_results), style = Bulava.type.caption, color = c.textFaint, modifier = Modifier.padding(16.dp)) }
                 }
                 items(hits, key = { "hit-" + it.second.id }) { (p, chat) ->
-                    ListRow(chat.title, subtitle = p.name, selected = chat.id == selectedChatID,
+                    ListRow(chat.title, subtitle = chat.automation?.let { "${p.name} · $it" } ?: p.name, selected = chat.id == selectedChatID,
                         trailing = liveMark(chat.status.active, chat.status.tone, chat.id in waiting),
                         onClick = { onOpenChat(p.id, chat.id) })
                 }
@@ -164,17 +172,29 @@ fun Drawer(
                         items(product.chats, key = { "c-" + it.id }) { chat ->
                             ChatRow(chat, selected = chat.id == selectedChatID, waiting = chat.id in waiting) { onOpenChat(product.id, chat.id) }
                         }
+                        // The automations' runs, folded under the director's own chats so a watch that
+                        // runs every hour does not bury them. Held open while one of the runs is on
+                        // screen, as on the Mac; in the order the Mac sent, waiting ones first.
+                        val runs = product.automationChats
+                        if (runs.isNotEmpty()) {
+                            val showRuns = runsOpen[product.id] == true || runs.any { it.id == selectedChatID }
+                            item(key = "r-" + product.id) {
+                                FoldRow(Icons.Repeat, "${stringResource(Res.string.drawer_automations)} · ${runs.size}",
+                                    mark = !showRuns && runsWaiting(runs, waiting)) { runsOpen[product.id] = !showRuns }
+                            }
+                            if (showRuns) {
+                                items(runs, key = { "rc-" + it.id }) { chat ->
+                                    ChatRow(chat, selected = chat.id == selectedChatID, waiting = chat.id in waiting, run = true) {
+                                        onOpenChat(product.id, chat.id)
+                                    }
+                                }
+                            }
+                        }
                         if (product.archivedChats.isNotEmpty()) {
                             val showArchive = archivesOpen[product.id] == true
                             item(key = "a-" + product.id) {
-                                Row(
-                                    Modifier.fillMaxWidth().padding(start = 40.dp).height(40.dp).clip(RoundedCornerShape(8.dp))
-                                        .systemClickable(pressedFill = Bulava.colors.surfaceMuted, role = Role.Button) { archivesOpen[product.id] = !showArchive }.padding(horizontal = 12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Icon(Icons.Archive, null, tint = c.textFaint, modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("${stringResource(Res.string.drawer_archived)} · ${product.archivedChats.size}", style = Bulava.type.meta, color = c.textFaint)
+                                FoldRow(Icons.Archive, "${stringResource(Res.string.drawer_archived)} · ${product.archivedChats.size}") {
+                                    archivesOpen[product.id] = !showArchive
                                 }
                             }
                             if (showArchive) {
@@ -210,7 +230,21 @@ private fun ProductHeader(product: Product, open: Boolean, controller: AppContro
                 .systemClickable(role = Role.Button, onClick = onToggle).padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Monogram(product.initials)
+            // The project's icon, as the Mac draws it small; its initials while it comes, if it cannot be
+            // had, and when it has none.
+            val icon = product.icon?.ref
+            if (icon == null) {
+                Monogram(product.initials)
+            } else {
+                // The Mac serves a picture only once it has listed it on this connection, and the list
+                // kept from before may be on screen first: asked for again with each new list until
+                // it is here. Once it is, it comes from the cache.
+                val homes by controller.homeCount.collectAsState()
+                key(homes) {
+                    RemoteImage(controller, icon, null, Modifier.size(28.dp).clip(RoundedCornerShape(8.dp)),
+                        fallback = { Monogram(product.initials) })
+                }
+            }
             Spacer(Modifier.width(12.dp))
             Text(product.name, style = Bulava.type.bodyStrong.copy(fontWeight = FontWeight.SemiBold), color = c.text,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
@@ -264,7 +298,10 @@ private fun ProductHeader(product: Product, open: Boolean, controller: AppContro
 }
 
 @Composable
-private fun ChatRow(chat: ChatSummary, selected: Boolean, muted: Boolean = false, waiting: Boolean = false, onClick: () -> Unit) {
+private fun ChatRow(
+    chat: ChatSummary, selected: Boolean, muted: Boolean = false, waiting: Boolean = false, run: Boolean = false,
+    onClick: () -> Unit,
+) {
     val c = Bulava.colors
     Row(
         Modifier.fillMaxWidth().padding(start = 40.dp).height(44.dp).clip(RoundedCornerShape(Metrics.radiusControl))
@@ -272,6 +309,11 @@ private fun ChatRow(chat: ChatSummary, selected: Boolean, muted: Boolean = false
             .systemClickable(pressedFill = Bulava.colors.surfaceMuted, role = Role.Button, onClick = onClick).padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // An automation's run carries its mark, so it never reads as one of the director's own chats.
+        if (run) {
+            Icon(Icons.Repeat, null, tint = c.textFaint, modifier = Modifier.size(14.dp))
+            Spacer(Modifier.width(6.dp))
+        }
         if (chat.pinned) {
             Icon(Icons.Pin, null, tint = c.textFaint, modifier = Modifier.size(14.dp))
             Spacer(Modifier.width(6.dp))
@@ -297,6 +339,35 @@ private fun liveMark(active: Boolean, tone: String, waiting: Boolean): (@Composa
     if (!active && !waiting && tone != "attention" && tone != "problem") return null
     return { StatusDot(if (waiting && !active) "attention" else tone, size = 7.dp) }
 }
+
+/**
+ * A product's folded list under its chats — the archived ones, the automations' runs — by what it
+ * holds and how many. [mark] puts the orange dot at its end: something in it waits for the director.
+ */
+@Composable
+private fun FoldRow(icon: ImageVector, text: String, mark: Boolean = false, onClick: () -> Unit) {
+    val c = Bulava.colors
+    Row(
+        Modifier.fillMaxWidth().padding(start = 40.dp).height(40.dp).clip(RoundedCornerShape(8.dp))
+            .systemClickable(pressedFill = Bulava.colors.surfaceMuted, role = Role.Button, onClick = onClick).padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = c.textFaint, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(text, style = Bulava.type.meta, color = c.textFaint)
+        if (mark) {
+            Spacer(Modifier.weight(1f))
+            StatusDot("attention", size = 7.dp)
+        }
+    }
+}
+
+/**
+ * Whether any of a product's automation runs waits for the director — a request the Mac lists for
+ * it (its id in [waiting]), or a run that asks or failed. What marks the folded "Automations".
+ */
+internal fun runsWaiting(runs: List<ChatSummary>, waiting: Set<String>): Boolean =
+    runs.any { it.id in waiting || it.status.tone == "attention" || it.status.tone == "problem" }
 
 /**
  * A search that takes the keyboard only when asked. A live field here was focused the moment the

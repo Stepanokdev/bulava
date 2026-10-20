@@ -67,8 +67,12 @@ nonisolated enum ShareAddresses {
 
     /// Private addresses on the interfaces a phone on the same Wi-Fi can reach: never a tunnel, and
     /// IPv4 first.
+    ///
+    /// A bridge only when there is nothing else. `bridge100` and up are the networks macOS makes
+    /// for virtual machines (UTM, Docker, Internet Sharing): 13 Oct the dashboard's link listed
+    /// 192.168.64.1, which no phone can reach, and that was the link he tried.
     static func lanAddresses() -> [String] {
-        var out: [String] = []
+        var wired: [String] = [], bridged: [String] = []
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return [] }
         defer { freeifaddrs(ifaddr) }
@@ -87,8 +91,14 @@ nonisolated enum ShareAddresses {
             var text = String(cString: host)
             if let percent = text.firstIndex(of: "%") { text = String(text[..<percent]) }
             guard LinkServer.isLocal(text) else { continue }
-            out.append(text)
+            if name.hasPrefix("bridge") { bridged.append(text) } else { wired.append(text) }
         }
+        return preferringWiFi(wired: wired, bridged: bridged)
+    }
+
+    /// The order and choice above, apart from reading the interfaces. Internal for tests.
+    static func preferringWiFi(wired: [String], bridged: [String]) -> [String] {
+        let out = wired.isEmpty ? bridged : wired
         return out.sorted { a, b in (a.contains(":") ? 1 : 0, a) < (b.contains(":") ? 1 : 0, b) }
     }
 

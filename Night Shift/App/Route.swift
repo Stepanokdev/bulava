@@ -22,6 +22,11 @@ enum Route: Hashable {
     /// One pipeline open for reading or editing.
     case pipeline(String)
 
+    /// Bulava's own browser: its state, the sites he signed in to, and whether runs may use it
+    /// while he is away. A section of its own beside Automations and Pipelines, not buried in
+    /// Settings, because which sites a run may reach is a standing decision he returns to.
+    case browser
+
     case preflight
 }
 

@@ -5,7 +5,7 @@ import Observation
 @Observable
 final class ConversationStore {
     private(set) var entries: [ConversationEntry] = [] {
-        didSet { inChatCache.removeAll(keepingCapacity: true) }
+        didSet { invalidateChats(changedFrom: oldValue) }
     }
     /// `entries(inChat:)` is asked for by every row that wants to know where it stands — whether
     /// it is the last thing he said, whether it can be taken back — and each time it filtered and
@@ -26,7 +26,33 @@ final class ConversationStore {
         heal()
     }
 
-    private func persist() { file.saveSoon(entries) }
+    /// Every change used to empty the whole cache, so one new line in one chat made every row of
+    /// every chat filter and sort the entire history again — on each streamed update. Only the chats
+    /// whose entries differ are dropped now: every position that changed counts, with the chat it
+    /// held before and the one it holds now, so an insert or a removal in the middle, which shifts
+    /// everything after it, still drops every chat it touched. Unchanged entries share their
+    /// storage, so comparing them is cheap.
+    private func invalidateChats(changedFrom old: [ConversationEntry]) {
+        guard !inChatCache.isEmpty else { return }
+        let new = entries
+        var touched: Set<UUID> = []
+        var loose = false
+        let common = min(old.count, new.count)
+        for i in 0..<common where old[i] != new[i] {
+            if let id = old[i].chatID { touched.insert(id) } else { loose = true }
+            if let id = new[i].chatID { touched.insert(id) } else { loose = true }
+        }
+        for entry in old.dropFirst(common) { if let id = entry.chatID { touched.insert(id) } else { loose = true } }
+        for entry in new.dropFirst(common) { if let id = entry.chatID { touched.insert(id) } else { loose = true } }
+        if loose { inChatCache.removeAll(keepingCapacity: true); return }
+        for id in touched { inChatCache[id] = nil }
+    }
+
+    /// The history is tens of megabytes and is written whole: while a run streams its answer,
+    /// writing it within 0.4 s of every line rewrote it several times a minute — 2 GB an hour by
+    /// macOS's own count. A couple of seconds still loses nothing a person would miss, and the app
+    /// writes whatever is pending when it quits.
+    private func persist() { file.saveSoon(entries, delay: 2) }
 
     private func persistChats() {
         chats = Self.merge(memory: chats, stored: chatFile.load() ?? [])
@@ -98,22 +124,33 @@ final class ConversationStore {
             }
     }
 
+    /// His archived conversations, and any automation run he archived himself — from the phone,
+    /// say: kept with the rest of the archive rather than gone from every list.
     func archivedChats(for productID: UUID) -> [Chat] {
-        chats.filter { $0.productID == productID && $0.archived && !$0.isAutomationRun }
+        chats.filter { $0.productID == productID && $0.archived }
             .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    /// The product's automation runs, as conversations: newest first. Kept apart from his own chats
+    /// — an hourly watch alone would bury them — and shown under them, folded, in the product's list.
+    func automationChats(for productID: UUID) -> [Chat] {
+        chats.filter { $0.productID == productID && $0.isAutomationRun && !$0.archived }
+            .sorted { $0.createdAt > $1.createdAt }
     }
 
     /// A new conversation for one automation run. Unlike `newChat` it does not become the chat the
     /// window has open: a run starting at night must not take the place of the one he left there.
     /// Made under an id the run chose before anything else, so a restart in the middle finds the
     /// chat it already made instead of making a second one.
+    ///
+    /// A job's run has no copy (`copyID` nil): it works in its automation's own folder.
     @discardableResult
-    func newAutomationChat(id: UUID, for productID: UUID, runID: UUID, copyID: UUID, title: String) -> Chat {
+    func newAutomationChat(id: UUID, for productID: UUID, runID: UUID, copyID: UUID?, title: String) -> Chat {
         if let existing = chat(id: id) { return existing }
         var chat = Chat(id: id, productID: productID, title: title)
         chat.automationRunID = runID
         chat.workCopyID = copyID
-        chat.wantsCopy = true
+        chat.wantsCopy = copyID != nil
         chats.append(chat)
         persistChats()
         return chat
@@ -375,8 +412,8 @@ final class ConversationStore {
     @discardableResult
     func appendUser(_ text: String, productID: UUID, chatID: UUID? = nil,
                     attachments: [Attachment] = [], taskID: UUID? = nil,
-                    id: UUID = UUID()) -> ConversationEntry {
-        var e = ConversationEntry(id: id, productID: productID, kind: .user, text: text,
+                    id: UUID = UUID(), at: Date = Date()) -> ConversationEntry {
+        var e = ConversationEntry(id: id, productID: productID, kind: .user, at: at, text: text,
                                   taskID: taskID, attachments: attachments)
         e.chatID = chatID
         append(e)
@@ -672,9 +709,37 @@ final class ConversationStore {
         if changed { persist() }
     }
 
+    /// The whole history of a product that is gone for good: its chats and everything said in them.
+    /// A product that is merely REMOVED keeps both, so the removal can be undone.
     func removeAll(for productID: UUID) {
         entries.removeAll { $0.productID == productID }
+        // Named as removed, or merging with the file on disk would bring them straight back.
+        let doomed = Set(chats.filter { $0.productID == productID }.map(\.id))
+        chats = Self.merge(memory: chats.filter { !doomed.contains($0.id) },
+                           stored: chatFile.load() ?? [], removing: doomed)
+        chatFile.save(chats)
+        openChatID[productID] = nil
+        viewingArchivedID[productID] = nil
         persist()
+    }
+
+    /// Hands a removed product's chats, with their history, to the product that took its folder.
+    /// Adding the same folder again made a NEW product, and the chat still working in that folder
+    /// stayed bound to the old one — invisible, with its run alive behind it.
+    @discardableResult
+    func moveChats(from oldID: UUID, to newID: UUID) -> Int {
+        guard oldID != newID else { return 0 }
+        var moved = 0
+        for i in chats.indices where chats[i].productID == oldID {
+            chats[i].productID = newID
+            moved += 1
+        }
+        for i in entries.indices where entries[i].productID == oldID { entries[i].productID = newID }
+        if openChatID[newID] == nil { openChatID[newID] = openChatID[oldID] }
+        openChatID[oldID] = nil
+        viewingArchivedID[oldID] = nil
+        if moved > 0 { persist(); persistChats() }
+        return moved
     }
 
     func move(taskID: UUID, to productID: UUID) {

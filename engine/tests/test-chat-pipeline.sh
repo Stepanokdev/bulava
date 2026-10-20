@@ -129,6 +129,8 @@ e="$(perl -MTime::HiRes -e 'printf "%.0f", Time::HiRes::time()*1000')"
 printf '%s %s\n' "$s" "$e" >> "$REC/claude.timing"
 printf '%s\n' "$*" > "$REC/claude-$n.argv"
 [ "${STUB_CLAUDE_FAIL:-0}" = 1 ] && exit 1
+# One role failing, not every Claude call: context and the other roles go on as they would.
+[ -n "${STUB_CLAUDE_FAIL_ON:-}" ] && case "$prompt" in *"$STUB_CLAUDE_FAIL_ON"*) exit 1 ;; esac
 cat <<'BRIEF'
 REAL GOAL — CLAUDE-BRIEF-SENTINEL finish the rename
 APPROACH — one file
@@ -148,7 +150,7 @@ for a in "$@"; do
   prompt="$a"; prev="$a"
 done
 kind=brief
-case "$prompt" in *"INDEPENDENT POSITION"*) kind=align ;; esac
+case "$prompt" in *"INDEPENDENT POSITION"*|*"separate preparation roles"*) kind=align ;; esac
 n="$(ls "$REC" 2>/dev/null | grep -c "^codex-$kind-.*\.prompt$")"
 case "$n" in ''|*[!0-9]*) n=0 ;; esac
 n=$((n + 1))
@@ -187,6 +189,7 @@ say() {
   printf '%s\n' "$1" > "$INJECT_PHASE_FILE"
   printf '%s %s\n' "$(date '+%F %T.000')" "$1" >> "$INJECT_PHASE_FILE.log"
 }
+[ -e "$REC/inject-fail" ] && { say waiting; exit 1; }
 say waiting; say typing; say typed; say submitting
 printf '%s\n' "$(perl -MTime::HiRes -e 'printf "%.0f", Time::HiRes::time()*1000')" >> "$REC/inject.timing"
 cat "$2" >> "$REC/injected.txt"
@@ -984,6 +987,102 @@ done
   || bad "the revived pump delivered something unprepared"
 pkill -f "message-pump.sh $SLUG" 2>/dev/null || true
 
+echo "===== a message the worker would not take is queued, and the log does not call it delivered ====="
+: > "$REC/inject-fail"
+send "постав крапку в кінці README" "99999999-9999-9999-9999-999999999999" >/dev/null
+wait_quiet 90 || bad "the pump never finished"
+rm -f "$REC/inject-fail"
+pkill -f "message-pump.sh $SLUG" 2>/dev/null || true
+jq -e 'select(.id == "99999999-9999-9999-9999-999999999999")' "$(undelivered_file "$IDIR")" >/dev/null 2>&1 \
+  && ok "the prepared message went into the retry queue" || bad "the refused message was not queued"
+pseq="$(grep -o 'message [0-9]* prepared, but the worker did not take it' "$SUPERVISOR_STATE_DIR/supervisor.log" | tail -1 | awk '{print $2}')"
+[ -n "$pseq" ] && ok "the log says it was queued, not delivered" || bad "the log does not say the message was queued"
+# Sequence numbers repeat across pumps, so it is the LAST word about this one that must not say it.
+last="$(grep "message $pseq " "$SUPERVISOR_STATE_DIR/supervisor.log" | grep -v 'preparing message' | tail -1)"
+[ -n "$pseq" ] && case "$last" in *"message $pseq delivered"*) false ;; *) true ;; esac \
+  && ok "and never claims it was delivered" || bad "the log claims a queued message was delivered: $last"
+
+
+echo "===== a pipeline of roles, through the chat: phases in order, test cases reach the worker and the review ====="
+pkill -f "message-pump.sh $SLUG" 2>/dev/null || true
+RP="$SUPERVISOR_STATE_DIR/pipelines/roles-chat"; mkdir -p "$RP"
+cat > "$RP/pipeline.json" <<'JSON'
+{"schema":"bulava.pipeline/1","id":"roles-chat","name":"Ролі","description":"тест","revision":1,
+ "nodes":[
+  {"id":"chat","module":"bulava/trigger.chat@1"},
+  {"id":"context","module":"bulava/prep.context@1"},
+  {"id":"triage","module":"bulava/prep.classify@1","title":"Тріаж"},
+  {"id":"ba","module":"bulava/prep.position@1","title":"Бізнес-аналітик","params":{"engine":"codex","required":true},"prompt":"BA-ROLE: {{TASK}}"},
+  {"id":"qa","module":"bulava/prep.position@1","title":"Тестувальник","params":{"engine":"claude","required":true},"prompt":"QA-ROLE: {{TASK}}"},
+  {"id":"arch-claude","module":"bulava/prep.position@1","title":"Архітектор Claude","params":{"engine":"claude","required":true},"prompt":"ARCH-ROLE: {{TASK}}"},
+  {"id":"arch-codex","module":"bulava/prep.position@1","title":"Архітектор Codex","params":{"engine":"codex","required":true},"prompt":"ARCH-ROLE: {{TASK}}"},
+  {"id":"agree","module":"bulava/prep.align@1","title":"Домовленість","params":{"required":true}},
+  {"id":"compose","module":"bulava/prep.compose@1"},
+  {"id":"deliver","module":"bulava/agent.claude@1"},
+  {"id":"review","module":"bulava/gate.review@1"},
+  {"id":"merge","module":"bulava/out.merge@1"}],
+ "edges":[
+  {"from":"chat.task","to":"context.task"},{"from":"chat.task","to":"triage.task"},
+  {"from":"context.context","to":"ba.context"},{"from":"triage.context","to":"ba.context"},
+  {"from":"context.context","to":"qa.context"},{"from":"triage.context","to":"qa.context"},
+  {"from":"ba.position","to":"arch-claude.context"},{"from":"qa.position","to":"arch-claude.context"},
+  {"from":"ba.position","to":"arch-codex.context"},{"from":"qa.position","to":"arch-codex.context"},
+  {"from":"arch-claude.position","to":"agree.positions"},{"from":"arch-codex.position","to":"agree.positions"},
+  {"from":"agree.checks","to":"compose.in"},{"from":"compose.brief","to":"deliver.brief"},
+  {"from":"deliver.work","to":"review.work"},{"from":"review.pass","to":"merge.work"},{"from":"review.fail","to":"deliver.feedback","loop":{"max":3}}]}
+JSON
+rm -rf "$REC"/*; : > "$REC/injected.txt"
+out="$(STUB_SLEEP=1 send "ROLE-TASK додай поле email" "77777777-7777-7777-7777-777777777771" roles-chat)"
+case "$out" in *"TIER=preparing"*) ok "the role pipeline is taken for this chat message" ;; *) bad "send said: $out" ;; esac
+wait_quiet 120 || bad "the pump never finished the role pipeline"
+# Which prompt went where, by the role prompt's own sentinel.
+when() { for f in "$REC"/$1-*.prompt; do grep -q "$2" "$f" 2>/dev/null && { echo "$f"; return; }; done; }
+ba_p="$(when codex-brief BA-ROLE)"; qa_p="$(when claude QA-ROLE)"
+[ -n "$ba_p" ] && ok "the analyst ran on Codex with its own prompt" || bad "no Codex call carried the analyst's prompt"
+[ -n "$qa_p" ] && ok "the tester ran on Claude with its own prompt" || bad "no Claude call carried the tester's prompt"
+arch_cl="$(when claude ARCH-ROLE)"; arch_cx="$(when codex-brief ARCH-ROLE)"
+[ -n "$arch_cl" ] && [ -n "$arch_cx" ] && ok "both architects ran, one on each engine" || bad "architects: claude=$arch_cl codex=$arch_cx"
+[ -n "$arch_cl" ] && grep -q "CODEX-BRIEF-SENTINEL" "$arch_cl" && grep -q "CLAUDE-BRIEF-SENTINEL" "$arch_cl" \
+  && ok "an architect was given what the analyst and the tester concluded" || bad "the architect did not read phase one"
+ap="$(ls "$REC"/codex-align-*.prompt 2>/dev/null | head -1)"
+[ -n "$ap" ] && [ "$(grep -o 'SENTINEL' "$ap" | wc -l | tr -d ' ')" -ge 4 ] \
+  && ok "the agreement read all four roles" || bad "the agreement prompt: $(head -c 300 "$ap" 2>/dev/null)"
+# Phases in time: every role of phase two starts after phase one has ended; the worker after the agreement.
+p1_end="$(cat "$REC/claude.timing" "$REC/codex-brief.timing" 2>/dev/null | awk '{print $2}' | sort -n | head -2 | tail -1)"
+p2_start="$(cat "$REC/claude.timing" "$REC/codex-brief.timing" 2>/dev/null | awk '{print $1}' | sort -n | tail -2 | head -1)"
+[ -n "$p1_end" ] && [ -n "$p2_start" ] && [ "$p2_start" -ge "$p1_end" ] \
+  && ok "the architects started only after the analyst and the tester had finished" || bad "phases overlap: phase 1 ended $p1_end, phase 2 started $p2_start"
+it="$(head -1 "$REC/inject.timing" 2>/dev/null)"; ae="$(ms_end "$REC/codex-align.timing")"
+[ -n "$it" ] && [ -n "$ae" ] && [ "$it" -ge "$ae" ] && ok "the worker got the task only after the agreement" || bad "hand-over $it, agreement ended $ae"
+inj="$(cat "$REC/injected.txt")"
+case "$inj" in *"ROLE-TASK додай поле email"*) ok "the worker got his words" ;; *) bad "the worker never got the task" ;; esac
+case "$inj" in *"[РОЛІ ПІДГОТОВКИ]"*"Тестувальник"*"Тест-кейси з узгодженого рішення — це критерії готовності"*) ok "with the roles and the test cases as the bar for done" ;;
+  *) bad "the worker's prompt has no roles / test cases section" ;; esac
+plan_found=""; for d in "$IDIR/messages"/*/; do grep -q "ROLE-TASK" "$d/task.txt" 2>/dev/null && plan_found="$d/plan.md"; done
+[ -n "$plan_found" ] && grep -q "ALIGNMENT-SENTINEL" "$plan_found" \
+  && grep -q "ALIGNMENT-SENTINEL" "$IDIR/plan.md" 2>/dev/null \
+  && ok "the agreement is the plan the review is held to" || bad "plan.md for this message: $(head -c 200 "$plan_found" 2>/dev/null)"
+pkill -f "message-pump.sh $SLUG" 2>/dev/null || true
+
+for failing in "STUB_CLAUDE_FAIL_ON=QA-ROLE tester" "STUB_ALIGN_FAIL=1 agreement"; do
+  setting="${failing%% *}"; who="${failing#* }"; var="${setting%%=*}"
+  echo "===== a required role fails ($who): the worker receives nothing, his words are kept ====="
+  rm -rf "$REC"/* "$IDIR/held"; : > "$REC/injected.txt"
+  mid="77777777-7777-7777-7777-77777777777$([ "$who" = tester ] && echo 2 || echo 3)"
+  pkill -f "message-pump.sh $SLUG" 2>/dev/null || true; no_pump
+  export "$setting"; STUB_SLEEP=0 send "HELD-TASK $who" "$mid" roles-chat >/dev/null
+  wait_quiet 120 || bad "the pump never finished"
+  unset "$var"
+  pkill -f "message-pump.sh $SLUG" 2>/dev/null || true
+  [ ! -s "$REC/injected.txt" ] && [ ! -s "$REC/inject.timing" ] && ok "nothing was handed to the worker" || bad "the worker was given: $(head -c 300 "$REC/injected.txt")"
+  ! jq -e --arg id "$mid" 'select(.id == $id)' "$(undelivered_file "$IDIR")" >/dev/null 2>&1 \
+    && ok "and nothing waits in the retry queue for the watchdog to type in" || bad "the message sits in the retry queue — it would arrive unprepared"
+  grep -q "ALIGNMENT-SENTINEL" "$IDIR/plan.md" 2>/dev/null && ! grep -q "Ролі не дійшли згоди" "$IDIR/degraded.md" 2>/dev/null \
+    && ok "the review still reads the plan of the work under way, not the held message's" || bad "the held message replaced the run's plan: $(head -c 200 "$IDIR/plan.md" 2>/dev/null)"
+  grep -lq "HELD-TASK $who" "$IDIR/held"/*.json 2>/dev/null && ok "his message is kept beside the run" || bad "the held message is gone"
+  jq -e --arg id "$mid" 'select(.stage == "pipeline" and .state == "failed" and .held == true and .message_id == $id)' "$(run_events_file "$IDIR")" >/dev/null 2>&1 \
+    && ok "and the chat is told the step failed and the message was held" || bad "no held event for the app"
+done
 echo
 [ "$fails" = 0 ] && echo "✅ chat pipeline: all passed" || echo "❌ chat pipeline: $fails failure(s)"
 exit "$fails"

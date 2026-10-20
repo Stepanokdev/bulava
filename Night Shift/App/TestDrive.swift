@@ -361,6 +361,7 @@ final class TestDrive {
         switch fix {
         case .brew(let f)?:     "brew install " + f.joined(separator: " ")
         case .brewCask(let c)?: "brew install --cask " + c.joined(separator: " ")
+        case .installCommandLineTools?: "xcode-select --install"
         case .signIn(let c)?:   "sign in: " + c
         case .installEngine?:   "install the engine"
         case .trustFolders?:    "trust the folders"

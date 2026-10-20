@@ -32,8 +32,15 @@ fake_bulava() {   # $1 = what every answer says
         [ -e "$f" ] || continue
         case "$f" in */service.json) continue ;; esac
         id="$(basename "$f" .json)"; [ -e "$REQ/$id.done" ] && continue
-        cp "$f" "$TMP/last-request.json"
+        # The client takes its answer and removes the request, then the answer. On a loaded machine
+        # this loop can still be holding a request the client has already finished with: copying it
+        # then fails, and an answer written to it is left behind with nobody to read it. So a
+        # request that is gone is not answered, and an answer whose request vanished meanwhile is
+        # taken back.
+        cp "$f" "$TMP/last-request.json.tmp" 2>/dev/null || continue
+        mv -f "$TMP/last-request.json.tmp" "$TMP/last-request.json"
         printf '%s' "$1" > "$REQ/$id.done"
+        [ -e "$f" ] || rm -f "$REQ/$id.done"
       done
       sleep 0.05
     done ) &

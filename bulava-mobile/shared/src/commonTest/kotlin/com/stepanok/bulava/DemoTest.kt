@@ -148,6 +148,24 @@ class DemoTest {
     }
 
     @Test
+    fun chatsKeepTheMacsOrderAndTheAutomationRunIsFoldedApart() = runTest {
+        val c = demo(Watched()).controller
+        advanceUntilIdle()
+        fun ledger() = assertNotNull(c.home.value).products.first { it.id == DemoMac.LEDGER }.chats.map { it.id }
+        val before = ledger()
+        // Written in, the oldest chat stays where it is: the Mac lists chats by when they began.
+        c.setDraft("demo-sync", Draft("And the widgets?"))
+        c.send(DemoMac.LEDGER, "demo-sync")
+        advanceUntilIdle()
+        assertEquals(before, ledger())
+
+        val cafe = assertNotNull(c.home.value).products.first { it.id == DemoMac.CAFE }
+        assertEquals(listOf(DemoMac.LINKS_RUN), cafe.automationChats.map { it.id })
+        assertEquals("Weekly link check", cafe.automationChats.single().automation)
+        assertTrue(cafe.chats.none { it.id == DemoMac.LINKS_RUN || it.automation != null }, "a run is not one of the person's chats")
+    }
+
+    @Test
     fun whatTheDemoDoesNotSimulateIsSaidAtOnceNotTimedOut() = runTest {
         val c = demo(Watched()).controller
         advanceUntilIdle()

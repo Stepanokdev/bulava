@@ -124,7 +124,7 @@ raw=""
 if [ "$codex_exhausted" = 0 ]; then
   CODEX_BIN="${SUPERVISOR_CODEX_BIN:-codex}"
   raw=$(cd "$cwd" 2>/dev/null && perl -e 'alarm shift; exec @ARGV' 240 \
-    "$CODEX_BIN" exec $(codex_effort_flags) -c tools.web_search=true \
+    "$CODEX_BIN" exec $(codex_effort_flags) $(codex_web_search_flags) \
     --sandbox read-only --skip-git-repo-check \
     "$prompt" </dev/null 2>>"$CODEX_LOG")
 else

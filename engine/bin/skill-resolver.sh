@@ -44,6 +44,16 @@ case "$cmd" in
     TIER="$(source_tier "$SRC")"   # honest trust tier; unknown sources → 3, never auto-trusted
     Q="$(fetch_quarantine "$SRC" "$NAME")" || { echo "❌ fetch failed: $SRC" >&2; exit 1; }
     SKILLDIR="$Q/source"
+    # A catalogue named without a path: the one skill in it that carries this name, or nothing.
+    # Auditing the whole repository as this skill is what flagged the official frontend-design as
+    # compromised — the findings were its neighbours' docs — and passing it would have installed
+    # the whole catalogue under one skill's name.
+    if [ -z "$SUBPATH" ] && [ ! -f "$Q/source/SKILL.md" ]; then
+      SUBPATH="$(skill_dir_in_catalogue "$Q/source" "$NAME")" || {
+        echo "❌ $SRC — це каталог скілів, і скіла «${NAME}» у ньому однозначно не знайдено. Вкажи теку: --path <тека>" >&2
+        rm -rf "$Q"; exit 1; }
+      echo "у каталозі $SRC скіл «${NAME}» лежить у $SUBPATH — перевіряю лише його" >&2
+    fi
     if [ -n "$SUBPATH" ]; then
       case "$SUBPATH" in
         /*|*..*) echo "❌ небезпечний шлях у джерелі: $SUBPATH" >&2; rm -rf "$Q"; exit 1 ;;
@@ -61,7 +71,7 @@ case "$cmd" in
     echo "$(date '+%F %T') [skill-resolver] $NAME stageA=$a_verdict has_script=$has_script" >> "$SUP_STATE/supervisor.log"
     if [ "$a_verdict" = "REJECT" ]; then
       echo "🚫 $NAME REJECTED by static audit — kept in quarantine ($Q), NOT installed." >&2
-      printf '%s\n' "$a_json" | jq -r '.findings[]? | "   - [\(.severity)] \(.category): \(.detail)"' >&2
+      printf '%s\n' "$a_json" | jq -r '.findings[]? | "   - [\(.severity)] \(.category): \(.detail)\(if (.file // "") != "" then " — \(.file)" else "" end)"' >&2
       printf 'REJECT\n' > "$Q/verdict"; exit 1
     fi
     b_verdict="SKIP"
@@ -99,7 +109,7 @@ $(find "$SKILLDIR" -type f -not -path '*/.git/*' 2>/dev/null | while read -r f; 
       *) echo "❌ refusing install: dest escapes skills root ($dest)" >&2; exit 1 ;;
     esac
     rm -rf "$dest"; cp -R "$SKILLDIR" "$dest" 2>/dev/null; rm -rf "$dest/.git"
-    NAME="$NAME" SOURCE_URL="$SRC" REPO="$SRC" COMMIT="$(git -C "$SKILLDIR" rev-parse HEAD 2>/dev/null || echo local)" \
+    NAME="$NAME" SOURCE_URL="$SRC" REPO="$SRC" SKILL_PATH="${SUBPATH#./}" COMMIT="$(git -C "$SKILLDIR" rev-parse HEAD 2>/dev/null || echo local)" \
       TREE_SHA="$(tree_sha256 "$dest")" TIER="$TIER" SCOPE=project STAGE_A="$a_verdict" STAGE_B="$b_verdict" INSTALLED_AT="$(now_iso)" lock_add
     printf 'INSTALLED\n' > "$Q/verdict"
     echo "✅ $NAME installed project-local: $dest (pinned in $SKILLS_LOCK). Used autonomously; promote to global later if it proves out."
@@ -161,7 +171,12 @@ $(find "$SKILLDIR" -type f -not -path '*/.git/*' 2>/dev/null | while read -r f; 
       # provenance the director never approved.
       echo "❌ $NAME не має записаного джерела в $SKILLS_LOCK — оновити нема звідки" >&2; exit 1
     fi
-    echo "оновлюю $NAME з $src (через той самий аудит)"
+    # The folder inside the source, when the lock knows it. A row written before it did has none,
+    # and install then finds the skill in the catalogue by its name instead of taking all of it.
+    spath="$(jq -r --arg n "$NAME" '[.skills[]? | select(.name == $n and ((.scope // "project") == "project"))][0].path // ""' "$SKILLS_LOCK" 2>/dev/null)"
+    [ "$spath" = "null" ] && spath=""
+    echo "оновлюю $NAME з $src${spath:+ ($spath)} (через той самий аудит)"
+    if [ -n "$spath" ]; then exec "$0" install "$PROJ" "$src" "$NAME" --path "$spath"; fi
     exec "$0" install "$PROJ" "$src" "$NAME" ;;
 
   verify)

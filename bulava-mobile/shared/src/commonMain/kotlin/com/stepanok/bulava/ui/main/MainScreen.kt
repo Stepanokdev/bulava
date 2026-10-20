@@ -138,8 +138,11 @@ class Selection(private val controller: AppController) {
 }
 
 fun Home.product(id: String?): Product? = products.firstOrNull { it.id == id }
+/** Any chat the Mac lists: the director's own, archived, or an automation's run. */
 fun Home.chat(id: String?): ChatSummary? =
-    products.asSequence().flatMap { it.chats.asSequence() + it.archivedChats.asSequence() }.firstOrNull { it.id == id }
+    products.asSequence()
+        .flatMap { it.chats.asSequence() + it.archivedChats.asSequence() + it.automationChats.asSequence() }
+        .firstOrNull { it.id == id }
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable

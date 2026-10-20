@@ -1016,6 +1016,10 @@ nonisolated final class LocalizationSourceScanTests: XCTestCase {
     private static let countingStringsWithoutPlurals: Set<String> = [
 
         "%lld", "%lld%% used", "%lld. %@", "%llds", "+%lld earlier", "Variant %lld · %@",
+        // "<n>. <question> — <answer>", like "%lld. %@" above: the number is a question's position
+        // in the DecisionPanel list of what came back from another device, not a count, so no
+        // language pluralises it. Xcode's catalog sync extracted this key from DecisionPanel.swift.
+        "%lld. %@ — %@",
 
         "Codex stopped without answering (exit %lld).",
 

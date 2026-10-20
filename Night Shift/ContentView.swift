@@ -33,31 +33,33 @@ struct RootView: View {
     }
 
     private var detailColumn: some View {
-        GeometryReader { geometry in
-            let showsInspector = model.inspectorShown && model.route.productID != nil
-            let inspectorWidth = showsInspector ? Metrics.inspectorWidth : 0
+        // A plain HStack, on purpose — not a deferred-layout reader. Such a reader builds its
+        // content in a closure that is re-run for geometry, and an observable read made inside it is
+        // not reliably a dependency the closure re-runs for: when `route` changed, the window title
+        // and the inspector (which observe `route` in their own bodies) moved to the new chat while
+        // the centre, built from `route` read inside that closure, kept the old one, so switching
+        // chats across projects changed the right panel and not the middle. The HStack reads `route`
+        // in this body, which RootView already depends on, and sizes the centre by filling the space
+        // the fixed-width inspector leaves — no deferred closure to skip the update.
+        let route = model.route
+        let showsInspector = model.inspectorShown && route.productID != nil
+        return HStack(spacing: 0) {
+            // The route is handed in, not read again inside DetailSurface: the screen and the
+            // window title then come from one reading of it. Read separately, they were seen to
+            // disagree — the title on the new screen, the old conversation still under it.
+            DetailSurface(route: route)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
 
-            ZStack(alignment: .trailing) {
-                // The route is handed in, not read again inside: the screen and the window title
-                // then come from one reading of it. Read separately, they were seen to disagree —
-                // the title on the new screen, the old conversation still under it.
-                DetailSurface(route: model.route)
-                    .frame(width: max(0, geometry.size.width - inspectorWidth),
-                           height: geometry.size.height)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                if showsInspector {
-                    HStack(spacing: 0) {
-                        Rectangle().fill(Palette.line).frame(width: 1)
-                        ProductInspector()
-                    }
-                    .frame(width: Metrics.inspectorWidth, height: geometry.size.height)
+            if showsInspector {
+                Rectangle().fill(Palette.line).frame(width: 1)
+                ProductInspector()
+                    .frame(width: Metrics.inspectorWidth)
+                    .frame(maxHeight: .infinity)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
-                }
             }
-            .clipped()
-            .animation(Motion.surface, value: showsInspector)
         }
+        .clipped()
+        .animation(Motion.surface, value: showsInspector)
     }
 
     private struct TransientSurfaces: ViewModifier {
@@ -120,6 +122,7 @@ struct RootView: View {
                                      set: { if $0 == nil { model.renamingProductID = nil } })) { product in
                     RenameProductSheet(product: product)
                 }
+                .modifier(RemoveProductQuestion())
                 .sheet(item: Binding(get: { model.renamingChatID.flatMap { model.conversations.chat(id: $0) } },
                                      set: { if $0 == nil { model.renamingChatID = nil } })) { chat in
                     RenameChatSheet(chat: chat)
@@ -154,6 +157,7 @@ struct RootView: View {
         case .automation(let id): model.automations.automation(id: id)?.name ?? String(localized: "Automations")
         case .pipelines: String(localized: "Pipelines")
         case .pipeline(let id): model.pipelineName(id)
+        case .browser: String(localized: "Bulava's browser")
         case .preflight: String(localized: "Ready to work")
         }
     }
@@ -237,6 +241,8 @@ private struct DetailSurface: View {
             case .pipeline(let id):
                 PipelineEditorScreen(pipelineID: id)
                     .id(id)
+            case .browser:
+                BrowserScreen()
             case .preflight:
                 PreflightView()
             }
@@ -288,7 +294,7 @@ private struct ProductMenu: View {
                 Button("Add a resource…") { model.beginAddingResource(to: product.id) }
                 Button("Check readiness…") { model.openPreflight() }
                 Divider()
-                Button("Remove product", role: .destructive) { model.removeProduct(product) }
+                Button("Remove product…", role: .destructive) { model.askToRemoveProduct(product) }
             }
         } label: {
             Image(systemName: "ellipsis")

@@ -174,6 +174,8 @@ final class UIControlService {
         case "click":
             return UIControl.click(root: root, app: app, ref: request["ref"] as? String,
                                    at: request["at"] as? String)
+        case "drag":
+            return UIControl.drag(app: app, from: request["at"] as? String, to: request["to"] as? String)
         case "type":
             guard let text = request["text"] as? String, !text.isEmpty else {
                 return .failure("nothing to type")
@@ -286,7 +288,10 @@ nonisolated enum UIControl {
                 .filter { !$0.isEmpty }
                 .joined(separator: " · ")
             let pad = String(repeating: "  ", count: indent)
-            lines.append("\(childRef)\t\(pad)[\(role)] \(label)")
+            // Where it is on screen, in the same coordinates `click --at` and `drag` take: a box on a
+            // canvas has no ref that a press can use, and a wire is pulled from a point, not a ref.
+            let place = frame(of: child).map { Self.placeText($0) } ?? ""
+            lines.append("\(childRef)\t\(pad)[\(role)] \(label)\(place)")
             describe(child, ref: childRef, depth: depth - 1, indent: indent + 1, into: &lines)
         }
     }
@@ -313,6 +318,42 @@ nonisolated enum UIControl {
         }
         app.activate()
         return clickScreen(at: spot, what: "\(Int(spot.x)),\(Int(spot.y))")
+    }
+
+    /// `  @x,y wxh` — a frame as the tree prints it, in screen points with the origin at the top left.
+    static func placeText(_ frame: CGRect) -> String {
+        "  @\(Int(frame.minX.rounded())),\(Int(frame.minY.rounded())) \(Int(frame.width.rounded()))x\(Int(frame.height.rounded()))"
+    }
+
+    /// A press at one point, the pointer carried to another in small steps, and a release — what a
+    /// hand does to pull a wire or move a box. Posted at the HID level, so a gesture recogniser sees
+    /// a real drag: events handed to a window directly never start one.
+    static func drag(app: NSRunningApplication, from: String?, to: String?) -> UIControlService.Outcome {
+        guard let from, let start = point(from: from), let to, let end = point(from: to) else {
+            return .failure("drag needs --from x,y and --to x,y")
+        }
+        app.activate()
+        usleep(150_000)
+        for step in dragPath(from: start, to: end) {
+            guard let event = CGEvent(mouseEventSource: nil, mouseType: step.type,
+                                      mouseCursorPosition: step.point, mouseButton: .left) else {
+                return .failure("could not synthesise the drag")
+            }
+            event.post(tap: .cghidEventTap)
+            usleep(step.type == .leftMouseDragged ? 16_000 : 120_000)
+        }
+        return .ok("dragged \(Int(start.x)),\(Int(start.y)) → \(Int(end.x)),\(Int(end.y))")
+    }
+
+    /// The events of a drag: down, `steps` moves ending exactly on the target, up.
+    static func dragPath(from start: CGPoint, to end: CGPoint, steps: Int = 24) -> [(type: CGEventType, point: CGPoint)] {
+        var out: [(CGEventType, CGPoint)] = [(.leftMouseDown, start)]
+        for i in 1...max(1, steps) {
+            let t = CGFloat(i) / CGFloat(max(1, steps))
+            out.append((.leftMouseDragged, CGPoint(x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t)))
+        }
+        out.append((.leftMouseUp, end))
+        return out
     }
 
     private static func clickScreen(at point: CGPoint, what: String) -> UIControlService.Outcome {
@@ -481,7 +522,7 @@ nonisolated enum UIControl {
         return nil
     }
 
-    private static func frame(of element: AXUIElement) -> CGRect? {
+    static func frame(of element: AXUIElement) -> CGRect? {
         guard let positionValue = copy(element, kAXPositionAttribute),
               let sizeValue = copy(element, kAXSizeAttribute) else { return nil }
         var origin = CGPoint.zero

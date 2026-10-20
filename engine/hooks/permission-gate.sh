@@ -1,27 +1,21 @@
 #!/bin/bash
 # What happens when Claude Code would ask a person for permission.
 #
-# A worker runs in a tmux pane nobody watches. When Claude Code stopped on one of its dialogs —
-# a tool outside the allowed set, a browser tool nobody had clicked "always allow" on — the run
-# waited for a click that could not come, and the engine counted the unanswered tool call as
-# waiting, not frozen, so nothing ever moved it. His settings had collected 605 such clicks.
-#
 # One script, three of Claude Code's events (`hook_event_name` says which):
 #
 #   PermissionRequest — fires where a dialog would be shown, after the permission rules and the
-#     auto-mode classifier have had their say. In an automation's run (SUPERVISOR_UNATTENDED=1)
-#     nobody is there, so the answer is given here: its own browser (mcp__browser__*, headless, a
-#     throwaway profile) is allowed; anything else is declined with the reason, so the model goes
-#     another way or ends the run as blocked and names what it needs. With a person there this
-#     says nothing and the dialog appears as it always has.
+#     auto-mode classifier have had their say. Chats approve Bash commands by default, declining
+#     dynamic or critical-path rm/rmdir targets with a hint to use a precise literal path. Other
+#     tools stay with the person: questions, plans and MCP interactions are not command permissions.
+#     An automation (SUPERVISOR_UNATTENDED=1) keeps its existing policy: allow its own browser,
+#     decline everything else so it can find another way or report the access it needs.
 #   PermissionDenied  — the auto-mode classifier declined something. Written down, never retried.
 #   Notification (permission_prompt) — a dialog is on screen right now. Written down with its
 #     time, so the app can show "waiting for your permission" and the watchdog can see one that
 #     nobody answers.
 #
-# Every decision goes to permission-decisions.jsonl in the run's folder: the morning report says
-# what a night run was refused. The script never blocks a tool by failing — exit code 2 means
-# nothing to this event, and a script that breaks must leave Claude Code's own flow as it was.
+# Every automatic decision goes to permission-decisions.jsonl in the run's folder. Invalid input
+# or a failed command check leaves Claude Code's own permission flow in place.
 set -u
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_DIR="$(cd "$HOOK_DIR/../bin" && pwd)"
@@ -53,7 +47,27 @@ record() {  # $1=decision $2=why
 
 case "$event" in
   PermissionRequest)
-    [ "${SUPERVISOR_UNATTENDED:-}" = 1 ] || exit 0
+    if [ "${SUPERVISOR_UNATTENDED:-}" != 1 ]; then
+      # Only command permissions are ours to answer. In particular, do not invent answers for
+      # AskUserQuestion/ExitPlanMode or grant an MCP tool's user interaction. The hook input
+      # does not include the rule that caused a prompt; check managed Bash asks separately:
+      # https://code.claude.com/docs/en/hooks#permissionrequest-decision-control
+      [ "$tool" = Bash ] || exit 0
+      printf '%s' "$input" | jq -e '.tool_input.command | type == "string" and length > 0' >/dev/null 2>&1 || exit 0
+      managed="$(printf '%s' "$input" | python3 "$BIN_DIR/lib/permission-policy.py" 2>/dev/null)" || exit 0
+      [ -z "$managed" ] || exit 0
+      unsafe="$(printf '%s' "$input" | python3 "$BIN_DIR/lib/permission-command.py" 2>/dev/null)" || exit 0
+      if [ -n "$unsafe" ]; then
+        why="Bulava declined this removal: $unsafe. Resolve variables or substitutions in a separate command, then rewrite the removal with an exact, literal path to the intended file or subdirectory, without globs. Do not remove a critical directory itself; choose a narrower target."
+        record deny "$why"
+        jq -nc --arg m "$why" \
+          '{hookSpecificOutput:{hookEventName:"PermissionRequest",decision:{behavior:"deny",message:$m}}}'
+      else
+        record allow "Bulava automatically approved this chat's command permission"
+        printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}'
+      fi
+      exit 0
+    fi
     case "$tool" in
       mcp__browser__*)
         record allow "the automation's own browser: no window, a throwaway profile"

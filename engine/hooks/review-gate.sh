@@ -68,6 +68,18 @@ case "$_pg_rounds" in
      [ "$_pg_rounds" -gt "$SUPERVISOR_MAX_ROUNDS_HARD" ] && _pg_rounds="$SUPERVISOR_MAX_ROUNDS_HARD"
      MAX_ROUNDS="$_pg_rounds"; SUPERVISOR_MAX_ROUNDS="$_pg_rounds" ;;
 esac
+# A report the app's "Create report" button asked for is checked, but not for twelve rounds like
+# code: 13 Oct one report was sent back and rewritten for an hour and a half while the owner waited
+# for the bugs it described to be fixed. At its ceiling it is accepted with the reviewer's notes.
+if [ -n "${IDIR_SCOPE:-}" ] \
+   && jq -r '.task // ""' "$IDIR_SCOPE/dispatch.json" 2>/dev/null | head -1 \
+      | grep -q '^\[BULAVA\] The app asks for a report'; then
+  _rr="${SUPERVISOR_REPORT_MAX_ROUNDS:-3}"
+  case "$_rr" in ''|*[!0-9]*|0) _rr=3 ;; esac
+  [ "$_rr" -lt "$SUPERVISOR_MAX_ROUNDS_HARD" ] && SUPERVISOR_MAX_ROUNDS_HARD="$_rr"
+  [ "$MAX_ROUNDS" -gt "$SUPERVISOR_MAX_ROUNDS_HARD" ] && MAX_ROUNDS="$SUPERVISOR_MAX_ROUNDS_HARD"
+  [ "$SUPERVISOR_MAX_ROUNDS" -gt "$SUPERVISOR_MAX_ROUNDS_HARD" ] && SUPERVISOR_MAX_ROUNDS="$SUPERVISOR_MAX_ROUNDS_HARD"
+fi
 # The chat's run view reads what the gate did as events; the review stage is renamed for a research
 # pipeline, whose reviewer reads a report instead of a diff.
 GATE_REVIEW_STAGE=gate.review
@@ -95,14 +107,20 @@ review_reason() {  # $1 = the review text
 # a whole new review — verifier and Codex both — of exactly the work that was accepted minutes
 # earlier; three "debts" in one night came from two such wake-ups. The `done` marker is removed by
 # every new message (worker-send), so its presence means: same request, same tree, same answer.
+# Not for a job's run in a plain folder: with no git its tree reads the same before and after
+# anything, so the digest would hold its first verdict forever — a job parked on a question would
+# stay parked after he answered it and it finished. Its verdict costs no review to give again.
 if [ -n "${IDIR_SCOPE:-}" ] && [ -s "$DONE_FILE" ] && [ -s "$IDIR_SCOPE/done-digest" ] \
-   && [ "${SUPERVISOR_REVIEW_REPEAT_UNCHANGED:-0}" != 1 ]; then
+   && [ "${SUPERVISOR_REVIEW_REPEAT_UNCHANGED:-0}" != 1 ] && ! plain_folder_run "$IDIR_SCOPE"; then
   _prev_disp="$(tr -d '[:space:]' < "$DONE_FILE" 2>/dev/null)"
   _now_digest="$(work_tree_digest "$cwd" 2>/dev/null || true)"
   if [ -n "$_now_digest" ] && [ "$_now_digest" = "$(tr -d '[:space:]' < "$IDIR_SCOPE/done-digest" 2>/dev/null)" ]; then
     # `log` is defined further down; this exit happens before it.
     printf '%s [review-gate] [%s] nothing changed since the last verdict (%s): same tree, no new message — not reviewing again\n' \
       "$(date '+%F %T')" "$(basename "$IDIR_SCOPE")" "$_prev_disp" >> "$STATE_DIR/supervisor.log" 2>/dev/null || true
+    # The verdict stands, so no review is owed for this tree: a marker left from before it would
+    # keep the watchdog waking the worker for a review this exit will never give.
+    rm -f "$IDIR_SCOPE/review-pending" 2>/dev/null || true
     exit 0
   fi
 fi
@@ -299,6 +317,11 @@ mark_done() {  # $1 = disposition, [$2] = why, in a sentence the person reads
     gate_event run "$disposition" "$why" "$(jq -nc --arg d "$disposition" '{disposition:$d}')"
   fi
   [ -n "${DONE_FILE:-}" ] && printf '%s\n' "$disposition" > "$DONE_FILE"
+  # A verdict settles whatever review was owed for this state of the work. Left in place, the
+  # marker outlived the verdict: the watchdog woke the worker every cooldown to "finish" a review,
+  # the worker stopped, the stop met this very verdict and an unchanged tree, and nothing ever took
+  # the marker away — 256 wake-ups in one week, 182 of them in one chat, each a full Claude turn.
+  [ -n "${IDIR_SCOPE:-}" ] && rm -f "$IDIR_SCOPE/review-pending" 2>/dev/null
   # What the tree looked like when this was decided, so an identical stop later is not a new review.
   [ -n "${IDIR_SCOPE:-}" ] && { work_tree_digest "$cwd" 2>/dev/null || true; } > "$IDIR_SCOPE/done-digest" 2>/dev/null
   rm -f "$STATE_DIR/misdeclared-$RUN_KEY" "$STATE_DIR/handoffs-$RUN_KEY" 2>/dev/null || true
@@ -366,6 +389,9 @@ restamp_receipt() {  # $1 = passed | debt | needs-user | scope_violation
   python3 "$BIN_DIR/receipt-render.py" "$idir/report/report.html" < "$src" >/dev/null 2>&1 || true
 }
 
+PLAIN_RUN=0
+[ -n "${IDIR_SCOPE:-}" ] && plain_folder_run "$IDIR_SCOPE" && PLAIN_RUN=1
+
 if [ "${SUPERVISOR_OUTCOME_PROTOCOL:-1}" = 1 ] && [ -n "${IDIR_SCOPE:-}" ] && [ -s "$IDIR_SCOPE/outcome.json" ]; then
   oc_result="$(jq -r '.result // empty' "$IDIR_SCOPE/outcome.json" 2>/dev/null)"
   oc_rid="$(jq -r '.run_id // empty' "$IDIR_SCOPE/outcome.json" 2>/dev/null)"
@@ -382,7 +408,10 @@ if [ "${SUPERVISOR_OUTCOME_PROTOCOL:-1}" = 1 ] && [ -n "${IDIR_SCOPE:-}" ] && [ 
         emit_review_json COMPLETE FAIL needs-user "worker declared: failed"; $oc_reset 2>/dev/null || true
         mark_done needs-user; log "outcome: failed → needs-user (no review round)"; exit 0 ;;
       succeeded_no_change|succeeded_research)
-        if [ -n "$BASE_SHA" ] && git -C "$cwd" cat-file -e "$BASE_SHA" 2>/dev/null \
+        # A plain folder's run has no base to measure against: its success is settled below.
+        if [ "$PLAIN_RUN" = 1 ]; then
+          :
+        elif [ -n "$BASE_SHA" ] && git -C "$cwd" cat-file -e "$BASE_SHA" 2>/dev/null \
            && oc_diff="$(git -C "$cwd" diff "$BASE_SHA" --stat 2>/dev/null)" \
            && oc_unt="$(worker_untracked "$cwd" "${IDIR_SCOPE:-}")"; then
           oc_changed="$oc_diff$oc_unt"
@@ -459,6 +488,29 @@ if [ -n "${IDIR_SCOPE:-}" ] && [ -s "$IDIR_SCOPE/findings.jsonl" ]; then
   fi
 fi
 
+# A plain folder's run (`plain_folder_run`): an automation that does a job — reads files, uses a
+# service — rather than change code. It has no git, so there is no diff to measure a claim against
+# and nothing for a reviewer to read: what it declared it did stands. That is the automation the
+# director chose to make, and Bulava signed for it; one that changes code works in a copy and is
+# reviewed like any run. A failure, a question, a wall it declared or a blocker it filed was settled
+# above, the same as for every run; a stop with nothing declared is asked about after the usage guard.
+if [ "$PLAIN_RUN" = 1 ] && [ "${SUPERVISOR_OUTCOME_PROTOCOL:-1}" = 1 ] && [ -s "$IDIR_SCOPE/outcome.json" ]; then
+  _pf_result="$(jq -r '.result // empty' "$IDIR_SCOPE/outcome.json" 2>/dev/null)"
+  _pf_rid="$(jq -r '.run_id // empty' "$IDIR_SCOPE/outcome.json" 2>/dev/null)"
+  _pf_cur="$(cat "$IDIR_SCOPE/run-id" 2>/dev/null || true)"
+  case "$_pf_result" in
+    succeeded_changes|succeeded_no_change|succeeded_research)
+      if [ -n "$_pf_rid" ] && [ "$_pf_rid" = "$_pf_cur" ]; then
+        rounds=0
+        emit_review_json COMPLETE PASS passed "plain folder: no git and nothing to review — the run's declared outcome ($_pf_result) stands"
+        rm -f "$STATE_DIR/rounds-$RUN_KEY" "$STATE_DIR/outcome-nudge-$RUN_KEY" 2>/dev/null || true
+        mark_done passed "Без git і без коду — перевіряти нічого, лишається те, що прогін заявив"
+        log "plain folder: outcome $_pf_result → passed (nothing to review)"
+        exit 0
+      fi ;;
+  esac
+fi
+
 nudge_or_park_no_outcome() {
   [ "${SUPERVISOR_OUTCOME_PROTOCOL:-1}" = 1 ] && [ -n "${IDIR_SCOPE:-}" ] || { log "no diff, no outcome — legacy silent stop (protocol off / no instance)"; exit 0; }
   local nf n declared reason; nf="$STATE_DIR/outcome-nudge-$RUN_KEY"
@@ -473,7 +525,12 @@ nudge_or_park_no_outcome() {
     log "no diff + no usable outcome after $n nudges (declared='${declared:-none}') — parked as needs-user"
     exit 0
   fi
-  if [ "$declared" = succeeded_changes ]; then
+  if [ "${PLAIN_RUN:-0}" = 1 ]; then
+    # A job in a plain folder: there is no code and no diff here, so "changes" means the job done.
+    reason="🌙 Ти завершив хід, але не заявив, чим закінчився цей запуск. Якщо роботу закінчено — заяви РЕЗУЛЬТАТ рівно один раз:
+$IDIR_SCOPE/report-outcome <result> \"підсумок\"
+(succeeded_changes — зробив те, що просили: створив, записав, надіслав; succeeded_no_change — робити не було чого; succeeded_research — письмова відповідь чи звіт; failed — інструмент чи доступ не спрацював; blocked | needs_input — без людини далі ніяк). Якщо ще НЕ готово — продовжуй (спроба $n/${SUPERVISOR_OUTCOME_NUDGE_MAX:-2})."
+  elif [ "$declared" = succeeded_changes ]; then
     reason="🌙 Ти задекларував succeeded_changes, але діффу немає — зміни не збережено або не в git. Або зроби реальну зміну коду й заверши, або заяви інший результат: $IDIR_SCOPE/report-outcome succeeded_no_change|succeeded_research|blocked|needs_input \"підсумок\" (спроба $n/${SUPERVISOR_OUTCOME_NUDGE_MAX:-2})."
   else
     reason="🌙 Ти завершив хід, але НЕ залишив ні змін коду, ні задекларованого результату. Якщо задача завершена — заяви РЕЗУЛЬТАТ рівно один раз:
@@ -524,6 +581,14 @@ if [ "${_claude_state%% *}" = exhausted ]; then
   log "Claude out (${used}%) — allowing stop, watchdog resumes at $(date -r "$resume_at" '+%F %H:%M' 2>/dev/null || echo "$resume_at")"
   gate_event agent waiting "Вікно Claude вичерпано — продовжить, коли повернеться" "$(jq -nc --argjson at "$resume_at" '{reason:"claude-limit", resume_at:$at}')"
   exit 0
+fi
+
+# A plain folder's run that stopped with nothing declared — a success was taken at its word above.
+# There is no diff to say it did something and no reviewer to ask, so it is asked to declare, and
+# after that parked for the director: never left waiting on a Codex window for a review that would
+# have nothing to read.
+if [ "$PLAIN_RUN" = 1 ]; then
+  nudge_or_park_no_outcome
 fi
 
 # Through the same seam every other caller uses. Hard-coding the path meant a test could not stop
@@ -789,7 +854,7 @@ saying what is wrong and what would fix it, most important first."
     tree_guard_touched "$cwd" "$_tree_token" && { review=""; review_rc=99; }
   else
     review=$(cd "$cwd" 2>/dev/null && perl -e 'alarm shift; exec @ARGV' 480 \
-      codex exec $(codex_effort_flags) --sandbox read-only --skip-git-repo-check -c tools.web_search=true \
+      codex exec $(codex_effort_flags) --sandbox read-only --skip-git-repo-check $(codex_web_search_flags) \
       "$rprompt" </dev/null 2>>"$CODEX_LOG"); review_rc=$?
   fi
   [ "$review_rc" != 0 ] && review=""

@@ -40,6 +40,8 @@ THREAD_ID="$(jq -r '.thread_id // empty' "$ENVELOPE")"
 case "$RELATION" in continue|new) ;; *) RELATION="" ;; esac
 [ -n "$CTX_FILE" ] && export SUPERVISOR_CHAT_CONTEXT_FILE="$CTX_FILE"
 [ -n "$DIRS_FILE" ] && export SUPERVISOR_EXTRA_DIRS_FILE="$DIRS_FILE"
+# Each message re-reads which folders it may change: he can widen or narrow that mid-conversation.
+[ -n "$DIRS_FILE" ] && record_writable_dirs "$IDIR"
 [ -n "$MSG" ] || { echo "❌ порожній конверт" >&2; exit 2; }
 
 case "$PIPE" in *[!a-z0-9-]*|"") PIPE=plain ;; esac   # a name goes onto a path
@@ -199,6 +201,7 @@ run_stage() {   # $1=stage id  $2..=argv from the definition
   [ -n "$node" ] && [ "$node" != null ] || node="$id"
   run_event "$IDIR" "$id" running "" "$(jq -nc --arg n "$node" '{node:$n}')"
   s="$(now_ms)"
+  PIPE_STAGE_HOLDS="$(jq -r --arg id "$id" '[.stages[] | select(.id == $id) | (.hold_on_failure // false)][0] | if . then 1 else 0 end' "$DEF" 2>/dev/null)" \
   PIPE_IDIR="$IDIR" PIPE_ART="$ART" PIPE_PROJ="$PROJ" PIPE_SESSION="$SESSION" \
   PIPE_ENVELOPE="$ENVELOPE" PIPE_DISPATCH_ID="$DISPATCH_ID" PIPE_STAGE="$id" \
   PIPE_MESSAGE_ID="$MSG_ID" PIPE_PIPELINE="$PIPE" PIPE_INTENT="$INTENT" \
@@ -257,6 +260,9 @@ stage_skipped() {   # $1 = index → 0 when this stage is to be skipped for this
   [ "$(jq -r ".stages[$1].skip_when_followup // false" "$DEF")" = true ] && followup_now
 }
 
+# A stage as he named it on the canvas, for the line he reads.
+stage_title() { jq -r ".stages[$1] | .title // .id" "$DEF" 2>/dev/null; }
+
 total="$(jq '.stages | length' "$DEF")"
 i=0
 while [ "$i" -lt "$total" ]; do
@@ -285,6 +291,10 @@ while [ "$i" -lt "$total" ]; do
       if [ "$opt" != true ]; then
         plog "stage $id failed and is required — stopping"
         mark_stage "$id" failed
+        if [ "$(jq -r ".stages[$i].hold_on_failure // false" "$DEF")" = true ]; then
+          run_event "$IDIR" pipeline failed "Обов'язковий крок «$(stage_title "$i")» не вдався — повідомлення затримано, виконавець його не отримав" '{"held":true}'
+          exit 5
+        fi
         run_event "$IDIR" pipeline failed "Обов'язковий крок $id не вдався"
         exit 1
       fi
@@ -295,7 +305,7 @@ while [ "$i" -lt "$total" ]; do
   fi
 
   withdrawn && { run_event "$IDIR" pipeline cancelled "Повідомлення забрано"; exit 7; }
-  pids=""; ids=""; skipped_ids=""; required_ids=""
+  pids=""; ids=""; skipped_ids=""; required_ids=""; hold_ids=""
   while [ "$i" -lt "$total" ] && [ "$(jq -r ".stages[$i].group // empty" "$DEF")" = "$grp" ]; do
     id="$(jq -r ".stages[$i].id" "$DEF")"
     if stage_skipped "$i"; then
@@ -305,6 +315,7 @@ while [ "$i" -lt "$total" ]; do
     fi
     [ -n "$pids" ] || mark_stage "$grp" running
     [ "$(jq -r ".stages[$i].optional // false" "$DEF")" = true ] || required_ids="$required_ids $id"
+    [ "$(jq -r ".stages[$i].hold_on_failure // false" "$DEF")" = true ] && hold_ids="$hold_ids $id:$i"
     stage_argv "$i"
     run_stage "$id" "${RUN_ARGV[@]}" &
     pids="$pids $!"; ids="$ids $id"
@@ -333,6 +344,16 @@ while [ "$i" -lt "$total" ]; do
   if [ -n "$failed_required" ]; then
     plog "group $grp: required stage(s)$failed_required failed — stopping"
     mark_stage "$grp" failed
+    held_titles=""
+    for f in $failed_required; do
+      for h in $hold_ids; do
+        [ "${h%%:*}" = "$f" ] && held_titles="${held_titles:+$held_titles, }«$(stage_title "${h#*:}")»"
+      done
+    done
+    if [ -n "$held_titles" ]; then
+      run_event "$IDIR" pipeline failed "Обов'язковий крок $held_titles не вдався — повідомлення затримано, виконавець його не отримав" '{"held":true}'
+      exit 5
+    fi
     run_event "$IDIR" pipeline failed "Обов'язковий крок$failed_required не вдався"
     exit 1
   fi

@@ -334,6 +334,15 @@ nonisolated struct SupervisorInstance: Sendable, Identifiable, Equatable {
 
     var active: Bool { watchdogAlive && doneResult == nil }
 
+    /// May this run still reach Bulava's browser? Unless it is truly over — its watchdog gone AND
+    /// an outcome already reported. A Bulava chat keeps going after it reports an outcome
+    /// (needs-user, blocked, a change accepted) and may be asked to open a page next, so while the
+    /// worker is alive it stays eligible; a run that has not reported yet (starting up, or the
+    /// watchdog not up for a moment) stays eligible too. NOT `finishedAt == nil`, which dropped a
+    /// run the instant `done` was written and refused a live run the browser with 401 (8 Oct:
+    /// appstoreconnect could not be opened from a run that had declared blocked).
+    var mayUseBrowser: Bool { watchdogAlive || doneResult == nil }
+
     /// Whether this run is doing something a second message must wait behind.
     ///
     /// Preparation counts. It holds the project, it ends in an injection, and Stop cancels it —

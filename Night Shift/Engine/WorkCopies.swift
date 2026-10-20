@@ -34,6 +34,10 @@ enum WorkCopies {
 
     nonisolated static var root: URL { base.appendingPathComponent("copies", isDirectory: true) }
 
+    /// Where jobs' plain folders live (`JobFolders`): beside the copies and never among them, because
+    /// every sweep of `root` reads whatever it finds there as a copy.
+    nonisolated static var jobsRoot: URL { base.appendingPathComponent("jobs", isDirectory: true) }
+
     /// Build output belongs here, outside the copy, so removing a copy is never a question of
     /// gigabytes. The copy that sat on disk for six weeks held 6.6 GB of `build_dd`.
     static func buildCache(for copy: WorkCopy) -> URL {
@@ -596,6 +600,52 @@ enum WorkCopies {
         guard await isOurs(copy) else { return false }
         return await git(["merge-base", "--is-ancestor", "HEAD", "refs/heads/\(copy.baseRef)"],
                          in: copy.checkoutRoot).ok
+    }
+
+    /// Whether `path` has a git baseline worth keeping — a repository that holds at least one commit
+    /// on any ref. The decision to run a chat in a plain folder (no git, no review) turns on this, so
+    /// it is deliberately cautious: it answers FALSE (safe to run plain) only for a folder that is
+    /// *confirmed* to be a non-repository, or a *confirmed* empty one. It answers TRUE (keep git and
+    /// review) for a repository with any history — including one sitting on an unborn orphan branch
+    /// while older branches still carry commits — and for every ambiguous case: git that could not
+    /// run, a broken checkout, an inspection error. Guessing "plain" wrong disables review on real
+    /// code, so only proof counts as plain.
+    static func hasCommittedGit(at path: String) async -> Bool {
+        let inside = await git(["rev-parse", "--is-inside-work-tree"], in: path)
+        if !inside.launched { return true }  // git could not run — not proof of a plain folder
+        if inside.ok, inside.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "true" {
+            // A work tree. Plain only when no ref carries a commit: an unborn orphan branch in a repo
+            // that still has history keeps git; a genuinely empty repo does not.
+            let anyCommit = await git(["rev-list", "-n", "1", "--all"], in: path)
+            guard anyCommit.launched, anyCommit.exitCode == 0 else { return true }  // inspection error → keep git
+            return !anyCommit.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        // Not a work tree. Only exit 128 ("not a git repository") proves a plain folder; any other
+        // outcome (a bare repo, a permission error, a timeout) is not proof, so keep git.
+        return inside.exitCode != 128
+    }
+
+    /// Whether `tip` is already contained in `baseRef`, judged in the SOURCE repository. A copy is a
+    /// linked worktree, so the tip it stood on lives in the source's object database too — this holds
+    /// even after the worktree is gone, which is how a run merged outside Bulava is recognised. False
+    /// when the source repo does not know `tip` (never merged, or pruned) or the base cannot resolve.
+    static func tipIsIntegrated(tip: String, baseRef: String, inSourceRepo repo: String) async -> Bool {
+        guard !tip.isEmpty else { return false }
+        guard await git(["cat-file", "-e", "\(tip)^{commit}"], in: repo).ok else { return false }
+        let base = baseRef.isEmpty ? "HEAD" : baseRef
+        guard await git(["rev-parse", "--verify", "--quiet", "\(base)^{commit}"], in: repo).ok else { return false }
+        return await git(["merge-base", "--is-ancestor", tip, base], in: repo).ok
+    }
+
+    /// Delete a copy's branch from the source repo, but only if it is still there and no worktree has
+    /// it open. A no-op when the branch is already gone (a merge that deleted it) — so it is safe to
+    /// call when throwing away a run whose copy and branch were cleaned up outside Bulava.
+    @discardableResult
+    static func deleteBranchIfPresent(_ branch: String, inSourceRepo repo: String) async -> Bool {
+        guard !branch.isEmpty else { return false }
+        guard await git(["show-ref", "--verify", "--quiet", "refs/heads/\(branch)"], in: repo).ok else { return false }
+        guard await checkoutHolding(branch: branch, in: repo) == nil else { return false }
+        return await git(["branch", "-D", branch], in: repo).ok
     }
 
     // MARK: Take away

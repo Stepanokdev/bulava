@@ -118,6 +118,25 @@ r="$TMP/last-request.json"
 [ -z "$(find "$REQ" -name '*.json' ! -name service.json)" ] && ok "and leaves no request behind" || bad "a request was left behind"
 stop_fake
 
+echo "===== a job: no code, its folders and services ====="
+NOTES="$TMP/Meetings records"; mkdir -p "$NOTES"
+fake_bulava '{"ok":true,"id":"A2","name":"Meetings to tasks","when":"Every day at 20:00","folder":"App","mode":"job"}'
+out="$("$IDIR/automation" create --name "Meetings to tasks" --when "daily 20:00" --brief-file "$TMP/brief.md" \
+        --job --reads "$NOTES" --tools "memex, tasks" --tools linear 2>&1)"; rc=$?
+[ "$rc" = 0 ] && printf '%s' "$out" | grep -q "a job in a folder of its own" && ok "made, said as a job" || bad "job create: rc=$rc out=$out"
+r="$TMP/last-request.json"
+[ "$(jq -r .mode "$r")" = job ] && ok "mode job carried" || bad "mode: $(cat "$r")"
+[ "$(jq -c .reads "$r")" = "$(jq -nc --arg p "$NOTES" '[$p]')" ] && ok "the folder it reads, whole, spaces and all" || bad "reads: $(jq -c .reads "$r")"
+[ "$(jq -c .tools "$r")" = '["memex","tasks","linear"]' ] && ok "the services, from one flag or several" || bad "tools: $(jq -c .tools "$r")"
+[ "$(jq -r 'has("report")' "$r")" = false ] && ok "no report flag: the mode's own default" || bad "report: $(cat "$r")"
+stop_fake
+fake_bulava '{"ok":true,"id":"A3","name":"Notes","when":"Every day at 20:00","folder":"App","mode":"job"}'
+"$IDIR/automation" create --name "Notes" --when "daily 20:00" --brief-file "$TMP/brief.md" --job --report >/dev/null 2>&1
+[ "$(jq -r .report "$TMP/last-request.json")" = true ] && ok "--report asks for one" || bad "report: $(cat "$TMP/last-request.json")"
+stop_fake
+"$IDIR/automation" create --name "X" --when "daily 20:00" --brief-file "$TMP/brief.md" --tools memex >/dev/null 2>&1; rc=$?
+[ "$rc" = 2 ] && ok "--tools on work with code: refused before Bulava is asked (2)" || bad "tools without --job: rc=$rc"
+
 echo "===== refused: Bulava's reason ====="
 fake_bulava '{"ok":false,"error":"An automation'"'"'s own run does not make automations. Ask him in one of his chats."}'
 out="$("$IDIR/automation" create --name "Loop" --when "hourly 1" --brief-file "$TMP/brief.md" 2>&1)"; rc=$?

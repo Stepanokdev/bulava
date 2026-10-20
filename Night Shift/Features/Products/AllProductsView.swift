@@ -126,7 +126,7 @@ private struct ProductCard: View {
                 }
             }
             Divider()
-            Button("Remove product", role: .destructive) { model.removeProduct(product) }
+            Button("Remove product…", role: .destructive) { model.askToRemoveProduct(product) }
         }
     }
 

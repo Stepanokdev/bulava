@@ -65,11 +65,12 @@ nonisolated final class LinkContractTests: XCTestCase {
             desktop: Self.desktop,
             products: [ProductDTO(
                 id: "P1", name: "Narada", initials: "N", pinned: true, brief: "Meeting recorder",
-                icon: FileDTO(ref: "icon:P1", name: "icon.png", kind: "image", size: 2048, url: nil),
+                icon: FileDTO(ref: "icon:P1:3f2a9c0b1d", name: "icon.png", kind: "image", size: 2048, url: nil),
                 status: StatusDTO(code: "running", label: "Running", tone: "active", active: true),
                 lastWorkedAtMs: 1_790_000_000_000,
                 chats: [Self.chatSummary],
-                archivedChats: [])],
+                archivedChats: [],
+                automationChats: [Self.runSummary])],
             attention: [AttentionDTO(id: "ask:trust:C1:E1", productID: "P1", chatID: "C1", kind: "ask",
                                      title: "Export fix", body: "Claude Code asks before working in a folder for the first time.",
                                      tone: "attention", atMs: 1_790_000_000_000,
@@ -286,6 +287,13 @@ nonisolated final class LinkContractTests: XCTestCase {
         id: "C1", productID: "P1", title: "Export fix", pinned: false, archived: false,
         createdAtMs: 1_790_000_000_000, updatedAtMs: 1_790_000_060_000,
         status: StatusDTO(code: "needsAttention", label: "Needs your answer", tone: "attention", active: false))
+
+    /// An automation's run, folded under the product's own chats on both sides.
+    private static let runSummary = ChatSummaryDTO(
+        id: "C2", productID: "P1", title: "Meetings to tasks · 7 Oct", pinned: false, archived: false,
+        createdAtMs: 1_790_000_100_000, updatedAtMs: 1_790_000_160_000,
+        status: StatusDTO(code: "failed", label: "The run failed", tone: "problem", active: false),
+        automation: "Meetings to tasks")
 
     private static let invoke = ActionDTO(id: "trust:C1:E1", label: "Trust and send", style: "primary", kind: "invoke")
     private static let onMac = ActionDTO(id: "mac", label: "Sign in on your Mac", style: "secondary", kind: "mac")

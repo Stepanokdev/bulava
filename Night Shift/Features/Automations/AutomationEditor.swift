@@ -98,7 +98,10 @@ struct AutomationEditor: View {
                 .padding(.horizontal, 18)
                 .padding(.vertical, 12)
             } else {
-                ScrollView { form.padding(18) }
+                // The form is laid out INSIDE the sheet's width. A row wider than the sheet used to
+                // centre the whole form and cut it off on both sides — the work-mode switch alone is
+                // wider than the sheet in Ukrainian.
+                ScrollView { form.padding(18).frame(maxWidth: .infinity, alignment: .leading) }
                     .task {
                         // After the sheet or the gallery has finished arriving; set at once, the
                         // first text field takes the cursor back.
@@ -115,6 +118,8 @@ struct AutomationEditor: View {
         .task(id: draft.projectID) {
             draft.folderIsRepository = nil
             draft.localFiles = []
+            draft.knownTools = AutomationTools.known(projectPaths: folders.map(\.path))
+            draft.suggestTools()
             guard let id = draft.projectID, let project = model.projects.project(id: id) else { return }
             let isRepository = await WorkCopies.topLevel(of: project.path) != nil
             let local = await WorkCopies.localConfigFiles(in: project.path)
@@ -172,47 +177,29 @@ struct AutomationEditor: View {
             }
             section("Where") {
                 // A product and its folder are often called the same, so each says which it is.
-                HStack(spacing: 14) {
-                    HStack(spacing: 6) {
-                        Text("Product").font(Typo.caption).foregroundStyle(Palette.textTertiary)
-                        Picker("Product", selection: $draft.productID) {
-                            ForEach(model.products.sorted) { p in Text(verbatim: p.name).tag(UUID?.some(p.id)) }
-                        }
-                        .labelsHidden()
-                        .fixedSize()
-                        .onChange(of: draft.productID) { _, id in
-                            draft.projectID = id.flatMap { model.products.product(id: $0)?.defaultProjectID }
-                        }
-                    }
-                    HStack(spacing: 6) {
-                        Text("Folder").font(Typo.caption).foregroundStyle(Palette.textTertiary)
-                        Picker("Folder", selection: $draft.projectID) {
-                            ForEach(folders, id: \.id) { project in
-                                Text(verbatim: project.name).tag(UUID?.some(project.id))
-                            }
-                        }
-                        .labelsHidden()
-                        .fixedSize()
-                    }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 14) { productPicker; folderPicker }
+                    VStack(alignment: .leading, spacing: 8) { productPicker; folderPicker }
                 }
-                HStack(spacing: 8) {
-                    Text("Start each run from branch").font(Typo.caption).foregroundStyle(Palette.textTertiary)
-                    TextField("default branch", text: $draft.baseBranch)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 180)
+                // A job has no branch: it does not start from the code.
+                if draft.workMode != .job {
+                    HStack(spacing: 8) {
+                        Text("Start each run from branch").font(Typo.caption).foregroundStyle(Palette.textTertiary)
+                        TextField("default branch", text: $draft.baseBranch)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 180)
+                    }
                 }
             }
             AutomationWorkSection(draft: $draft)
             AutomationPipelineSection(pipelineID: $draft.pipelineID)
             section("When") {
-                Picker("", selection: $draft.when) {
+                FittingPicker(selection: $draft.when) {
                     Text("On a schedule").tag(AutomationDraft.When.schedule)
                     Text("Something changes").tag(AutomationDraft.When.watch)
                     Text("On this Mac").tag(AutomationDraft.When.event)
                     Text("By hand").tag(AutomationDraft.When.manual)
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
                 switch draft.when {
                 case .schedule: scheduleFields
                 case .watch: watchFields
@@ -231,10 +218,40 @@ struct AutomationEditor: View {
                     .overlay(RoundedRectangle(cornerRadius: Metrics.radiusControl, style: .continuous).strokeBorder(Palette.lineStrong, lineWidth: 1))
                 hint("Written the way you would ask in a chat. Each run gets this, what started it, and what earlier runs found — never the conversation of an earlier run.")
             }
-            AutomationNeedsSection(trigger: draft.trigger, brief: draft.brief, blocking: $needsBlocking)
+            .onChange(of: draft.brief) { _, _ in draft.suggestTools() }
+            AutomationNeedsSection(trigger: draft.trigger, brief: draft.brief,
+                                   readFolders: draft.workMode == .job ? draft.readFolders : [],
+                                   blocking: $needsBlocking)
             Toggle("Ask me before each run", isOn: $draft.confirmFirst)
                 .toggleStyle(.checkbox)
                 .font(Typo.body)
+        }
+    }
+
+    private var productPicker: some View {
+        HStack(spacing: 6) {
+            Text("Product").font(Typo.caption).foregroundStyle(Palette.textTertiary)
+            Picker("Product", selection: $draft.productID) {
+                ForEach(model.products.sorted) { p in Text(verbatim: p.name).tag(UUID?.some(p.id)) }
+            }
+            .labelsHidden()
+            .fixedSize()
+            .onChange(of: draft.productID) { _, id in
+                draft.projectID = id.flatMap { model.products.product(id: $0)?.defaultProjectID }
+            }
+        }
+    }
+
+    private var folderPicker: some View {
+        HStack(spacing: 6) {
+            Text("Folder").font(Typo.caption).foregroundStyle(Palette.textTertiary)
+            Picker("Folder", selection: $draft.projectID) {
+                ForEach(folders, id: \.id) { project in
+                    Text(verbatim: project.name).tag(UUID?.some(project.id))
+                }
+            }
+            .labelsHidden()
+            .fixedSize()
         }
     }
 
@@ -428,6 +445,10 @@ struct AutomationEditor: View {
                 Text("A check never changes your folder or your branches.")
                     .font(Typo.caption)
                     .foregroundStyle(Palette.textFaint)
+            } else if draft.workMode == .job {
+                Text("Your folders are only read. Nothing is left to merge.")
+                    .font(Typo.caption)
+                    .foregroundStyle(Palette.textFaint)
             } else {
                 Text("Nothing reaches your branch until you merge it.")
                     .font(Typo.caption)
@@ -465,47 +486,127 @@ struct AutomationEditor: View {
     }
 }
 
-/// What a run may do with the code, and the files from his folder it brings along.
+/// What a run may do with the code, and the files from his folder it brings along — or, for a job
+/// that is not about code, what it reads and which services it may use.
 struct AutomationWorkSection: View {
     @Binding var draft: AutomationDraft
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Eyebrow("What a run may do")
-            Picker("", selection: $draft.workMode) {
+            FittingPicker(selection: $draft.workMode) {
                 Text("Change code on a branch").tag(AutomationWorkMode.branch)
                 Text("Only check and report").tag(AutomationWorkMode.checkOnly)
+                Text("Do a job outside the code").tag(AutomationWorkMode.job)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
             switch draft.workMode {
             case .branch:
                 hint("Each run works in this automation's own folder, on a new branch from the start branch. What it changes waits for you to merge or throw away.")
             case .checkOnly:
                 hint("Each run reads, builds and tests the code in this automation's own folder and writes a report. Nothing is left to merge; whatever it changes is thrown away.")
+            case .job:
+                hint("For work that is not about code, like turning meeting notes into tasks. Each run works in a folder of its own, without git: there is nothing to review or merge, and your folders are only read.")
             }
-            hint("The folder stays between runs, so the next build is quick. Your own folder is never touched.")
-            // Files git ignores in his folder that a build tends to need. Brought fresh into every
-            // run, or not at all — his choice, offered once they are found.
-            if !draft.localFiles.isEmpty {
-                Toggle(isOn: $draft.bringLocalFiles) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Bring my local files into each run").font(Typo.body)
-                        Text(verbatim: draft.localFiles.joined(separator: ", "))
-                            .font(Typo.mono(11))
-                            .foregroundStyle(Palette.textSecondary)
-                            .lineLimit(2)
-                            .truncationMode(.middle)
-                    }
-                }
-                .toggleStyle(.checkbox)
-                .padding(.top, 4)
-                hint("git ignores them, so a run has none of them unless they are brought in. They are copied fresh from your folder when each run starts.")
-                    .padding(.leading, 20)
+            if draft.workMode == .job {
+                jobFields
+            } else {
+                codeFields
             }
+            reportToggle
         }
         .animation(Motion.standard, value: draft.workMode)
+    }
+
+    @ViewBuilder private var codeFields: some View {
+        hint("The folder stays between runs, so the next build is quick. Your own folder is never touched.")
+        // Files git ignores in his folder that a build tends to need. Brought fresh into every
+        // run, or not at all — his choice, offered once they are found.
+        if !draft.localFiles.isEmpty {
+            Toggle(isOn: $draft.bringLocalFiles) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Bring my local files into each run").font(Typo.body)
+                    Text(verbatim: draft.localFiles.joined(separator: ", "))
+                        .font(Typo.mono(11))
+                        .foregroundStyle(Palette.textSecondary)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                }
+            }
+            .toggleStyle(.checkbox)
+            .padding(.top, 4)
+            hint("git ignores them, so a run has none of them unless they are brought in. They are copied fresh from your folder when each run starts.")
+                .padding(.leading, 20)
+        }
+    }
+
+    // MARK: A job
+
+    @ViewBuilder private var jobFields: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Folders it reads").font(Typo.rowLabel).foregroundStyle(Palette.text)
+            ForEach(draft.readFolders, id: \.self) { path in
+                HStack(spacing: 6) {
+                    Image(systemName: "folder").font(.system(size: 11)).foregroundStyle(Palette.textTertiary)
+                    Text(verbatim: (path as NSString).abbreviatingWithTildeInPath)
+                        .font(Typo.mono(11))
+                        .foregroundStyle(Palette.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 6)
+                    Button { draft.readFolders.removeAll { $0 == path } } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.icon(size: 18, glyph: 8))
+                        .help(Text("Remove this folder"))
+                        .accessibilityLabel(Text("Remove"))
+                }
+            }
+            Button("Add a folder…") { addFolder() }
+                .buttonStyle(.bulava(.secondary))
+            hint("It can always read the product's own folders. Add any others it needs, like the folder your meeting notes land in.")
+        }
+        .padding(.top, 4)
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Services it may use without asking").font(Typo.rowLabel).foregroundStyle(Palette.text)
+            if draft.knownTools.isEmpty {
+                hint("No MCP servers are set up in Claude Code on this Mac. A run can still read and write files, but it cannot reach any service.")
+            } else {
+                WrappingHStack(horizontalSpacing: 6, verticalSpacing: 6) {
+                    ForEach(draft.knownTools) { tool in
+                        let on = draft.allowedTools.contains(tool.rule)
+                        Button { draft.toggleTool(tool.rule) } label: {
+                            Text(verbatim: tool.name).padding(.horizontal, 9)
+                        }
+                        .buttonStyle(DayChipStyle(on: on))
+                            .accessibilityAddTraits(on ? .isSelected : [])
+                    }
+                }
+                hint("A run uses these without asking anyone, so pick only what the job needs. Any other tool that would need your approval is declined.")
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    private var reportToggle: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Toggle("Write a report after a run that did something", isOn: Binding(
+                get: { draft.reportsAfterRun },
+                set: { draft.writesReport = $0 }))
+                .toggleStyle(.checkbox)
+                .font(Typo.body)
+            hint(draft.reportsAfterRun
+                 ? "After such a run Bulava asks it for a written report and lets you know it finished."
+                 : "A run that went well stays quiet: what it did is one line in its chat. Failures and questions always reach you.")
+                .padding(.leading, 20)
+        }
+        .padding(.top, 4)
+    }
+
+    private func addFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls where !draft.readFolders.contains(url.path) { draft.readFolders.append(url.path) }
     }
 
     private func hint(_ text: LocalizedStringKey) -> some View {
@@ -549,6 +650,16 @@ struct AutomationDraft {
     var workMode: AutomationWorkMode = .branch
     /// The pipeline its runs go through; nil is the one chats use by default.
     var pipelineID: String?
+    /// A job's: folders it reads beyond the product's own.
+    var readFolders: [String] = []
+    /// A job's: the MCP servers it may use without asking, by their rule names.
+    var allowedTools: Set<String> = []
+    /// The servers set up in Claude Code that could be chosen (`AutomationTools.known`).
+    var knownTools: [AutomationTools.Server] = []
+    /// He has chosen the servers himself: the brief's words no longer pick any.
+    var toolsTouched = false
+    /// Nil follows the mode: a report for work on code, none for a job.
+    var writesReport: Bool?
     /// Ignored files found in the chosen folder (`WorkCopies.localConfigFiles`), with any the
     /// automation already brings that are not there now.
     var localFiles: [String] = []
@@ -597,11 +708,29 @@ struct AutomationDraft {
         confirmFirst = a.confirmFirst
         workMode = a.workMode ?? .branch
         pipelineID = a.pipelineID
+        readFolders = a.readFolders ?? []
+        allowedTools = Set(a.allowedTools ?? [])
+        toolsTouched = true
+        writesReport = a.writesReport
         carriedBefore = a.carryFiles ?? []
         localFiles = carriedBefore
         bringLocalFiles = !carriedBefore.isEmpty
         templateID = a.templateID
         load(a.trigger)
+    }
+
+    var reportsAfterRun: Bool { writesReport ?? (workMode != .job) }
+
+    mutating func toggleTool(_ rule: String) {
+        toolsTouched = true
+        if allowedTools.contains(rule) { allowedTools.remove(rule) } else { allowedTools.insert(rule) }
+    }
+
+    /// A service the brief names — "add them to memex" — is offered ticked, until he picks for
+    /// himself. Only for a job, and only what is set up on this Mac.
+    mutating func suggestTools() {
+        guard workMode == .job, !toolsTouched else { return }
+        allowedTools = Set(AutomationTools.mentioned(in: brief, among: knownTools).map(\.rule))
     }
 
     /// What looking at the folder found. A new automation is offered them ticked; an existing one
@@ -706,9 +835,10 @@ struct AutomationDraft {
         if name.trimmed.isEmpty { return String(localized: "Give it a name.") }
         if productID == nil || projectID == nil { return String(localized: "Choose the product and the folder it works in.") }
         if brief.trimmed.isEmpty { return String(localized: "Say what it should do.") }
-        // Every run works in a separate git copy of the folder, so a folder without git would fail
-        // at its first run — said here, before anything is switched on.
-        if folderIsRepository == false {
+        // Every run on code works in a separate git copy of the folder, so a folder without git
+        // would fail at its first run — said here, before anything is switched on. A job works in
+        // a folder of its own and needs none.
+        if folderIsRepository == false, workMode != .job {
             return String(localized: "This folder is not a git repository. Every run works in a separate git copy, so choose a folder under git.")
         }
         switch when {
@@ -766,6 +896,7 @@ struct AutomationDraft {
         fresh.folderIsRepository = folderIsRepository
         fresh.localFiles = localFiles
         fresh.bringLocalFiles = !localFiles.isEmpty
+        fresh.knownTools = knownTools
         self = fresh
     }
 
@@ -777,11 +908,38 @@ struct AutomationDraft {
         a.evaluatedThrough = Date()
         a.workMode = workMode
         a.pipelineID = pipelineID
-        a.carryFiles = bringLocalFiles && !localFiles.isEmpty ? localFiles : nil
+        let job = workMode == .job
+        a.carryFiles = !job && bringLocalFiles && !localFiles.isEmpty ? localFiles : nil
+        a.baseBranch = job ? nil : a.baseBranch
+        a.readFolders = job && !readFolders.isEmpty ? readFolders : nil
+        a.allowedTools = job && !allowedTools.isEmpty ? allowedTools.sorted() : nil
+        a.writesReport = writesReport
         return a
     }
 }
 
 private extension String {
     var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
+}
+
+/// A segmented switch while its labels fit across the form, a pop-up menu when they do not.
+///
+/// A segmented control is as wide as its labels and will not shrink. In Ukrainian the work-mode
+/// switch alone is wider than the automation sheet, and a row wider than the sheet pushed the whole
+/// form off both its edges.
+struct FittingPicker<Value: Hashable, Content: View>: View {
+    @Binding var selection: Value
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            Picker("", selection: $selection, content: content)
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+            Picker("", selection: $selection, content: content)
+                .labelsHidden()
+                .fixedSize()
+        }
+    }
 }

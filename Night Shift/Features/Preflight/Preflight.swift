@@ -55,6 +55,10 @@ nonisolated struct PreflightCheck: Identifiable, Sendable {
         /// Install missing command-line tools with Homebrew, visibly.
         case brew([String])
 
+        /// Ask macOS for Apple's command line tools — its own dialog. git and python3 come with
+        /// them, and Homebrew cannot stand in: it needs them itself.
+        case installCommandLineTools
+
         /// Install something Homebrew ships as a cask — the agent CLIs are distributed that way,
         /// as a binary their vendor signed and Apple notarised.
         case brewCask([String])
@@ -293,17 +297,7 @@ final class PreflightRunner {
             missingDetailKey: "Codex independently reviews finished work before you see it. Homebrew has the build OpenAI signed and Apple notarised.",
             run: codexAnswersCheck))
         if let update = await codexUpdateCheck() { out.append(update) }
-        out.append(await toolCheck(name: "jq", titleKey: "jq is installed",
-                                   detailKey: "The engine reads and writes its own state through it. Without jq a run cannot start.",
-                                   brewFormula: "jq"))
-        out.append(await toolCheck(name: "python3", titleKey: "python3 is available",
-                                   detailKey: "Most of the engine's own tooling is written in it.",
-                                   brewFormula: "python"))
-        out.append(await toolCheck(name: "tmux", titleKey: "tmux is installed",
-                                   detailKey: "Each worker runs in its own session so a run survives the app closing.",
-                                   brewFormula: "tmux"))
-        out.append(await toolCheck(name: "git", titleKey: "git is available",
-                                   detailKey: "Needed to branch, diff and merge work."))
+        out.append(contentsOf: await toolChecks())
         out.append(await githubCheck())
         out.append(folderCheck(model: model))
         out.append(claudeSetupCheck())
@@ -452,15 +446,50 @@ final class PreflightRunner {
         return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// The command-line tools the engine runs on, asked the way `run` asks about them. Free: these
+    /// read the PATH and the disk, and never start the tools themselves.
+    func toolChecks() async -> [PreflightCheck] {
+        [await toolCheck(name: "jq", titleKey: "jq is installed",
+                         detailKey: "The engine reads and writes its own state through it. Without jq a run cannot start.",
+                         brewFormula: "jq"),
+         await toolCheck(name: "python3", titleKey: "python3 is available",
+                         detailKey: "Most of the engine's own tooling is written in it.",
+                         brewFormula: "python"),
+         await toolCheck(name: "tmux", titleKey: "tmux is installed",
+                         detailKey: "Each worker runs in its own session so a run survives the app closing.",
+                         brewFormula: "tmux"),
+         await toolCheck(name: "git", titleKey: "git is available",
+                         detailKey: "Needed to branch, diff and merge work.")]
+    }
+
     private func toolCheck(name: String, titleKey: String, detailKey: String,
                            gate: PreflightCheck.Gate = .allWork,
                            brewFormula: String? = nil) async -> PreflightCheck {
         let path = await onPath(name)
+        return Self.toolRow(name: name, foundAt: path,
+                            needsCommandLineTools: await DeveloperTools.needsCommandLineTools(name, at: path),
+                            titleKey: titleKey, detailKey: detailKey, gate: gate, brewFormula: brewFormula)
+    }
+
+    /// The row for a command-line tool, from what was found. Being on PATH is not the same as
+    /// running: /usr/bin/git and /usr/bin/python3 are on every Mac, and without Apple's command
+    /// line tools they only ask macOS to install them — this row used to say "available" there,
+    /// right above an engine that could not install for want of python3.
+    nonisolated static func toolRow(name: String, foundAt path: String, needsCommandLineTools: Bool,
+                                    titleKey: String, detailKey: String,
+                                    gate: PreflightCheck.Gate = .allWork,
+                                    brewFormula: String? = nil) -> PreflightCheck {
         if path.isEmpty {
             return PreflightCheck(id: "tool-\(name)", titleKey: titleKey, detailKey: detailKey,
                                   status: .missing, evidence: String(localized: "not on PATH"),
                                   gate: gate,
                                   fix: brewFormula.map { .brew([$0]) })
+        }
+        if needsCommandLineTools {
+            return PreflightCheck(id: "tool-\(name)", titleKey: titleKey, detailKey: detailKey,
+                                  status: .missing,
+                                  evidence: String(localized: "only Apple's stand-in until the command line tools are installed"),
+                                  gate: gate, fix: .installCommandLineTools)
         }
         return PreflightCheck(id: "tool-\(name)", titleKey: titleKey, detailKey: detailKey,
                               status: .ready, evidence: path, gate: gate)
@@ -792,7 +821,7 @@ final class PreflightRunner {
             let sites = model.browser.sites
             let signedIn = sites.filter { $0.signedInAt != nil }.count
             return PreflightCheck(id: "browser", titleKey: "Bulava's browser is ready",
-                                  detailKey: "Runs open pages in a throwaway browser, and the sites you signed in to in Bulava's own, one run at a time — without asking you.",
+                                  detailKey: "Runs open pages in a throwaway browser, and the sites you signed in to in Bulava's own, several at once, each in its own tabs — without asking you.",
                                   status: .ready,
                                   evidence: "Google Chrome · \(signedIn)/\(sites.count)",
                                   gate: .convenience)
@@ -924,6 +953,12 @@ struct PreflightView: View {
             .padding(.bottom, 60)
         }
         .task { await model.refreshReadiness() }
+        // Returning from System Settings (the "Open Settings" buttons send him there) re-proves the
+        // capability he just changed, so the screen doesn't keep showing a stale "missing". Free depth
+        // only — the accessibility and screen-capture probes cost nothing, unlike the two paid ones.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            _Concurrency.Task { await model.refreshReadiness(force: true, depth: .free) }
+        }
     }
 
     @ViewBuilder private var limits: some View {
@@ -969,12 +1004,17 @@ struct PreflightView: View {
         }
     }
 
+    // "Ready" and "ready with a limit" are different claims, and the screen used to make the first
+    // when it meant the second: it said "ready to work unattended" in full while the panel right
+    // below said app-driving work would not start, because an unmet capability that no required
+    // check gates still leaves `isReady` true. When a limit holds (the orange panel is showing),
+    // the headline says so instead of promising everything.
+    private var limited: Bool { runner.isReady && !runner.summary.isEmpty }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
-                Text(runner.isReady ? "Bulava is ready to work unattended"
-                                    : (runner.blocking.isEmpty ? "A few things could not be checked"
-                                                               : "A few things are missing"))
+                Text(headlineKey)
                     .screenTitleStyle()
                     .foregroundStyle(Palette.text)
                 Spacer(minLength: 8)
@@ -984,15 +1024,27 @@ struct PreflightView: View {
                 .buttonStyle(.bulava())
                 .disabled(runner.running)
             }
-            Text(runner.isReady
-                 ? "Everything an overnight run needs is in place. macOS will not interrupt work to ask for anything."
-                 : "Clear these now rather than at two in the morning, when nothing is there to click the dialog. Bulava will not start work while a required one is unresolved.")
+            Text(subtitleKey)
                 .font(Typo.body)
                 .lineSpacing(4)
                 .foregroundStyle(Palette.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.bottom, 22)
+    }
+
+    private var headlineKey: LocalizedStringKey {
+        if limited { return "Bulava is ready, with limits" }
+        if runner.isReady { return "Bulava is ready to work unattended" }
+        return runner.blocking.isEmpty ? "A few things could not be checked" : "A few things are missing"
+    }
+
+    private var subtitleKey: LocalizedStringKey {
+        if limited { return "Most overnight work will run. Only the kinds of work named below are held back." }
+        if runner.isReady {
+            return "Everything an overnight run needs is in place. macOS will not interrupt work to ask for anything."
+        }
+        return "Clear these now rather than at two in the morning, when nothing is there to click the dialog. Bulava will not start work while a required one is unresolved."
     }
 
     private var list: some View {
@@ -1123,6 +1175,11 @@ private struct CheckRow: View {
             } else if check.status != .ready, case .brew(let formulas)? = check.fix {
                 Button { model.installWithHomebrew(formulas) } label: {
                     Text("Install with Homebrew")
+                }
+                .buttonStyle(.bulava(.primary))
+            } else if check.status != .ready, case .installCommandLineTools? = check.fix {
+                Button { model.installCommandLineTools() } label: {
+                    Text("Install command line tools")
                 }
                 .buttonStyle(.bulava(.primary))
             } else if check.status != .ready, case .brewCask(let casks)? = check.fix {

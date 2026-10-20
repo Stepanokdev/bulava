@@ -20,12 +20,17 @@ nonisolated struct ChatSessionBinding: Codable, Equatable, Sendable {
 
     var lastReportedTurnKey: String?
     var reportPaths: [String]
+    /// The moments he answered a screen of Claude's own — a permission dialog, a choice — in this
+    /// chat. The transcript keeps no trace of such an answer, so the chat's feed splits the turn
+    /// at these: what Claude did after the answer shows below it (`ChatTranscriptFeed.fold`), and
+    /// the same way after Bulava restarts and reads the transcript again from the start.
+    var screenAnswers: [Date]
 
     init(primaryProjectID: UUID?, projectPath: String, claudeSessionID: String? = nil,
          codexThreadID: String? = nil, codexContextDigest: String? = nil,
          activeRunID: String? = nil, branch: String? = nil, startedAt: Date = Date(),
          outcomeAt: Date? = nil, lastCompletedTurnKey: String? = nil,
-         lastReportedTurnKey: String? = nil, reportPaths: [String] = []) {
+         lastReportedTurnKey: String? = nil, reportPaths: [String] = [], screenAnswers: [Date] = []) {
         self.primaryProjectID = primaryProjectID
         self.projectPath = projectPath
         self.claudeSessionID = claudeSessionID
@@ -38,6 +43,7 @@ nonisolated struct ChatSessionBinding: Codable, Equatable, Sendable {
         self.lastCompletedTurnKey = lastCompletedTurnKey
         self.lastReportedTurnKey = lastReportedTurnKey
         self.reportPaths = reportPaths
+        self.screenAnswers = screenAnswers
     }
 
     // MARK: Turn keys
@@ -69,6 +75,7 @@ nonisolated struct ChatSessionBinding: Codable, Equatable, Sendable {
         lastCompletedTurnKey = try? c.decodeIfPresent(String.self, forKey: .lastCompletedTurnKey)
         lastReportedTurnKey = try? c.decodeIfPresent(String.self, forKey: .lastReportedTurnKey)
         reportPaths = (try? c.decode([String].self, forKey: .reportPaths)) ?? []
+        screenAnswers = (try? c.decode([Date].self, forKey: .screenAnswers)) ?? []
     }
 }
 

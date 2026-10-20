@@ -38,18 +38,43 @@ tree_sha256() {  # $1=dir
       | while IFS= read -r f; do shasum -a 256 "$f" 2>/dev/null; done; } | shasum -a 256 | cut -c1-64
 }
 
-lock_add() {  # env: NAME SOURCE_URL REPO COMMIT TREE_SHA TIER SCOPE STAGE_A STAGE_B INSTALLED_AT
+# SKILL_PATH is where in the source the skill lives ("skills/frontend-design"), empty when the
+# source is the skill itself. Without it an update had only the repository to go on: it fetched
+# the whole anthropics/skills catalogue, audited all 443 files as "frontend-design", found the
+# claude-api docs and Office schemas of its neighbours, and called the official skill compromised.
+lock_add() {  # env: NAME SOURCE_URL REPO SKILL_PATH COMMIT TREE_SHA TIER SCOPE STAGE_A STAGE_B INSTALLED_AT
   mkdir -p "$(dirname "$SKILLS_LOCK")"
   [ -f "$SKILLS_LOCK" ] || echo '{"version":1,"skills":[]}' > "$SKILLS_LOCK"
   local tmp; tmp="$(mktemp)"
-  jq --arg name "$NAME" --arg url "${SOURCE_URL:-}" --arg repo "${REPO:-}" --arg commit "${COMMIT:-}" \
+  jq --arg name "$NAME" --arg url "${SOURCE_URL:-}" --arg repo "${REPO:-}" --arg path "${SKILL_PATH:-}" \
+     --arg commit "${COMMIT:-}" \
      --arg sha "${TREE_SHA:-}" --argjson tier "${TIER:-1}" --arg scope "${SCOPE:-project}" \
      --arg sa "${STAGE_A:-}" --arg sb "${STAGE_B:-}" --arg at "${INSTALLED_AT:-}" '
     .skills = ([.skills[] | select(.name != $name)] + [{
-      name:$name, source_url:$url, repo:$repo, commit:$commit, tree_sha256:$sha,
+      name:$name, source_url:$url, repo:$repo, path:$path, commit:$commit, tree_sha256:$sha,
       tier:$tier, scope:$scope, allowed_net:[], allowed_commands:[],
       audit:{stage_a:$sa, stage_b:$sb}, eval_score:null, installed_at:$at, review_date:$at
     }])' "$SKILLS_LOCK" > "$tmp" 2>/dev/null && mv "$tmp" "$SKILLS_LOCK"
+}
+
+# Where a skill called $2 lives inside a fetched catalogue $1, as a path relative to it — for a
+# source that is a whole catalogue and was named without a path (every skill installed before the
+# lock kept one). Found by the skill's own name: its folder, or the `name:` its SKILL.md declares.
+# Exactly one answer or none: two candidates are a choice for a person, never a guess.
+# `find` does not follow links, so a link inside the source cannot point the answer outside it.
+skill_dir_in_catalogue() {  # $1=fetched source root $2=skill name → relative dir
+  local root="$1" want="$2" f dir declared rel found="" count=0
+  while IFS= read -r f; do
+    dir="$(dirname "$f")"
+    declared="$(awk 'NR == 1 && $0 != "---" { exit } NR > 1 && /^---/ { exit }
+                     /^name:/ { sub(/^name:[ \t]*/, ""); gsub(/["\047\r]/, ""); print; exit }' "$f" 2>/dev/null)"
+    [ "$(basename "$dir")" = "$want" ] || [ "$declared" = "$want" ] || continue
+    rel="${dir#"$root"/}"
+    [ "$rel" = "$dir" ] && continue          # the root itself is not "inside" it
+    found="$rel"; count=$((count + 1))
+  done < <(find "$root" -maxdepth 4 -type f -name SKILL.md -not -path '*/.git/*' 2>/dev/null | LC_ALL=C sort)
+  [ "$count" = 1 ] || return 1
+  printf '%s' "$found"
 }
 
 detect_features() {  # $1=project dir → space-separated feature names
