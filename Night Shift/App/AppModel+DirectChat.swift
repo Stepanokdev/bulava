@@ -1337,7 +1337,9 @@ extension AppModel {
         - `$IDIR/phone-link <файл или папка>` — показать результат на его телефоне;
         - `$IDIR/capture` — снимок экрана; `$IDIR/ui` — нажать в интерфейсе другого приложения;
         - браузеры `browser` и `accounts` (им пользуются несколько чатов сразу, каждый в своих вкладках); `$IDIR/browser` — твои вкладки там, и вход на сайт;
-        - `$IDIR/history` — что он уже говорил в прошлых разговорах.
+        - `$IDIR/history` — что он уже говорил в прошлых разговорах;
+        - `$IDIR/consult-codex --patch "что написать"` — когда он просит, чтобы часть сделал Codex
+          (дизайн, вёрстку): Codex пишет её патчем, ты применяешь, проверяешь и отвечаешь за результат.
         \(Self.notMadeUp)
 
         \(productSection(product: product, primary: primary, folders: resourceLines))

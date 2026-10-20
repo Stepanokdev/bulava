@@ -95,6 +95,7 @@ OPTION_LABELS = {
     "huggingFace": T("Моделі Hugging Face", "Hugging Face models"), "webPage": T("Вебсторінка", "A web page"),
     "mail": T("Лист", "An email"), "folder": T("Файл у теці", "A file in a folder"), "meetingEnded": T("Кінець зустрічі", "A meeting ended"),
     "followup": T("Це продовження відкритої задачі", "It continues an open task"),
+    "always": T("Завжди", "Always"), "triage": T("Коли тріаж вирішить", "When triage decides"),
 }
 
 
@@ -113,6 +114,9 @@ FOLLOWUP_PARAM = P("skipOnFollowup", "Пропускати для продовж
 # A step the work must not go on without: when it fails, the pipeline stops and says which step,
 # instead of carrying on with what it has.
 REQUIRED_PARAM = P("required", "Обов'язковий крок", "Required step", "bool", False)
+# Whether a step runs for every task or only when the triage step decides this task needs it: an
+# analyst for a big feature but not for a typo, a designer when the task touches the interface.
+WHEN_PARAM = P("when", "Коли кликати", "When to call", "select", "always", ["always", "triage"])
 
 # The palette. `exec` says whether THIS engine can run the module; the rest are on the map so the
 # whole picture is visible, and the validator refuses them in a description that is meant to run.
@@ -157,7 +161,7 @@ REG = {
         # A position may also take the positions before it: an architect who reads the analysis and the
         # test cases. Positions side by side in one phase still never see each other.
         "in": [{"id": "context", "types": ["context", "position"], "req": True, "multi": True}], "out": [{"id": "position", "type": "position"}],
-        "p": [P("engine", "Хто", "Who", "select", "claude", ["claude", "codex"]), REQUIRED_PARAM, FOLLOWUP_PARAM]},
+        "p": [P("engine", "Хто", "Who", "select", "claude", ["claude", "codex"]), WHEN_PARAM, REQUIRED_PARAM, FOLLOWUP_PARAM]},
     "prep.align": {"t": T("Звірка позицій", "Align positions"), "cat": "prep", "phase": "prep", "v": "v1", "exec": True, "prompt": True,
         "d": T("Codex виписує суттєві розбіжності й перевірки прийняття.", "Codex lists the material differences and acceptance checks."),
         "in": [{"id": "positions", "types": ["position"], "req": True, "multi": True}], "out": [{"id": "checks", "type": "checks"}],
@@ -179,6 +183,14 @@ REG = {
         "d": T("Сесія Claude Code у робочій гілці, з консультаціями Codex.", "A Claude Code session on the work branch, with Codex on call."),
         "in": [{"id": "brief", "types": ["brief", "task"], "req": True}, {"id": "feedback", "types": ["feedback"], "multi": True}],
         "out": [{"id": "work", "type": "work"}], "eng": {"claude": True, "codex": False}},
+    # Codex writes a part of the change before Claude takes the work: the design and the layout, or
+    # any part the pipeline gives it. Read-only like every Codex step: it answers with a patch that
+    # is checked to apply, and Claude applies it, builds the rest on it and answers for it in review.
+    "agent.codexPart": {"t": T("Codex робить частину", "Codex does a part"), "cat": "agent", "phase": "work", "v": "v2", "exec": True, "code": True, "prompt": True,
+        "d": T("Codex пише частину змін — дизайн, верстку чи іншу — готовим патчем. Claude застосовує його і робить решту.",
+               "Codex writes a part of the change — the design, the layout or another — as a ready patch. Claude applies it and does the rest."),
+        "in": [{"id": "brief", "types": ["brief"], "req": True}], "out": [{"id": "brief", "type": "brief"}],
+        "p": [WHEN_PARAM, REQUIRED_PARAM], "eng": {"claude": False, "codex": True}},
     "agent.researcher": {"t": T("Claude досліджує", "Claude researches"), "cat": "agent", "phase": "work", "v": "v2", "exec": True, "report": True,
         "d": T("Та сама сесія, але результат — звіт в artifacts/, а не зміни коду.", "The same session, but the result is a report in artifacts/, not code."),
         "in": [{"id": "brief", "types": ["brief", "task"], "req": True}, {"id": "feedback", "types": ["feedback"], "multi": True}],
@@ -262,7 +274,8 @@ REG = {
 
 # The engine's own prompt for a module, shown when a description has not replaced it.
 DEFAULT_PROMPTS = {"prep.position": "peer-brief.md", "prep.align": "peer-align.md",
-                   "prep.research": "research.md", "prep.design": "design-research.md"}
+                   "prep.research": "research.md", "prep.design": "design-research.md",
+                   "agent.codexPart": "codex-part.md"}
 
 AESTHETIC = ("minimalist-ui", "high-end-visual-design", "industrial-brutalist-ui")
 SECRET_RE = re.compile(r"(sk-ant-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[bp]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)")
@@ -503,6 +516,16 @@ def validate(m, require_exec=True):
             if not any((not e.get("loop")) and split(e.get("from"))[0] == n["id"] for e in edges):
                 add("warn", "V14", "Результат «%s» нікуди не йде." % _title(n, mod), "The result of '%s' goes nowhere." % _title(n, mod), n["id"])
 
+    # The triage decides inside the context step; without one nobody would ever pick these steps.
+    picked = [n for n in nodes if (n.get("params") or {}).get("when") == "triage"]
+    if picked and not any(key_of(n) in CONTEXT_KEYS for n in nodes):
+        add("error", "V28", "«%s» кличеться, коли тріаж вирішить, а тріажу немає: додай «Масштаб задачі»." % _title(picked[0], module_of(picked[0])),
+            "'%s' runs when triage decides, but there is no triage: add 'Task scale'." % _title(picked[0], module_of(picked[0])), picked[0]["id"])
+    for n in nodes:
+        if key_of(n) == "agent.codexPart" and not any(key_of(g.by_id[d]) in ("agent.claude", "agent.researcher")
+                                                       for d in g.downstream(n["id"]) if d in g.by_id):
+            add("error", "V29", "Після «%s» має працювати Claude: Codex робить частину, решту — він." % _title(n, module_of(n)),
+                "'%s' must be followed by Claude: Codex does a part, Claude the rest." % _title(n, module_of(n)), n["id"])
     agents = [n for n in nodes if key_of(n) in ("agent.claude", "agent.codex", "agent.researcher")]
     if len(agents) > 1:
         add("error", "V25", "Виконавець має бути один: рушій веде одну сесію на запуск.", "There must be one worker: the engine runs one session per run.")
@@ -581,6 +604,8 @@ def needs_of(m):
             need.add("codex")
         if k == "prep.position" and p.get("engine", "claude") == "codex":
             need.add("codex")
+        if k == "agent.codexPart":
+            need.add("codex")
     return sorted(need)
 
 
@@ -642,6 +667,12 @@ def compile_manifest(m, prompt_dir=None):
                 (yes if ap == "yes" else no).update(tgt)
             followup_only_new |= (no - yes)
 
+    def picked(n):
+        return (n.get("params") or {}).get("when") == "triage"
+
+    def node_title(n):
+        return (n.get("title") or "").strip() or ((module_of(n) or {}).get("t") or {}).get("uk") or n["id"]
+
     def skip_flag(n):
         return bool((n.get("params") or {}).get("skipOnFollowup")) or n["id"] in followup_only_new
 
@@ -660,6 +691,12 @@ def compile_manifest(m, prompt_dir=None):
                 pf = prompt_file(n)
                 if pf:
                     run += ["--design-prompt", pf]
+        # The steps the triage chooses among: id, the name he gave it, and its prompt — what the
+        # step is for, in his words, is what the choice is made from.
+        for i in order:
+            n = by_id[i]
+            if picked(n) and key_of(n) in ("prep.position", "agent.codexPart"):
+                run += ["--pick-role", "%s\t%s\t%s" % (n["id"], node_title(n), prompt_file(n) or "")]
         positions = [by_id[i] for i in order if key_of(by_id[i]) == "prep.position"]
         pp = next((prompt_file(p) for p in positions if prompt_file(p)), None)
         if pp:
@@ -679,7 +716,9 @@ def compile_manifest(m, prompt_dir=None):
     # later phase reads the roles upstream of it, and the alignment reads every role. Two positions
     # in one phase, one per engine, stay exactly what they always were.
     engines = [(p.get("params") or {}).get("engine", "claude") for p in positions]
-    role_mode = len(by_level) > 1 or len(engines) != len(set(engines))
+    # And whenever the triage may leave one out: a role it skips is then a named role the others are
+    # told about, not a missing half of a pair the comparison cannot do without.
+    role_mode = len(by_level) > 1 or len(engines) != len(set(engines)) or any(picked(p) for p in positions)
 
     def required(n):
         return bool((n.get("params") or {}).get("required"))
@@ -710,6 +749,8 @@ def compile_manifest(m, prompt_dir=None):
                 st["group"] = "peers-%d" % lv if len(by_level) > 1 else "peers"
             if skip_flag(p):
                 st["skip_when_followup"] = True
+            if picked(p):
+                st["pick"] = True
             stages.append(st)
             node_stage[p["id"]] = p["id"]
 
@@ -745,6 +786,21 @@ def compile_manifest(m, prompt_dir=None):
             node_stage[compose["id"]] = sid
             if (compose.get("prompt") or "").strip():
                 brief["extra"] = prompt_file(compose)
+    for i in order:
+        n = by_id[i]
+        if key_of(n) != "agent.codexPart":
+            continue
+        run = ["pipeline-codex-part.sh", "--node", n["id"], "--title", node_title(n)]
+        pf = prompt_file(n)
+        if pf:
+            run += ["--prompt", pf]
+        st = {"id": n["id"], "node": n["id"], "title": node_title(n), "run": run, "optional": not required(n)}
+        if required(n):
+            st["hold_on_failure"] = True
+        if picked(n):
+            st["pick"] = True
+        stages.append(st)
+        node_stage[n["id"]] = n["id"]
     gates = {"review": False, "maxRounds": REVIEW_DEFAULT, "reportReview": False, "reportMaxRounds": 2,
              "requiredSkills": [], "research": False, "reviewExtra": None, "reportCriteria": None}
     if agent is not None:

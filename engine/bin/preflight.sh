@@ -19,8 +19,12 @@ PEER_PROMPT=""; ALIGN_PROMPT=""; RESEARCH_PROMPT=""; DESIGN_PROMPT=""
 # each role has its own prompt and its own result file, a later role reads the earlier ones, and the
 # alignment reads them all. Two Claude roles used to write the same `peer-claude.md`.
 ROLE=""; ROLE_TITLE=""; ROLE_PROMPT=""; ROLE_READS=""; ROLES=""
+# The steps the triage chooses among, one "id<TAB>title<TAB>prompt file" per line.
+PICK_ROLES=""
 while [ $# -gt 0 ]; do
   case "${1:-}" in
+    --pick-role)   PICK_ROLES="${PICK_ROLES:+$PICK_ROLES
+}${2:-}"; shift 2 ;;
     --role)        ROLE="${2:-}"; shift 2 ;;
     --role-title)  ROLE_TITLE="${2:-}"; shift 2 ;;
     --role-prompt) ROLE_PROMPT="${2:-}"; shift 2 ;;
@@ -114,6 +118,7 @@ clear_artifacts() {
     "$ART"/peer-claude.md "$ART"/peer-codex.md "$ART"/peer-alignment.md \
     "$ART"/peer-claude.unavailable "$ART"/peer-codex.unavailable "$ART"/.relation \
     "$ART"/degraded.md "$ART"/role-*.md "$ART"/role-*.title "$ART"/role-*.unavailable \
+    "$ART"/role-*.skipped "$ART"/roles-chosen.json "$ART"/.roles-chosen.partial \
     "$ART"/context.md "$ART"/peer-prompt.txt \
     "$ART"/.peer-claude.stream.jsonl "$ART"/.peer-codex.stream.jsonl "$ART"/.align.stream.jsonl "$ART"/.role-*.stream.jsonl \
     2>/dev/null || true
@@ -130,7 +135,7 @@ stage_log_for() {   # $1 = stage name
 }
 
 render() { TASK="$task" perl -0777 -pe '
-  for my $k (qw(TASK CONTEXT RECENT RESEARCH DESIGN ARGUE PLAN_A PLAN_B BRIEF_A BRIEF_B)) { my $v = defined $ENV{$k} ? $ENV{$k} : ""; s/\Q{{$k}}\E/$v/g; }
+  for my $k (qw(TASK CONTEXT RECENT RESEARCH DESIGN ARGUE PLAN_A PLAN_B BRIEF_A BRIEF_B SCALE TOUCHES_UI CATALOG)) { my $v = defined $ENV{$k} ? $ENV{$k} : ""; s/\Q{{$k}}\E/$v/g; }
   ' "$1" 2>/dev/null; }
 # Nothing reaches a peer's argv unchecked.
 #
@@ -296,10 +301,46 @@ esac
 # started again.
 carry_task_material() {
   local f
-  for f in research.md research.json design.md design.json; do
+  for f in research.md research.json design.md design.json roles-chosen.json; do
     [ -s "$ART/$f" ] && continue
     [ -s "$IDIR/$f" ] && cp -f "$IDIR/$f" "$ART/$f" 2>/dev/null || true
   done
+}
+
+# ------------------------------------------------------------------- the triage picks the steps
+#
+# Steps the pipeline calls "when triage decides" are chosen here, per task: Codex reads the task,
+# the scale it just judged and what each step is for — its name and its prompt — and says which
+# ones this task needs. A typo does not need a business analyst; a new screen needs the designer.
+# The answer goes to roles-chosen.json, which pipeline.sh reads before starting each such step.
+# When the choice cannot be made — Codex unavailable, an answer that does not parse — nothing is
+# written and every step runs: leaving out a step nobody decided against is the worse mistake.
+pick_roles() {   # $1 = scale  $2 = touches the interface (true|false)
+  [ -n "$PICK_ROLES" ] || return 0
+  local catalog="" id title pf about t ids
+  while IFS="$(printf '\t')" read -r id title pf; do
+    [ -n "$id" ] || continue
+    about=""
+    [ -n "$pf" ] && [ -s "$pf" ] && about="$(clip_utf8 900 < "$pf" 2>/dev/null)"
+    catalog="$catalog
+### $id — $title
+${about:-(свого промпту немає: суди з назви)}
+"
+  done <<< "$PICK_ROLES"
+  t="$(budget "${SUPERVISOR_PICK_TIMEOUT:-180}")"
+  if [ "$t" -le 5 ]; then log "pick: SKIPPED — preflight budget exhausted; every step runs"; return 0; fi
+  ( cd "$PROJ" && codex_ro "$t" --output-schema "$SCHEMAS/roles-pick.schema.json" -o "$ART/.roles-chosen.partial" \
+      "$(SCALE="$1" TOUCHES_UI="$2" CATALOG="$catalog" render "$PROMPTS/roles-pick.md")" ) >/dev/null 2>&1
+  ids="$(printf '%s\n' "$PICK_ROLES" | cut -f1 | sed '/^$/d' | jq -R . | jq -sc .)"
+  # Kept only when it answers for exactly the steps it was asked about.
+  if jq -e --argjson ids "$ids" '(.roles | map(.id) | sort) == ($ids | sort) and all(.roles[]; (.run | type) == "boolean")' \
+       "$ART/.roles-chosen.partial" >/dev/null 2>&1; then
+    mv -f "$ART/.roles-chosen.partial" "$ART/roles-chosen.json"
+    log "pick: $(jq -r '[.roles[] | "\(.id)=\(if .run then "yes" else "no" end)"] | join(" ")' "$ART/roles-chosen.json")"
+  else
+    rm -f "$ART/.roles-chosen.partial" 2>/dev/null || true
+    log "pick: no usable answer — every step runs"
+  fi
 }
 
 # ------------------------------------------------------------------- stage: context (follow-up)
@@ -320,6 +361,8 @@ stage_context_followup() {
   CONTEXT="$(cat "$ART/context.md" 2>/dev/null)" \
   ARGUE="$(render "$PROMPTS/argue-with-task.md")" \
     render "$PROMPTS/peer-followup.md" > "$ART/peer-prompt.txt" 2>/dev/null || true
+  # A follow-up keeps the steps the task was opened with; it is the same task.
+  [ -s "$ART/roles-chosen.json" ] && log "pick: follow-up keeps the opening choice"
   printf 'followup\n' > "$ART/.scale"
   printf 'false\n'    > "$ART/.needs-plan"
   printf 'continue\n' > "$ART/.relation"
@@ -369,6 +412,13 @@ stage_context() {
   case "$RESEARCH_MODE" in always) needs_research=true ;; never) needs_research=false ;; esac
   printf '%s\n' "$scale" > "$ART/task-scale"
   log "scale=$scale needs_plan=$needs_plan needs_research=$needs_research touches_interface=$touches_ui"
+  pick_roles "$scale" "${touches_ui:-false}"
+  # The choice belongs to THIS task, from now on: published at once rather than with the agreement,
+  # so a task that never reaches one cannot leave the previous task's choice for its follow-ups.
+  if [ "$ART" != "$IDIR" ]; then
+    if [ -s "$ART/roles-chosen.json" ]; then cp -f "$ART/roles-chosen.json" "$IDIR/roles-chosen.json" 2>/dev/null || true
+    else rm -f "$IDIR/roles-chosen.json" 2>/dev/null || true; fi
+  fi
 
   design_text="(no design research performed)"
   printf '%s' "$(printf '%s' "$task" | tr 'A-Z' 'a-z')" | grep -Eq "$S_PATTERN" && mechanical=1
@@ -659,7 +709,9 @@ stage_role() {   # $1 = claude|codex
   body="$(CONTEXT="$(cat "$ART/context.md" 2>/dev/null)" RESEARCH="$(cat "$ART/research.md" 2>/dev/null)" \
     DESIGN="$(cat "$ART/design.md" 2>/dev/null)" render "$(prompt_for "$ROLE_PROMPT" peer-brief.md)")"
   for r in $(printf '%s' "$ROLE_READS" | tr ',' ' '); do
-    if [ -s "$ART/role-$r.md" ]; then
+    if [ -s "$ART/role-$r.skipped" ]; then
+      earlier="$earlier"$'\n\n'"## Роль «$(role_title "$r")» цього разу не кликали: $(cat "$ART/role-$r.skipped")"
+    elif [ -s "$ART/role-$r.md" ]; then
       earlier="$earlier"$'\n\n'"## Що вже напрацювала роль «$(role_title "$r")»"$'\n'"$(clip_utf8 20000 < "$ART/role-$r.md")"
     else
       earlier="$earlier"$'\n\n'"## Роль «$(role_title "$r")» результату не дала: $(cat "$ART/role-$r.unavailable" 2>/dev/null || echo "причина невідома")"
@@ -683,15 +735,28 @@ $( printf '%s' "$body" | grep -qF -- "$task" || printf 'ЗАДАЧА\n%s\n\nНЕ
 # implementer works from — what is built and how, which test cases it must pass, and how each
 # disagreement between the architects was settled.
 stage_align_roles() {
-  local all="" r n=0 rc
+  local all="" r n=0 rc left_out=0 total=0
   for r in $(printf '%s' "$ROLES" | tr ',' ' '); do
-    if [ -s "$ART/role-$r.md" ]; then
+    total=$((total + 1))
+    if [ -s "$ART/role-$r.skipped" ]; then
+      all="$all"$'\n\n'"### Роль «$(role_title "$r")» — цього разу не кликали: $(cat "$ART/role-$r.skipped")"; left_out=$((left_out + 1))
+    elif [ -s "$ART/role-$r.md" ]; then
       all="$all"$'\n\n'"### Роль «$(role_title "$r")»"$'\n'"$(clip_utf8 20000 < "$ART/role-$r.md")"; n=$((n + 1))
     else
       all="$all"$'\n\n'"### Роль «$(role_title "$r")» — результату немає: $(cat "$ART/role-$r.unavailable" 2>/dev/null || echo "причина невідома")"
     fi
   done
-  if [ "$n" -lt 2 ]; then
+  # The triage leaving roles out is a decision, not a failure: one role's result still becomes the
+  # agreed plan, and with none chosen there is nothing to agree and nothing went wrong.
+  # Only when EVERY role was left out, and only one result short of two when the rest were left out
+  # by choice: a role that failed is still a failure, and the agreement cannot vouch for it.
+  local failed=$((total - n - left_out))
+  if [ "$total" -gt 0 ] && [ "$left_out" = "$total" ]; then
+    log "align/roles: SKIPPED — the triage chose none of the roles for this task"
+    stage_skip_note "Тріаж не вибрав жодної ролі для цієї задачі — домовлятися нема про що"
+    return 0
+  fi
+  if [ "$n" -lt 2 ] && ! { [ "$left_out" -gt 0 ] && [ "$failed" = 0 ] && [ "$n" = 1 ]; }; then
     log "align/roles: SKIPPED — $n role result(s); nothing to agree"
     stage_skip_note "Менше двох ролей дали результат — домовлятися нема про що"
     return 1
@@ -762,9 +827,13 @@ settle_plan() {
     else
       local r
       : > "$ART/plan.md"
+      local ran=0
       for r in $(printf '%s' "$ROLES" | tr ',' ' '); do
+        [ -s "$ART/role-$r.skipped" ] || ran=1
         [ -s "$ART/role-$r.md" ] && printf '## Роль «%s»\n%s\n\n' "$(role_title "$r")" "$(cat "$ART/role-$r.md")" >> "$ART/plan.md"
       done
+      # Nothing to agree is not a disagreement: the triage called none of the roles.
+      [ "$ran" = 0 ] && { rm -f "$ART/degraded.md" 2>/dev/null || true; return 0; }
       printf '%s\n' "Ролі не дійшли згоди: Codex не звів їхні результати в одне рішення. Працюй за результатами ролей нижче і сам назви, де вони розходяться." > "$ART/degraded.md"
     fi
     return 0
@@ -812,7 +881,7 @@ publish_to_instance() {
   local f
   [ "$ART" = "$IDIR" ] && return 0
   for f in peer-claude.md peer-codex.md peer-alignment.md peer-claude.unavailable \
-           peer-codex.unavailable degraded.md research.md design.md plan.md task-scale; do
+           peer-codex.unavailable degraded.md research.md design.md plan.md task-scale roles-chosen.json; do
     if [ -s "$ART/$f" ]; then cp -f "$ART/$f" "$IDIR/$f" 2>/dev/null || true
     else rm -f "$IDIR/$f" 2>/dev/null || true; fi
   done

@@ -4,8 +4,14 @@ SELF="${BASH_SOURCE[0]}"; while [ -L "$SELF" ]; do d="$(cd -P "$(dirname "$SELF"
 BIN_DIR="$(cd -P "$(dirname "$SELF")" && pwd)"
 . "$BIN_DIR/supervisor-lib.sh"
 
+# `--patch`: not a question but a piece of work — "write the design of this screen" — and the answer
+# is a patch Claude applies. Codex stays read-only, as in every consultation: it writes the change
+# as a diff, this script checks the diff applies, and Claude applies it, inside its own scope gate,
+# and answers for it in the review.
+MODE=question
+[ "${1:-}" = "--patch" ] && { MODE=patch; shift; }
 QUESTION="$*"
-[ -n "$QUESTION" ] || { echo 'usage: consult-codex "precise engineering question"' >&2; exit 2; }
+[ -n "$QUESTION" ] || { echo 'usage: consult-codex [--patch] "precise engineering question | the change to write"' >&2; exit 2; }
 ASK_DIR="$(canon_path "$PWD")"
 LOG="$SUP_STATE/supervisor.log"
 
@@ -151,6 +157,31 @@ $f: $IDIR/$f"; done
 # now, and anything the director has said since that the worker has not been given yet. Built
 # fresh from live state on every call — it is a view, not a store.
 brief="$(thread_brief "$IDIR" "$PROJ" "" 2>/dev/null || true)"
+if [ "$MODE" = patch ]; then
+prompt="You are a peer engineer writing one piece of a change for Claude, who is implementing a
+task in this repository. Claude asked you to write it; Claude applies your patch, builds on it and
+answers for it. You are read-only: you write the change as a diff, you do not edit files.
+
+TASK CLAUDE IS WORKING ON (context)
+$task
+
+${brief:+WHERE THE WORK STANDS NOW
+$brief
+}
+THE REPOSITORY
+You start in $ASK_DIR. Read what you need: the components, the design tokens, the files you change.
+
+WHAT CLAUDE ASKS YOU TO WRITE
+$QUESTION
+
+WHAT TO ANSWER
+The change as ONE unified diff against the current working tree of $ASK_DIR, the kind \`git apply\`
+accepts: 'diff --git a/PATH b/PATH' headers, paths relative to that folder's repository root, enough
+context lines, new files as '--- /dev/null'. Finished code — not advice, not placeholders. Match
+what is already here: components, tokens, naming, comment style. Put the diff between a line
+'===PATCH===' and a line '===END===', and after it a short note: what it does, file by file, and
+how Claude should check it."
+else
 prompt="You are a read-only peer engineer advising Claude during an active autonomous implementation.
 Claude remains the implementer and final technical decision maker. Answer the precise question;
 do not restart the task, produce a generic plan, edit files, or merely reassure Claude.
@@ -177,6 +208,7 @@ For interactive behavior compare activation paths (tap/drag/combine/chain), visu
 against actual direction or footprint, animation order, target reachability, and post-use cleanup.
 Reply with exactly these compact sections: RECOMMENDATION, MISSED RISKS, REPOSITORY EVIDENCE,
 PROOF, CONFIDENCE. Name uncertainty honestly and make checks concrete."
+fi
 
 TIMEOUT="${SUPERVISOR_CONSULT_TIMEOUT:-900}"
 
@@ -261,7 +293,27 @@ if [ "$status" = ok ]; then
   # Codex answered, so the queue of questions he never saw is no longer owed: the worker is back in
   # touch with him and can ask the rest itself.
   run_still_ours "$IDIR" && codex_consultations_settled "$IDIR"
-  run_still_ours "$IDIR" && journal_event "$IDIR" peer-consultation "consultation $n completed" "$(jq -nc --argjson n "$n" --arg q "$(printf '%s' "$QUESTION" | clip_utf8 180)" '{source:"worker",call:$n,question:$q}')"
+  run_still_ours "$IDIR" && journal_event "$IDIR" peer-consultation "consultation $n completed" "$(jq -nc --argjson n "$n" --arg q "$(printf '%s' "$QUESTION" | clip_utf8 180)" --arg m "$MODE" '{source:"worker",call:$n,question:$q,mode:$m}')"
+  if [ "$MODE" = patch ]; then
+    patch="$CALL_DIR/change.patch"
+    awk '/^===PATCH===[[:space:]]*$/ {on=1; next} /^===END===[[:space:]]*$/ {on=0} on' "$CALL_DIR/final.md" > "$patch"
+    if [ ! -s "$patch" ]; then
+      rm -f "$patch"
+      cat "$CALL_DIR/final.md"
+      printf '\nCodex відповів без патча між ===PATCH=== і ===END===. Запис: %s\n' "$CALL_DIR" >&2
+      exit 3
+    fi
+    sed -n '/^===END===[[:space:]]*$/,$p' "$CALL_DIR/final.md" | sed '1d'
+    printf '\nПатч Codex: %s\nФайли: %s\n' "$patch" \
+      "$(grep -E '^diff --git ' "$patch" | sed -E 's|^diff --git a/(.*) b/.*$|\1|' | sort -u | tr '\n' ' ')"
+    if check="$(git -C "$ASK_DIR" apply --check --recount "$patch" 2>&1)"; then
+      printf 'Накладається чисто. Застосуй: git -C %s apply --recount %s — і перевір: за результат відповідаєш ти.\n' "$(printf '%q' "$ASK_DIR")" "$(printf '%q' "$patch")"
+      exit 0
+    fi
+    printf 'НЕ накладається на поточну теку: %s\nПрочитай його як чернетку й зроби зміну сам або попроси Codex ще раз.\n' \
+      "$(printf '%s' "$check" | head -3 | tr '\n' ' ')"
+    exit 3
+  fi
   cat "$CALL_DIR/final.md"
   exit 0
 fi

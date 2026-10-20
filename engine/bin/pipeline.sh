@@ -213,7 +213,12 @@ run_stage() {   # $1=stage id  $2..=argv from the definition
      '{stage:$id, started_ms:$s, ended_ms:$e, exit:$rc}' >> "$STAGES_LOG" 2>/dev/null || true
   plog "stage $id finished in $((e - s))ms (exit $rc)"
   case "$rc" in
-    0) run_event "$IDIR" "$id" done "" "$(jq -nc --arg n "$node" --argjson d "$((e - s))" '{node:$n, ms_taken:$d}')" ;;
+    0) # Finished, but with nothing to do — the agreement when the triage called none of the roles.
+       if [ -s "$ART/.skip-$id" ]; then
+         run_event "$IDIR" "$id" skipped "$(head -c 400 "$ART/.skip-$id")" "$(jq -nc --arg n "$node" '{node:$n}')"
+       else
+         run_event "$IDIR" "$id" done "" "$(jq -nc --arg n "$node" --argjson d "$((e - s))" '{node:$n, ms_taken:$d}')"
+       fi ;;
     7) run_event "$IDIR" "$id" cancelled "" "$(jq -nc --arg n "$node" '{node:$n}')" ;;
     *) # A stage that could not take part, or chose not to, says so in a file; that is not a failure.
        if [ -s "$ART/.unavailable-$id" ]; then
@@ -260,6 +265,30 @@ stage_skipped() {   # $1 = index → 0 when this stage is to be skipped for this
   [ "$(jq -r ".stages[$1].skip_when_followup // false" "$DEF")" = true ] && followup_now
 }
 
+# A step the pipeline calls "when triage decides", and the triage decided this task does not need.
+# The choice is in roles-chosen.json, written by the context stage; with no choice on file — triage
+# unavailable, or a pipeline without such steps — every step runs, as before.
+not_picked() {   # $1 = index → 0 when the triage left this stage out; the reason in NOT_PICKED_WHY
+  NOT_PICKED_WHY=""
+  [ "$(jq -r ".stages[$1].pick // false" "$DEF")" = true ] || return 1
+  [ -s "$ART/roles-chosen.json" ] || return 1
+  local node
+  node="$(jq -r ".stages[$1].node // .stages[$1].id" "$DEF")"
+  # Not `.run // true`: jq's `//` takes false for missing, and every "no" read as "yes".
+  [ "$(jq -r --arg n "$node" '[.roles[]? | select(.id == $n) | .run][0] | if . == false then "no" else "yes" end' "$ART/roles-chosen.json" 2>/dev/null)" = no ] || return 1
+  NOT_PICKED_WHY="$(jq -r --arg n "$node" '[.roles[]? | select(.id == $n) | .why][0] // ""' "$ART/roles-chosen.json" 2>/dev/null)"
+  # The roles after it and the agreement read this instead of a missing result.
+  printf '%s\n' "${NOT_PICKED_WHY:-тріаж вирішив, що для цієї задачі цей крок не потрібен}" > "$ART/role-$node.skipped" 2>/dev/null || true
+  return 0
+}
+skip_not_picked() {   # $1 = index
+  local id node
+  id="$(jq -r ".stages[$1].id" "$DEF")"; node="$(jq -r ".stages[$1].node // .stages[$1].id" "$DEF")"
+  plog "stage $id skipped — triage left it out: ${NOT_PICKED_WHY:-no reason given}"
+  run_event "$IDIR" "$id" skipped "Тріаж: не потрібен для цієї задачі${NOT_PICKED_WHY:+ — $NOT_PICKED_WHY}" \
+    "$(jq -nc --arg n "$node" '{node:$n, reason:"triage"}')"
+}
+
 # A stage as he named it on the canvas, for the line he reads.
 stage_title() { jq -r ".stages[$1] | .title // .id" "$DEF" 2>/dev/null; }
 
@@ -271,6 +300,11 @@ while [ "$i" -lt "$total" ]; do
     id="$(jq -r ".stages[$i].id" "$DEF")"
     opt="$(jq -r ".stages[$i].optional // false" "$DEF")"
     withdrawn && { run_event "$IDIR" pipeline cancelled "Повідомлення забрано"; exit 7; }
+    if not_picked "$i"; then
+      skip_not_picked "$i"
+      i=$((i + 1))
+      continue
+    fi
     if stage_skipped "$i"; then
       plog "stage $id skipped — follow-up to the open task; the worker consults Codex itself when it needs to"
       run_event "$IDIR" "$id" skipped "Продовження відкритої задачі" "$(jq -nc --arg n "$(jq -r ".stages[$i].node // .stages[$i].id" "$DEF")" '{node:$n, reason:"followup"}')"
@@ -308,6 +342,10 @@ while [ "$i" -lt "$total" ]; do
   pids=""; ids=""; skipped_ids=""; required_ids=""; hold_ids=""
   while [ "$i" -lt "$total" ] && [ "$(jq -r ".stages[$i].group // empty" "$DEF")" = "$grp" ]; do
     id="$(jq -r ".stages[$i].id" "$DEF")"
+    if not_picked "$i"; then
+      skip_not_picked "$i"
+      i=$((i + 1)); continue
+    fi
     if stage_skipped "$i"; then
       skipped_ids="$skipped_ids $id"
       run_event "$IDIR" "$id" skipped "Продовження відкритої задачі" "$(jq -nc --arg n "$(jq -r ".stages[$i].node // .stages[$i].id" "$DEF")" '{node:$n, reason:"followup"}')"

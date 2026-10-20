@@ -46,7 +46,8 @@ if [ -s "$COMPILED" ]; then
     if [ "$(jq -r '.brief.roles | length' "$COMPILED" 2>/dev/null)" -gt 0 ] 2>/dev/null; then
       printf '\n[РОЛІ ПІДГОТОВКИ] Узгоджене рішення ролей — у плані вище (%s). Результати кожної ролі:\n' "$ART/peer-alignment.md"
       jq -r '.brief.roles[] | "\(.id)\t\(.title)\t\(.engine)"' "$COMPILED" 2>/dev/null | while IFS="$(printf '\t')" read -r _rid _rt _re; do
-        if [ -s "$ART/role-$_rid.md" ]; then printf -- '- %s (%s): %s\n' "$_rt" "$_re" "$ART/role-$_rid.md"
+        if [ -s "$ART/role-$_rid.skipped" ]; then printf -- '- %s (%s): цього разу не кликали — %s\n' "$_rt" "$_re" "$(cat "$ART/role-$_rid.skipped")"
+        elif [ -s "$ART/role-$_rid.md" ]; then printf -- '- %s (%s): %s\n' "$_rt" "$_re" "$ART/role-$_rid.md"
         else printf -- '- %s (%s): результату немає — %s\n' "$_rt" "$_re" "$(cat "$ART/role-$_rid.unavailable" 2>/dev/null || echo "причина невідома")"; fi
       done
       printf 'Тест-кейси з узгодженого рішення — це критерії готовності: перед завершенням перевір кожен і назви в підсумку, як. Якщо не згоден з узгодженим рішенням, скажи це першим рядком і поясни, перш ніж відходити від нього. Codex перевірятиме роботу саме проти цього рішення.\n'
