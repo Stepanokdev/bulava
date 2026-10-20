@@ -15,6 +15,8 @@
 #     not take the instance down with it
 #   - the attempt budget holds however many new entries the retries write, and ends visibly
 #   - the director's Stop, an interruption, a tool still out and a usage limit are never "hangs"
+#   - a compaction's summary is never a question: it holds no message back and is no hang, while a
+#     question that really is open stays open across it
 set -u
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-tmux.sh"
 BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../bin" && pwd)"
@@ -383,6 +385,66 @@ SUPERVISOR_HUNG_TURN_SECS=1 hung_turn_check "$IDIR" "$SESSION" 99999 RUN-1 \
 rm -f "$(hung_file "$IDIR")"
 printf '{"type":"assistant","uuid":"a-6","isApiErrorMessage":true,"apiErrorStatus":400,"message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"bad request"}]}}\n' >> "$TX"
 not_a_hang "a turn ended by a 4xx the retry cannot fix"
+
+echo "===== a compaction's summary is not a question ====="
+# What happened (13 Oct): the answer was finished at 20:24, and at 21:20 Claude Code compacted the
+# idle session by itself, writing its summary as a user entry. Read as the last word, that summary was
+# a question the worker still owed: every message he sent after it waited out the prompt wait and went
+# to the retry queue, which asked the same question, and the run — it held a verdict — was never
+# restarted either. The records are the ones Claude Code writes, with the summary's own flags.
+compaction() {   # $1=time — the boundary, the summary (it repeats his earlier words), the notes after
+  local b; b="$(uuidgen)"
+  printf '{"type":"system","subtype":"compact_boundary","uuid":"%s","timestamp":"%s","content":"Conversation compacted","compactMetadata":{"trigger":"auto"}}\n' "$b" "$1" >> "$TX"
+  printf '{"type":"user","uuid":"u-summary","parentUuid":"%s","timestamp":"%s","isVisibleInTranscriptOnly":true,"isCompactSummary":true,"message":{"role":"user","content":"This session is being continued from a previous conversation that ran out of context. All user messages: зроби дашборд"}}\n' "$b" "$1" >> "$TX"
+  printf '{"type":"attachment","uuid":"%s","timestamp":"%s"}\n' "$(uuidgen)" "$1" >> "$TX"
+  printf '{"type":"system","subtype":"informational","uuid":"%s","timestamp":"%s","content":"Compacted while idle, before the prompt cache expired"}\n' "$(uuidgen)" "$1" >> "$TX"
+}
+ago() { date -u -v-"$1" '+%Y-%m-%dT%H:%M:%S.000Z'; }
+said() { jq -s --arg t "$1" '[.[] | select(.type == "user" and .message.content == $t)] | length' "$TX" 2>/dev/null || echo 0; }
+new_instance; start_worker answer
+: > "$IDIR/handshake-ok"; touch -t "$(date -v-2H '+%Y%m%d%H%M.%S')" "$IDIR/handshake-ok"
+printf '{"type":"user","uuid":"u-ask","timestamp":"%s","message":{"role":"user","content":"зроби дашборд"}}\n' "$(ago 90M)" >> "$TX"
+printf '{"type":"assistant","uuid":"a-done","timestamp":"%s","message":{"role":"assistant","model":"claude-test","content":[{"type":"text","text":"Готово, дашборд тут."}]}}\n' "$(ago 85M)" >> "$TX"
+before="$(_transcript_size "$TX")"
+compaction "$(ago 30M)"
+worker_owes_answer "$SESSION" "$IDIR" && bad "the summary of an idle compaction read as a question the worker owes" \
+  || ok "after an idle compaction the worker owes nothing"
+transcript_prompt_since "$TX" "$before" "зроби дашборд" \
+  && bad "a summary repeating his words was taken as a receipt that they had just gone in" \
+  || ok "a summary repeating his words is no delivery receipt"
+transcript_progress_since "$TX" "$before" && bad "the summary counted as the model producing work" \
+  || ok "nor is it the model producing work"
+not_a_hang "an idle compaction after a finished answer"
+: > "$IDIR/done"   # a verdict, as that run had: the frozen-turn recovery would never come for it
+SUPERVISOR_PROMPT_WAIT=3 INJECT_IDIR="$IDIR" inject_task "$SESSION" "а воно працює?"; rc=$?
+[ "$rc" = 0 ] && [ "$(said "а воно працює?")" = 1 ] \
+  && ok "his next message goes in at once, exactly once" \
+  || bad "a message after the compaction was held back (rc $rc, copies $(said "а воно працює?"))"
+rm -f "$IDIR/done"
+# The controls: the summary is what is passed over, never the conversation around it.
+printf '{"type":"user","uuid":"u-next","timestamp":"%s","message":{"role":"user","content":"і ще одне"}}\n' \
+  "$(date -u -v+1M '+%Y-%m-%dT%H:%M:%S.000Z')" >> "$TX"
+worker_owes_answer "$SESSION" "$IDIR" && ok "a question asked after the compaction is owed like any other" \
+  || bad "a real question after the compaction was not seen as owed"
+# The process started before all of it, and a compaction does not restamp its start
+# (test-session-handshake.sh): what was asked before the compaction is still owed by this process.
+born_before_it() { : > "$IDIR/handshake-ok"; touch -t "$(date -v-2H '+%Y%m%d%H%M.%S')" "$IDIR/handshake-ok"; }
+new_instance; start_worker answer; born_before_it
+printf '{"type":"user","uuid":"u-task","timestamp":"%s","message":{"role":"user","content":"полагодь збірку"}}\n' "$(ago 20M)" >> "$TX"
+printf '{"type":"assistant","uuid":"a-run","timestamp":"%s","message":{"role":"assistant","model":"claude-test","content":[{"type":"tool_use","id":"t9","name":"Bash"}]}}\n' "$(ago 19M)" >> "$TX"
+printf '{"type":"user","uuid":"u-result","timestamp":"%s","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t9","content":"ok"}]}}\n' "$(ago 18M)" >> "$TX"
+compaction "$(ago 17M)"
+[ "$(hung_turn_kind "$TX" | cut -d' ' -f1,2)" = "unanswered u-result" ] \
+  && ok "a turn that froze right after compacting mid-way is still a frozen turn, named by its tool result" \
+  || bad "a turn frozen right after a mid-turn compaction is not read as one by its tool result ($(hung_turn_kind "$TX"))"
+worker_owes_answer "$SESSION" "$IDIR" && ok "and nothing is typed at it: it still owes that turn" \
+  || bad "a worker frozen right after a mid-turn compaction was taken for an idle one"
+new_instance; start_worker answer; born_before_it
+printf '{"type":"user","uuid":"u-typed","timestamp":"%s","message":{"role":"user","content":"нова задача"}}\n' "$(ago 12M)" >> "$TX"
+compaction "$(ago 11M)"
+[ "$(hung_turn_kind "$TX" | cut -d' ' -f1,2)" = "unanswered u-typed" ] && worker_owes_answer "$SESSION" "$IDIR" \
+  && ok "a question the compaction came in front of is still unanswered, and still owed" \
+  || bad "a question followed by a compaction is not read as the open question ($(hung_turn_kind "$TX"))"
 
 echo "===== stop honours generations ====="
 new_instance; printf 'CURRENT\n' > "$IDIR/worker-generation"

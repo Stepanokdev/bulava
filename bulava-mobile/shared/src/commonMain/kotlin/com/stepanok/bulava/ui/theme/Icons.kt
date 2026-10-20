@@ -59,6 +59,9 @@ object Icons {
     val Pin = stroked("pin", "M9 4h6", "M10 4v5l-3.2 4h10.4L14 9V4", "M12 13v7")
     val Pencil = stroked("pencil", "M15.2 5.3a2.1 2.1 0 0 1 3 3L8.5 18 4.5 19.5 6 15.5z")
     val Refresh = stroked("refresh", "M19.5 12a7.5 7.5 0 1 1-2.2-5.3", "M19.5 4.5v4.5H15")
+    /** An automation's run, where the Mac shows `clock.arrow.2.circlepath`: work that comes round again by itself. */
+    val Repeat = stroked("repeat", "M16.5 4l3 3-3 3", "M4.5 12v-1.5A3.5 3.5 0 0 1 8 7h11.5",
+        "M7.5 20l-3-3 3-3", "M19.5 12v1.5a3.5 3.5 0 0 1-3.5 3.5H4.5")
     val External = stroked("external", "M13.5 4.5h6v6", "M19.5 4.5l-8.5 8.5", "M18 14v3.5a2 2 0 0 1-2 2H6.5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2H10")
     val Copy = stroked("copy", "M9 9h9a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 18 21H9a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 9 9z",
         "M15.5 6V4.5A1.5 1.5 0 0 0 14 3H5A1.5 1.5 0 0 0 3.5 4.5v9A1.5 1.5 0 0 0 5 15h1.5")

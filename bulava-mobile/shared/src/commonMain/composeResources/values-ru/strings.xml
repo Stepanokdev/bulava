@@ -34,6 +34,7 @@
     <string name="drawer_search">Поиск чатов</string>
     <string name="drawer_new_chat">Новый чат</string>
     <string name="drawer_archived">Архив</string>
+    <string name="drawer_automations">Автоматизации</string>
     <string name="drawer_settings">Настройки</string>
     <string name="drawer_no_products">Проектов пока нет. Проекты добавляются на Mac, там, где лежат папки.</string>
     <string name="drawer_no_chats">Чатов пока нет</string>

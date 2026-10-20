@@ -139,6 +139,31 @@ nonisolated final class DrivingAppsThroughBulavaTests: XCTestCase {
 
     /// The whole point of the arrangement: the script the worker runs contains no Accessibility
     /// call at all. If it ever grows one, the grant stops being Bulava's and this test says so.
+    func testADragPressesCarriesAndReleasesOnTheTarget() {
+        let path = UIControl.dragPath(from: CGPoint(x: 100, y: 200), to: CGPoint(x: 400, y: 260), steps: 6)
+        XCTAssertEqual(path.first?.type, .leftMouseDown, "it starts with a press")
+        XCTAssertEqual(path.first?.point, CGPoint(x: 100, y: 200), "where it was asked to start")
+        XCTAssertEqual(path.last?.type, .leftMouseUp, "and ends with a release")
+        XCTAssertEqual(path.last?.point, CGPoint(x: 400, y: 260), "on the target")
+        let moves = path.dropFirst().dropLast()
+        XCTAssertEqual(moves.count, 6)
+        XCTAssertTrue(moves.allSatisfy { $0.type == .leftMouseDragged }, "every step between is a drag, not a bare move")
+        XCTAssertEqual(moves.last?.point, CGPoint(x: 400, y: 260), "the last move already sits on the target")
+        let xs = moves.map(\.point.x)
+        XCTAssertEqual(xs, xs.sorted(), "it travels one way")
+    }
+
+    func testTheTreeSaysWhereEachThingIs() {
+        XCTAssertEqual(UIControl.placeText(CGRect(x: 412.4, y: 96.6, width: 88, height: 34.2)), "  @412,97 88x34",
+                       "screen points from the top left, the coordinates click --at and drag take")
+    }
+
+    func testADragIsRefusedWithoutBothEnds() {
+        let me = NSRunningApplication.current
+        guard case .failure = UIControl.drag(app: me, from: "10,10", to: nil) else { return XCTFail("a drag with no target went ahead") }
+        guard case .failure = UIControl.drag(app: me, from: "ten,10", to: "20,20") else { return XCTFail("a malformed point went ahead") }
+    }
+
     func testTheWorkerScriptAsksRatherThanActs() throws {
         let script = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()

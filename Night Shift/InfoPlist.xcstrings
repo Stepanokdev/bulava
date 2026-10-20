@@ -1,6 +1,30 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "CFBundleDisplayName" : {
+      "comment" : "Bundle display name",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Bulava"
+          }
+        }
+      }
+    },
+    "CFBundleName" : {
+      "comment" : "Bundle name",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Bulava"
+          }
+        }
+      }
+    },
     "NSAppleEventsUsageDescription" : {
       "comment" : "What macOS shows when it asks for this permission.",
       "extractionState" : "extracted_with_value",
@@ -45,6 +69,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bulava запускає автоматизацію, коли в календарі закінчується зустріч, — якщо таку налаштовано."
+          }
+        }
+      }
+    },
+    "NSHumanReadableCopyright" : {
+      "comment" : "Copyright (human-readable)",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : ""
           }
         }
       }
@@ -99,7 +135,7 @@
     },
     "NSScreenCaptureUsageDescription" : {
       "comment" : "What macOS shows when it asks for this permission.",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {

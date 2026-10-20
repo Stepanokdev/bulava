@@ -1,11 +1,11 @@
 #!/bin/bash
-# A chat waiting on a permission dialog is waiting for him, not idle.
+# A chat waiting on a human question or plan approval is waiting for him, not idle.
 #
 # The watchdog tears down a run whose screen has not changed for SUPERVISOR_IDLE_KILL_HOURS: it
 # kills the tmux session and deletes the run's folder. A question was exempt from that; a
-# permission dialog in a chat with a person there was not, so a dialog he had not got to in four
-# hours took the chat and its folder with it. Replayed against watchdog.sh itself, with the idle
-# deadline cut to seconds:
+# permission dialog in a chat with a person there was not. Bash permission requests are now
+# answered by the gate, but plan approvals and questions still need a person. Replayed against
+# watchdog.sh itself with one of those remaining dialogs and the idle deadline cut to seconds:
 #   - with a dialog on screen the run and its session are still there past the deadline
 #   - the control: once the dialog is answered (the conversation moves on), the same idle run is
 #     torn down exactly as before
@@ -13,6 +13,7 @@ set -u
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-tmux.sh"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN_DIR="$ROOT/bin"
+HOOK="$ROOT/hooks/permission-gate.sh"
 unset SUPERVISOR_UNATTENDED SUPERVISOR_CHAT_CONTEXT_FILE SUPERVISOR_EXTRA_DIRS_FILE
 command -v tmux >/dev/null 2>&1 || { echo "SKIP: tmux not installed"; exit 0; }
 
@@ -33,12 +34,15 @@ PROJ="$TMP/project"; mkdir -p "$PROJ"; PROJ="$(canon_path "$PROJ")"
 SLUG="$(slug_for "$PROJ")"; IDIR="$(instance_dir "$SLUG")"; SESSION="$(session_name "$SLUG")"
 mkdir -p "$IDIR"; printf '%s\n' "$PROJ" > "$IDIR/project"; : > "$IDIR/started-at"
 printf '%s\n' "$SESSION" > "$IDIR/session"
+# The gate must leave this plan approval unanswered; it can legitimately wait for the person.
+out="$(jq -nc --arg cwd "$PROJ" '{hook_event_name:"PermissionRequest", tool_name:"ExitPlanMode", tool_input:{}, cwd:$cwd, session_id:"sid-1"}' | bash "$HOOK")"
+[ -z "$out" ] && ok "the gate leaves plan approval to the person" || bad "the gate answered the plan approval"
 # A still pane and a transcript that does not move: Claude Code sitting on its dialog.
 tmux new-session -d -s "$SESSION" -x 120 -y 30 "cat"
 TX="$TMP/transcript.jsonl"; : > "$TX"; touch -t 202601010000 "$TX"
 printf 'sid-1' > "$IDIR/claude-session-id"
 printf '%s\t%s\n' sid-1 "$TX" > "$IDIR/.transcript-path"
-jq -nc --argjson at "$(date +%s)" '{at:$at, message:"Claude needs your permission to use Bash", kind:"permission_prompt"}' \
+jq -nc --argjson at "$(date +%s)" '{at:$at, message:"Claude needs your permission to use ExitPlanMode", kind:"permission_prompt"}' \
   > "$IDIR/permission-wait.json"
 touch -t 202601010000 "$IDIR/last-activity"
 
@@ -55,7 +59,7 @@ grep -q "full teardown" "$WDLOG" && bad "the watchdog logged a teardown" || ok "
 
 echo "===== the control: answered, the same idle run goes as before ====="
 # Answering moves the conversation on; the watchdog's own check then forgets the dialog.
-printf '{"type":"user","message":{"content":"allowed"}}\n' >> "$TX"
+printf '{"type":"user","message":{"content":"plan approved"}}\n' >> "$TX"
 for i in $(seq 1 20); do [ -d "$IDIR" ] || break; sleep 1; done
 [ ! -d "$IDIR" ] && grep -q "full teardown" "$WDLOG" \
   && ok "torn down once nothing waits for him" || bad "the ordinary idle teardown no longer happens (log: $(tail -3 "$WDLOG" | tr '\n' ' '))"

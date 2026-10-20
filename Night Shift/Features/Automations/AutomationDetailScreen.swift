@@ -136,7 +136,19 @@ struct AutomationDetailScreen: View {
                         .compactMap { $0 as? String }.joined(separator: " · "),
                     detail: project?.displayPath)
             let start = automation.baseBranch.flatMap { $0.isEmpty ? nil : $0 } ?? String(localized: "the default branch")
-            if automation.checksOnly {
+            if automation.doesJob {
+                factRow("tray", String(localized: "Each run does the job in a folder of its own, with no git and nothing to merge"))
+                let reads = (automation.readFolders ?? []).filter { !$0.isEmpty }
+                if !reads.isEmpty {
+                    factRow("eye", String(format: String(localized: "Reads %@"),
+                                          reads.map { ($0 as NSString).abbreviatingWithTildeInPath }.joined(separator: ", ")))
+                }
+                let tools = (automation.allowedTools ?? []).filter { !$0.isEmpty }
+                if !tools.isEmpty {
+                    factRow("puzzlepiece.extension", String(format: String(localized: "May use %@ without asking"),
+                                                            tools.joined(separator: ", ")))
+                }
+            } else if automation.checksOnly {
                 factRow("checkmark.seal",
                         String(format: String(localized: "Each run checks %@ in a copy of its own and leaves nothing to merge"), start))
             } else {
@@ -146,6 +158,10 @@ struct AutomationDetailScreen: View {
             if automation.confirmFirst {
                 factRow("hand.raised", String(localized: "Asks you before each run"))
             }
+            factRow(automation.reportsAfterRun ? "doc.text" : "bell.slash",
+                    automation.reportsAfterRun
+                        ? String(localized: "Writes a report after a run that did something")
+                        : String(localized: "No report: you hear about it only when it fails or needs you"))
             let next = model.nextRuns(of: automation)
             if !next.isEmpty {
                 factRow("calendar", String(format: String(localized: "Next: %@"),

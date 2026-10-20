@@ -110,6 +110,9 @@ ENGINE_PARAM = P("engine", "Хто", "Who", "select", "codex", ["codex", "claude
 MODEL_PARAM = P("model", "Модель", "Model", "select", "opus", ["opus", "sonnet"])
 EFFORT_PARAM = P("effort", "Глибина", "Depth", "select", "high", ["low", "medium", "high", "max"])
 FOLLOWUP_PARAM = P("skipOnFollowup", "Пропускати для продовження", "Skip on a follow-up", "bool", False)
+# A step the work must not go on without: when it fails, the pipeline stops and says which step,
+# instead of carrying on with what it has.
+REQUIRED_PARAM = P("required", "Обов'язковий крок", "Required step", "bool", False)
 
 # The palette. `exec` says whether THIS engine can run the module; the rest are on the map so the
 # whole picture is visible, and the validator refuses them in a description that is meant to run.
@@ -151,12 +154,14 @@ REG = {
         "in": [{"id": "in", "types": ["task", "context"], "req": True}], "out": [{"id": "context", "type": "context"}]},
     "prep.position": {"t": T("Незалежна позиція", "Independent position"), "cat": "prep", "phase": "prep", "v": "v1", "exec": True, "prompt": True,
         "d": T("Інженерна позиція до початку роботи. Дві позиції не бачать одна одну.", "An engineering position before work starts. Two positions never see each other."),
-        "in": [{"id": "context", "types": ["context"], "req": True}], "out": [{"id": "position", "type": "position"}],
-        "p": [P("engine", "Хто", "Who", "select", "claude", ["claude", "codex"]), FOLLOWUP_PARAM]},
+        # A position may also take the positions before it: an architect who reads the analysis and the
+        # test cases. Positions side by side in one phase still never see each other.
+        "in": [{"id": "context", "types": ["context", "position"], "req": True, "multi": True}], "out": [{"id": "position", "type": "position"}],
+        "p": [P("engine", "Хто", "Who", "select", "claude", ["claude", "codex"]), REQUIRED_PARAM, FOLLOWUP_PARAM]},
     "prep.align": {"t": T("Звірка позицій", "Align positions"), "cat": "prep", "phase": "prep", "v": "v1", "exec": True, "prompt": True,
         "d": T("Codex виписує суттєві розбіжності й перевірки прийняття.", "Codex lists the material differences and acceptance checks."),
         "in": [{"id": "positions", "types": ["position"], "req": True, "multi": True}], "out": [{"id": "checks", "type": "checks"}],
-        "p": [FOLLOWUP_PARAM]},
+        "p": [REQUIRED_PARAM, FOLLOWUP_PARAM]},
     "prep.argue": {"t": T("Суперечка з задачею", "Argue with the task"), "cat": "prep", "phase": "prep", "v": "v2", "exec": False, "prompt": True,
         "d": T("Чи служить буквальне прохання справжній меті.", "Whether the literal request serves the real goal."),
         "in": [{"id": "context", "types": ["context"], "req": True}], "out": [{"id": "checks", "type": "checks"}]},
@@ -669,12 +674,38 @@ def compile_manifest(m, prompt_dir=None):
     by_level = {}
     for p in positions:
         by_level.setdefault(level.get(p["id"], 0), []).append(p)
+    # Roles rather than the two classic positions: positions in more than one phase, or two of them
+    # on one engine. Then each is a role with its own prompt and its own result file, a role in a
+    # later phase reads the roles upstream of it, and the alignment reads every role. Two positions
+    # in one phase, one per engine, stay exactly what they always were.
+    engines = [(p.get("params") or {}).get("engine", "claude") for p in positions]
+    role_mode = len(by_level) > 1 or len(engines) != len(set(engines))
+
+    def required(n):
+        return bool((n.get("params") or {}).get("required"))
+
     for lv in sorted(by_level):
         grp = by_level[lv]
         for p in grp:
             eng = (p.get("params") or {}).get("engine", "claude")
             st = {"id": p["id"], "node": p["id"], "title": "%s's independent position" % eng.capitalize(),
                   "run": ["preflight.sh", "--stage", "peer", "--engine", eng], "optional": True}
+            if role_mode:
+                title = (p.get("title") or "").strip() or "%s (%s)" % (p["id"], eng)
+                st["title"] = title
+                st["run"] += ["--role", p["id"], "--role-title", title]
+                if prompt_file(p):
+                    st["run"] += ["--role-prompt", prompt_file(p)]
+                reads = [q["id"] for q in positions if q["id"] in g.upstream(p["id"])]
+                if reads:
+                    st["run"] += ["--reads", ",".join(reads)]
+                st["optional"] = not required(p)
+            elif required(p):
+                st["optional"] = False
+            if required(p):
+                # "Required step" is his word that the work must not start without it: a failure
+                # holds the message instead of handing it to the worker unprepared.
+                st["hold_on_failure"] = True
             if len(grp) > 1:
                 st["group"] = "peers-%d" % lv if len(by_level) > 1 else "peers"
             if skip_flag(p):
@@ -690,13 +721,20 @@ def compile_manifest(m, prompt_dir=None):
             pf = prompt_file(n)
             if pf:
                 run += ["--prompt", pf]
-            st = {"id": n["id"], "node": n["id"], "title": "material deltas and acceptance checks", "run": run, "optional": True}
+            if role_mode:
+                run += ["--roles", ",".join(p["id"] for p in positions if p["id"] in g.upstream(n["id"]))]
+            st = {"id": n["id"], "node": n["id"], "title": "material deltas and acceptance checks", "run": run,
+                  "optional": not required(n)}
+            if required(n):
+                st["hold_on_failure"] = True
             if skip_flag(n):
                 st["skip_when_followup"] = True
             stages.append(st)
             node_stage[n["id"]] = n["id"]
 
-    brief = {"extra": None, "research": False, "skills": []}
+    brief = {"extra": None, "research": False, "skills": [],
+             "roles": [{"id": p["id"], "title": (p.get("title") or "").strip() or p["id"],
+                        "engine": (p.get("params") or {}).get("engine", "claude")} for p in positions] if role_mode else []}
     agent = next((by_id[i] for i in order if key_of(by_id[i]) in ("agent.claude", "agent.researcher")), None)
     compose = next((by_id[i] for i in order if key_of(by_id[i]) == "prep.compose"), None)
     if compose is not None or agent is not None:

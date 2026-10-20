@@ -28,6 +28,22 @@ slug="$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' \
 stamp="$(date '+%Y-%m-%d-%H%M')"
 OUT="$PROJ/artifacts/$stamp-$slug"
 
+# The same request built again — the contract asks for exactly that after a correction — goes back
+# into the folder it was built in, not a new dated one. A new folder each time left the chat holding
+# the first one: once that was removed, "Open report" said the file was missing while the report sat
+# next to it under another name. The request's own folder name is the key, kept inside the result.
+REQUEST_KEY="$(basename "$REPORT_DIR")"
+for marker in "$PROJ"/artifacts/*/.report-request; do
+  [ -f "$marker" ] || continue
+  # A link to a report folder (`latest`, or one left where an old path was) is not the folder: the
+  # rebuild would replace the link and leave the real folder behind with the old page.
+  [ -L "$(dirname "$marker")" ] && continue
+  if [ "$(tr -d '[:space:]' < "$marker" 2>/dev/null)" = "$REQUEST_KEY" ]; then
+    OUT="$(dirname "$marker")"
+    break
+  fi
+done
+
 if [ -d "$PROJ/.git" ] || git -C "$PROJ" rev-parse --git-dir >/dev/null 2>&1; then
   if ! git -C "$PROJ" check-ignore -q "artifacts/x" 2>/dev/null; then
     gi="$PROJ/.gitignore"
@@ -37,11 +53,24 @@ if [ -d "$PROJ/.git" ] || git -C "$PROJ" rev-parse --git-dir >/dev/null 2>&1; th
   fi
 fi
 
-mkdir -p "$OUT" || { echo "❌ не створив $OUT" >&2; exit 1; }
-index="$(python3 "$BIN_DIR/artifact.py" "$REPORT_DIR" "$OUT" --title "$title" 2>&1)" || {
-  echo "❌ артефакт не зібрався: $index" >&2; exit 1; }
+# Built beside it and put in place whole, so a page already open never shows half a rebuild.
+BUILD="$PROJ/artifacts/.building-$$"
+rm -rf "$BUILD"
+mkdir -p "$BUILD" || { echo "❌ не створив $BUILD" >&2; exit 1; }
+built="$(python3 "$BIN_DIR/artifact.py" "$REPORT_DIR" "$BUILD" --title "$title" 2>&1)" || {
+  rm -rf "$BUILD"; echo "❌ артефакт не зібрався: $built" >&2; exit 1; }
+printf '%s\n' "$REQUEST_KEY" > "$BUILD/.report-request"
+if [ -d "$OUT" ]; then
+  OLD="$PROJ/artifacts/.replaced-$$"
+  mv "$OUT" "$OLD" && mv "$BUILD" "$OUT" && rm -rf "$OLD" || {
+    [ -d "$OLD" ] && [ ! -d "$OUT" ] && mv "$OLD" "$OUT"
+    rm -rf "$BUILD"; echo "❌ не зміг замінити $OUT" >&2; exit 1; }
+else
+  mv "$BUILD" "$OUT" || { rm -rf "$BUILD"; echo "❌ не створив $OUT" >&2; exit 1; }
+fi
+index="$OUT/${built##*/}"
 
-ln -sfn "$stamp-$slug" "$PROJ/artifacts/latest" 2>/dev/null || true
+ln -sfn "$(basename "$OUT")" "$PROJ/artifacts/latest" 2>/dev/null || true
 printf '%s\n' "$index" > "$REPORT_DIR/artifact-path" 2>/dev/null || true
 
 echo "✅ артефакт: $index"

@@ -45,7 +45,15 @@ for item in bin hooks tests supervisor claude-commands assets install.sh ENGINE-
   [ -e "$ROOT/$item" ] || continue
   cp -R "$ROOT/$item" "$STAGE/$item"
 done
-rm -rf "$STAGE/bin/__pycache__" "$STAGE/supervisor/memory" "$STAGE/supervisor/lessons" 2>/dev/null || true
+rm -rf "$STAGE/supervisor/memory" "$STAGE/supervisor/lessons" 2>/dev/null || true
+# Bytecode caches are the build machine's, not the engine's: every .pyc carries the absolute path of
+# the source it was compiled from, and Python writes one beside each module it imports. Only
+# bin/__pycache__ used to be dropped, so the one test-permission-gate.sh leaves in bin/lib, when it
+# imports the permission policy, shipped with this checkout's folder name inside — and the audit
+# refused the export after any run of the suite. All of them go, as bundle-engine.sh and
+# publish-public.sh already drop them.
+find "$STAGE" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+find "$STAGE" -name '*.pyc' -delete 2>/dev/null || true
 find "$STAGE" -name '*.backup-*' -delete 2>/dev/null || true
 find "$STAGE" -name '.DS_Store' -delete 2>/dev/null || true
 

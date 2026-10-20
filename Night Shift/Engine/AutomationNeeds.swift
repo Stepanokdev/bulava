@@ -16,6 +16,9 @@ nonisolated enum AutomationNeed: Hashable, Identifiable, Sendable {
     case mail
     /// A folder trigger lists a folder macOS guards (Desktop, Documents, Downloads, iCloud, a volume).
     case folder(String)
+    /// A folder its runs read that macOS guards — a job's meeting notes in Documents. Asked about
+    /// while he is here, whatever starts the run: a schedule reads it at night just the same.
+    case readFolder(String)
     /// Its own browser: no window, a throwaway profile (`engine/supervisor/automation-mcp.json`).
     case browser
     /// Screenshots of apps on this Mac, taken by Bulava for the run.
@@ -26,6 +29,7 @@ nonisolated enum AutomationNeed: Hashable, Identifiable, Sendable {
         case .calendar: "calendar"
         case .mail: "mail"
         case .folder(let path): "folder:\(path)"
+        case .readFolder(let path): "read:\(path)"
         case .browser: "browser"
         case .screen: "screen"
         }
@@ -34,7 +38,7 @@ nonisolated enum AutomationNeed: Hashable, Identifiable, Sendable {
     /// Set by the trigger, so certain; the others are read from the brief's words and only offered.
     var comesFromTrigger: Bool {
         switch self {
-        case .calendar, .mail, .folder: true
+        case .calendar, .mail, .folder, .readFolder: true
         case .browser, .screen: false
         }
     }
@@ -61,7 +65,7 @@ nonisolated enum AutomationNeeds {
 
     // MARK: What it needs
 
-    static func needs(trigger: AutomationTrigger, brief: String) -> [AutomationNeed] {
+    static func needs(trigger: AutomationTrigger, brief: String, readFolders: [String] = []) -> [AutomationNeed] {
         var out: [AutomationNeed] = []
         switch trigger {
         case .event(let event):
@@ -76,6 +80,11 @@ nonisolated enum AutomationNeeds {
             if case .webPage = watch.source { out.append(.browser) }
         case .manual, .schedule:
             break
+        }
+        for path in readFolders {
+            let clean = path.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard isGuarded(clean), !out.contains(.folder(clean)), !out.contains(.readFolder(clean)) else { continue }
+            out.append(.readFolder(clean))
         }
         let words = brief.lowercased()
         if !out.contains(.browser), browserWords.contains(where: words.contains) { out.append(.browser) }
@@ -112,7 +121,7 @@ nonisolated enum AutomationNeeds {
             }
         case .mail:
             return await mailState(asking: false)
-        case .folder:
+        case .folder, .readFolder:
             return .checkNow
         case .browser:
             return chromeInstalled ? .ready : .missing
@@ -133,8 +142,9 @@ nonisolated enum AutomationNeeds {
             return await state(of: .calendar)
         case .mail:
             return await mailState(asking: true)
-        case .folder(let path):
-            // Listing it is how macOS is asked: Bulava itself reads it when a file arrives.
+        case .folder(let path), .readFolder(let path):
+            // Listing it is how macOS is asked: Bulava itself reads it when a file arrives, and a run
+            // it starts reads it under the same permission.
             let readable = await Task.detached { (try? FileManager.default.contentsOfDirectory(atPath: path)) != nil }.value
             return readable ? .ready : .blocked
         case .browser:
@@ -150,7 +160,7 @@ nonisolated enum AutomationNeeds {
         switch need {
         case .calendar: WatchFix.calendarPrivacy.url
         case .mail: WatchFix.automationPrivacy.url
-        case .folder: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders")
+        case .folder, .readFolder: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders")
         case .browser: URL(string: "https://www.google.com/chrome/")
         case .screen: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
         }

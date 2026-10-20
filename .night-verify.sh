@@ -14,6 +14,35 @@
 set -uo pipefail
 cd "$(dirname "$0")" || exit 1
 
+# When tests run and fail, say so in the few lines a reader needs: the names of the tests that
+# failed, and for each the assertion in xcodebuild's own words (its multi-line message included).
+# XCTest logs an assertion as "File.swift:LINE: error: -[Class method] : …" — no column — so the
+# compiler-error filter below (which needs line:col) never shows it, and the reader was left with a
+# bare "FAILED" and a 20k-line log to open by hand. One real failure (an untranslated string Xcode's
+# catalog sync had added) had to be pasted into a chat to find out what broke.
+#
+# Exposed as `--explain <log>` so the same code is what the script tests exercise on a saved log.
+summarise_test_failures() {
+  local log="$1"
+  # The names, exactly as xcodebuild lists them at the end of a failed run (covers crashes, which
+  # leave no assertion line of their own).
+  awk '/^Failing tests:/{on=1} on{print} /^\*\* TEST (FAILED|SUCCEEDED) \*\*/{on=0}' "$log" \
+    | grep -v '^\*\* TEST' || true
+  # The reason for each: the "… error: -[…]" line through to just before its "Test Case … failed"
+  # line, so a multi-line message stays whole. Capped, so a hundred failures do not scroll away.
+  awk '
+    /: error: -\[/                             { blk=1; n++; if (n<=10) print; next }
+    blk && /^Test Case .* (failed|passed) \(/  { blk=0; next }
+    blk                                        { if (n<=10) print; next }
+    END { if (n>10) printf "… and %d more assertion(s); see the full log\n", n-10 }
+  ' "$log" | sed 's|.*/Night Shift/||'
+}
+
+if [ "${1:-}" = "--explain" ]; then
+  summarise_test_failures "${2:?usage: .night-verify.sh --explain <xcodebuild log>}"
+  exit 0
+fi
+
 PROJECT="Night Shift.xcodeproj"
 SCHEME="Night Shift"
 LOG="$(mktemp -t night-verify)"
@@ -103,6 +132,7 @@ if grep -q "Testing cancelled because the build failed" "$LOG"; then
   echo "FAILED: the build did not compile — no test ever ran"
 elif grep -q "\*\* TEST FAILED \*\*" "$LOG"; then
   echo "FAILED: tests ran and did not pass"
+  summarise_test_failures "$LOG"
 elif grep -q "\*\* BUILD FAILED \*\*" "$LOG"; then
   echo "FAILED: the build did not compile"
 else

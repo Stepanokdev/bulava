@@ -288,10 +288,14 @@ extension AppModel {
     ///
     /// `entryID` is chosen by the sender. A retry after a lost reply carries the same one, and
     /// finds the entry the first attempt already wrote.
+    ///
+    /// `countsAsWork` is false for what Bulava sends by itself — an automation's brief: the product
+    /// he worked in last is the one he wrote in, and a run at night must not take its place at the
+    /// top of his list or as the product the window opens on.
     @discardableResult
     func sendDirectMessage(_ raw: String, attachments: [Attachment] = [],
                            productID: UUID, chatID: UUID,
-                           entryID: UUID = UUID()) -> AddressedSend {
+                           entryID: UUID = UUID(), countsAsWork: Bool = true) -> AddressedSend {
         if conversations.entry(id: entryID) != nil { return .alreadySent(entryID: entryID) }
         guard let product = products.product(id: productID) else { return .noSuchProduct }
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -305,7 +309,7 @@ extension AppModel {
         if isDirectChatBusy(chat.id) {
             conversations.updateDelivery(entryID: userEntry.id, .queued)
         }
-        products.worked(productID)
+        if countsAsWork { products.worked(productID) }
         chatErrors[chat.id] = nil
         deliver(message: message, entryID: userEntry.id, chat: chat, product: product)
         return .sent(entryID: userEntry.id)
@@ -746,6 +750,19 @@ extension AppModel {
                 failChat(chat.id, refusal.message, .unexpected("chat.start_refused"))
                 return
             }
+            // Git-optional. A chat he is sitting at, in a folder that is not a committed git
+            // repository, runs in a plain folder — no git, no checkpoint, no .gitignore — the way
+            // Codex and Claude Code already work in a folder of recordings or documents. The engine
+            // still walls off an UNATTENDED code run with no baseline (exit 76); this frees only the
+            // attended chat. A copy chat and an automation run are untouched, and a real repository
+            // (any commit) keeps its git and its review.
+            let committedGit = await WorkCopies.hasCommittedGit(at: primary.path)
+            let runPlain = !chat.isAutomationRun
+                && conversations.chat(id: chat.id)?.workCopyID == nil
+                && !committedGit
+            var startJobEnv = jobEnv(forChat: chat.id)
+            if runPlain { startJobEnv["SUPERVISOR_PLAIN_FOLDER"] = "1" }
+
             guard let files = writeSessionContext(chatID: chat.id, product: product,
                                                   primary: primary) else {
                 conversations.updateDelivery(entryID: entryID, .failed)
@@ -793,10 +810,19 @@ extension AppModel {
             // entirely. Its next message then met a live run belonging to someone else and came
             // back as a conflict.
             let held = holderOfProject(primary.path, excluding: chat.id)
+            // Finished is not idle. A chat that declared its result can still have a message waiting
+            // to be delivered to it, or commands it left running in the background; taking the folder
+            // kills its session and both with it.
+            var holderStillBusy = false
+            if let held, held.instance.isTakeable {
+                let background = await client.backgroundCommandCount(session: held.instance.session)
+                holderStillBusy = ProjectHandoff.holderHasWorkUnderWay(queuedMessages: held.instance.queuedMessageCount,
+                                                                       backgroundCommands: background)
+            }
             switch ProjectHandoff.decide(holderTitle: held?.chat.title,
                                          holderProjectPath: held?.instance.projectPath ?? primary.path,
                                          holderSession: held?.instance.session ?? "",
-                                         holderIsTakeable: held?.instance.isTakeable ?? false,
+                                         holderIsTakeable: (held?.instance.isTakeable ?? false) && !holderStillBusy,
                                          callerHasSessionID: binding?.claudeSessionID != nil) {
             case .proceed:
                 break
@@ -866,7 +892,8 @@ extension AppModel {
                         collaboration: settings.chatMode.collaborationMode,
                         language: settings.workLanguageName,
                         dirty: dirtyAnswer,
-                        unattended: chat.isAutomationRun)
+                        unattended: chat.isAutomationRun,
+                        job: startJobEnv)
                     // Whatever the start's screen asked has been answered or has timed out by now,
                     // and from here the chat's own run answers for it.
                     startingChats[chat.id] = nil
@@ -877,6 +904,13 @@ extension AppModel {
                         conversations.updateDelivery(entryID: entryID, .failed)
 
                         let detail = launch.stderr.isEmpty ? launch.stdout : launch.stderr
+                        // An automation's run asks nobody: whatever the start stopped on, the run has
+                        // failed, and says why at once — not fifteen minutes later as a run that
+                        // "stopped without saying how it ended". Its chat keeps the question's
+                        // button below, for whoever opens it.
+                        if chat.isAutomationRun, (76...79).contains(launch.exitCode) {
+                            failAutomationStart(chatID: chat.id, exitCode: launch.exitCode, detail: detail)
+                        }
                         // 76 — the engine did not refuse to work, it asked. This folder has no git, and
                         // without a baseline the night shift has nowhere to roll back to. The answer is a button.
                         //
@@ -955,6 +989,18 @@ extension AppModel {
 
             conversations.updateSession(for: chat.id) { $0.outcomeAt = nil }
 
+            // A job's run, or an attended chat in a plain folder: its folder is signed for, on every
+            // send, so the gate takes the run's word for how it ended there and nowhere else.
+            if jobRun(forChat: chat.id) != nil || runPlain {
+                do {
+                    try await client.markPlainFolder(projectPath: bound.projectPath)
+                } catch {
+                    conversations.updateDelivery(entryID: entryID, .failed)
+                    failChat(chat.id, String(localized: "Could not sign for this folder, so nothing was sent."), .unexpected("chat.job_mark_failed"))
+                    return
+                }
+            }
+
             do {
                 // Nobody watches a run in a copy while it works, so its result is always reviewed.
                 let copyBound = conversations.chat(id: chat.id)?.workCopyID != nil
@@ -977,7 +1023,8 @@ extension AppModel {
                                                  intent: .conversation,
                                                  pipeline: relayPipeline(forChat: chat.id),
                                                  runEnv: self.engineChoices(run: run,
-                                                                            unattended: conversations.chat(id: chat.id)?.isAutomationRun == true),
+                                                                            unattended: conversations.chat(id: chat.id)?.isAutomationRun == true)
+                                                     .merging(jobEnv(forChat: chat.id)) { _, job in job },
                                                  contextFile: files.context.path,
                                                  extraDirsFile: files.directories.path)
             switch result.tier {
@@ -1268,9 +1315,13 @@ extension AppModel {
         let folder = AppSupport.root.appendingPathComponent("chats/\(chatID.uuidString)", isDirectory: true)
         let context = folder.appendingPathComponent("context.md")
         let directories = folder.appendingPathComponent("additional-directories.txt")
+        // The engine's write gate reads this beside the list above: the folders the chat may change,
+        // not merely read. A job's other folders are for reading only, so it gets none.
+        let writable = folder.appendingPathComponent("writable-directories.txt")
 
         let copy = liveCopy(forChat: chatID)
         let (resourceLines, extraPaths) = folderLines(product: product, primary: primary, chatID: chatID)
+        let writablePaths = jobRun(forChat: chatID) == nil ? extraPaths : []
 
         let contextText: String = """
         Ты работаешь в обычном долгоживущем диалоге Night Shift, который показан через приложение Bulava.
@@ -1285,7 +1336,7 @@ extension AppModel {
         - `$IDIR/decide <отчёт>` — несколько решений сразу, с вариантами на Mac и телефоне;
         - `$IDIR/phone-link <файл или папка>` — показать результат на его телефоне;
         - `$IDIR/capture` — снимок экрана; `$IDIR/ui` — нажать в интерфейсе другого приложения;
-        - браузеры `browser` и `accounts`; `$IDIR/browser` — кто занимает браузер, и вход на сайт;
+        - браузеры `browser` и `accounts` (им пользуются несколько чатов сразу, каждый в своих вкладках); `$IDIR/browser` — твои вкладки там, и вход на сайт;
         - `$IDIR/history` — что он уже говорил в прошлых разговорах.
         \(Self.notMadeUp)
 
@@ -1306,6 +1357,8 @@ extension AppModel {
             try contextText.write(to: context, atomically: true, encoding: .utf8)
             try (extraPaths.joined(separator: "\n") + (extraPaths.isEmpty ? "" : "\n"))
                 .write(to: directories, atomically: true, encoding: .utf8)
+            try (writablePaths.joined(separator: "\n") + (writablePaths.isEmpty ? "" : "\n"))
+                .write(to: writable, atomically: true, encoding: .utf8)
             return (context, directories)
         } catch {
             return nil
@@ -1316,6 +1369,25 @@ extension AppModel {
     private func folderLines(product: Product, primary: Project, chatID: UUID) -> (lines: [String], extra: [String]) {
         var resourceLines: [String] = []
         var extraPaths: [String] = []
+        // A job's run works in its automation's own folder; every folder of his is for reading.
+        if let job = jobRun(forChat: chatID) {
+            resourceLines.append("- Папка этой автоматизации — здесь идёт работа, можно изменять: `\(primary.path)`")
+            let named = Dictionary(product.resources.compactMap { r in
+                r.projectID.flatMap { projects.project(id: $0) }.map { (Slug.canonicalPath($0.path), r.name) }
+            }, uniquingKeysWith: { first, _ in first })
+            for path in jobReadFolders(job.automation) {
+                let name = named[Slug.canonicalPath(path)].map { "\($0) — " } ?? ""
+                resourceLines.append("- \(name)только читать, ничего в ней не изменять: `\(path)`")
+                extraPaths.append(path)
+            }
+            for resource in product.resources {
+                if let url = resource.urlString, !url.isEmpty {
+                    resourceLines.append("- \(resource.name) — ссылка: \(url)"
+                                          + (resource.note.isEmpty ? "" : " — \(resource.note)"))
+                }
+            }
+            return (resourceLines, Array(Set(extraPaths.map(Slug.canonicalPath))).sorted())
+        }
         let copy = liveCopy(forChat: chatID)
         for resource in product.resources {
             if let projectID = resource.projectID, let project = projects.project(id: projectID) {
@@ -1371,8 +1443,8 @@ extension AppModel {
         Bulava — приложение на Mac, через которое владелец работает с агентами. В нём его продукты, у каждого
         свои папки и сайты, а каждый чат — это \(whoAnswers).
         Что ещё в ней есть:
-        - автоматизации — работа, которую Bulava запускает сама по расписанию: каждый раз новый чат в свежей
-          копии папки, только с текстом задания;
+        - автоматизации — работа, которую Bulava запускает сама по расписанию: каждый раз новый чат, только
+          с текстом задания — в свежей копии папки, а задание не про код — в своей папке без git;
         - ночные прогоны и очередь задач;
         - приложение на телефоне (iPhone и Android): те же чаты, вопросы, решения и пуши, виджеты недели;
         - правая панель чата: изменения, проверки, отчёты;
@@ -1461,6 +1533,11 @@ extension AppModel {
 
         for chat in conversations.chats {
             guard let binding = chat.session else { continue }
+            // A report that moved is found again here, so every place that shows it — the buttons,
+            // the panel, search, the phone — reads the same, working path.
+            if binding.reportPaths.contains(where: { !FileManager.default.fileExists(atPath: $0) }) {
+                healReportPaths(in: chat.id)
+            }
             let instance = matchingInstance(for: binding)
             if let instance {
                 var updated = binding
@@ -1576,6 +1653,24 @@ extension AppModel {
         signInBlocked[chat.id] = SignInBlock(noticeEntryID: notice.id, askedEntryID: asked?.id)
         if let asked { conversations.updateDelivery(entryID: asked.id, .failed) }
         failChat(chat.id, String(localized: "Claude's login has run out, so this was never answered. Sign in and send it again."), .needsYou)
+    }
+
+    /// He is answering a screen of Claude's own in this chat — a permission dialog, a choice — at
+    /// `at`. Written down before the keys go, so what Claude does after the answer shows below it
+    /// rather than growing the turn above (`ChatTranscriptFeed`, `ChatSessionBinding.screenAnswers`).
+    func noteScreenAnswer(chatID: UUID?, at: Date) {
+        guard let chatID else { return }
+        conversations.updateSession(for: chatID) { session in
+            session.screenAnswers = Array((session.screenAnswers + [at]).suffix(64))
+        }
+    }
+
+    /// The same, for every chat this run belongs to.
+    func noteScreenAnswer(for instance: SupervisorInstance, at: Date) {
+        for chat in conversations.chats
+        where chat.session.flatMap({ matchingInstance(for: $0) })?.slug == instance.slug {
+            noteScreenAnswer(chatID: chat.id, at: at)
+        }
     }
 
     func matchingInstance(for binding: ChatSessionBinding) -> SupervisorInstance? {
@@ -1810,6 +1905,52 @@ extension AppModel {
         return completed != session.lastReportedTurnKey
     }
 
+    /// Everything to do about a finished chat or run, in the order it should appear beneath the last
+    /// answer — the one place he is looking, with the inspector closed. Returned as data so the view
+    /// draws it and a test can check it without the UI. Empty while a turn is still running, and for an
+    /// archived chat. These used to live only in the inspector (reports) or the top copy bar
+    /// (merge/discard), so a finished chat looked like it offered nothing.
+    enum OutcomeAction: Equatable, Hashable {
+        case merge(into: String)   // a run whose copy is live, or a chat working in a copy
+        case markDone              // a waiting run whose copy is gone — he merged or handled it himself
+        case discard
+        case markReviewed          // a run that finished unverified
+        case createReport
+        case openReport(String)
+        case writingReport
+    }
+
+    func chatOutcomeActions(forChat chatID: UUID?) -> [OutcomeAction] {
+        guard let chatID, let chat = conversations.chat(id: chatID), !chat.archived else { return [] }
+        guard !directPhase(for: chatID).isActive else { return [] }   // only once the turn has ended
+        var actions: [OutcomeAction] = []
+
+        if let runID = chat.automationRunID, let run = automations.run(id: runID) {
+            if run.result == .changes, run.handoff == .waiting, runIsWorking(run) == nil {
+                if let copyID = run.workspaceID, let copy = automations.copy(id: copyID), copy.isLive {
+                    actions += [.merge(into: copy.baseRef), .discard]
+                } else {
+                    actions += [.markDone, .discard]   // copy gone — resolvable without it
+                }
+            } else if run.result == .unverified, !run.seen {
+                actions.append(.markReviewed)
+            }
+        } else if let copyID = chat.workCopyID, let copy = automations.copy(id: copyID), copy.isLive,
+                  !isDirectChatBusy(chatID) {
+            actions += [.merge(into: copy.baseRef), .discard]
+        }
+
+        if generatingChatReportIDs.contains(chatID) {
+            actions.append(.writingReport)
+        } else if shouldOfferReport(for: chatID) {
+            actions.append(.createReport)
+        }
+        if let latest = chat.session?.reportPaths.last {
+            actions.append(.openReport(latest))
+        }
+        return actions
+    }
+
     /// `opensWhenDone: false` is an automation's report, asked for by the app when the run's work
     /// ended: nobody is waiting at the window for it, so it is kept, not put in front of him.
     func generateChatReport(chatID: UUID, opensWhenDone: Bool = true) {
@@ -1826,16 +1967,24 @@ extension AppModel {
         generatingChatReportIDs.insert(chatID)
         Task {
             defer { generatingChatReportIDs.remove(chatID) }
-            guard let published = await client.generateRichChatReport(
+            let published = await client.generateRichChatReport(
                 projectPath: binding.projectPath, orchestratorHome: home,
                 sessionID: sessionID, branch: binding.branch, runID: binding.activeRunID,
                 language: settings.workLanguageName,
-                title: chat.title, originalRequest: chat.firstMessage) else {
+                title: chat.title, originalRequest: chat.firstMessage)
+            if let published {
+                conversations.addReport(published, to: chatID)
+                if opensWhenDone { openChatReport(path: published, title: chat.title) }
+            } else {
                 failChat(chatID, String(localized: "Could not generate the report."), .unexpected("chat.report_failed"))
-                return
             }
-            conversations.addReport(published, to: chatID)
-            if opensWhenDone { openChatReport(path: published, title: chat.title) }
+            // The report attempt is over (succeeded or not). A job's run can now let its session go:
+            // `settle` kicks off both the report and `releaseJobSession`, but the latter bails while a
+            // report is generating, and nothing else retried — so a job's session used to run all day
+            // after a run that wrote a report. Clear the flag first (the defer also does, harmlessly),
+            // then release.
+            generatingChatReportIDs.remove(chatID)
+            if let run = jobRun(forChat: chatID)?.run { await releaseJobSession(run) }
         }
     }
 

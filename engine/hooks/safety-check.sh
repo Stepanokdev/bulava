@@ -9,7 +9,13 @@ now=$(date +%s)
 disabled=""
 
 hs_input="$(perl -e 'alarm 2; local $/; print <STDIN>' 2>/dev/null || true)"
-if [ -n "${ORCHESTRATOR_RUN_ID:-}" ] && [ -n "$hs_input" ]; then
+# Claude Code runs SessionStart again when it compacts a conversation — on its own, an idle one too —
+# and that is the same process carrying on, not a new one starting. `handshake-ok` says when THIS
+# process started: a start waits for it to appear, and a question asked after it is one the worker
+# owes (`worker_owes_answer`). Restamped at every compaction, it disowned every question asked before
+# one, so a turn that froze right after compacting read as an idle worker anything could be typed at.
+hs_source="$(echo "$hs_input" | jq -r '.source // ""' 2>/dev/null || echo "")"
+if [ -n "${ORCHESTRATOR_RUN_ID:-}" ] && [ -n "$hs_input" ] && [ "$hs_source" != compact ]; then
   hs_cwd="$(echo "$hs_input" | jq -r '.cwd // ""' 2>/dev/null || echo "")"
   hs_slug="$(active_instance_for_cwd "$hs_cwd")"
   if [ -n "$hs_slug" ] && [ "$(cat "$(instance_dir "$hs_slug")/run-id" 2>/dev/null)" = "$ORCHESTRATOR_RUN_ID" ]; then

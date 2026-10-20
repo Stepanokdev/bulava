@@ -56,6 +56,17 @@ final class AutomationStore {
         saveAutomations()
     }
 
+    /// Moves how far the schedule has been looked at. That moves on every tick of the scheduler, and
+    /// writing the whole file for it each time was a write every few seconds, all day; so it is kept
+    /// at once and written within a minute — or with the next change that is written at once. Losing
+    /// the last minute of it to a crash only means looking again: an occurrence already run is
+    /// refused as a duplicate.
+    func advanceWatermark(_ id: UUID, to through: Date) {
+        guard let i = automations.firstIndex(where: { $0.id == id }), automations[i].evaluatedThrough != through else { return }
+        automations[i].evaluatedThrough = through
+        automationFile.saveSoon(automations.map(Lossy.init), delay: 60)
+    }
+
     /// The automation goes; its history stays readable from the runs' own conversations.
     func remove(_ id: UUID) {
         automations.removeAll { $0.id == id }

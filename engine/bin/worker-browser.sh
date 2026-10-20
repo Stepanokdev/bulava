@@ -1,15 +1,14 @@
 #!/bin/bash
 #
-# Bulava's browser, from the run's side: who has it, and letting go of it.
+# Bulava's browser, from the run's side: whether you are using it, and letting go of it.
 #
-# The `accounts` browser is the one he signed in to — consoles, analytics, stores. It is lent to one
-# run at a time; another run asking meanwhile is turned away at once (chrome-devtools-mcp then says
-# "Could not connect to Chrome … 423"). Anything that needs no sign-in belongs in `browser`, the
-# throwaway one every run has to itself.
+# The `accounts` browser is the one he signed in to — consoles, analytics, stores. Every run that
+# needs it uses it at the same time, each in tabs of its own: a run sees only the tabs it opened.
+# Anything that needs no sign-in belongs in `browser`, the throwaway one every run has to itself.
 #
 # USAGE
-#   browser status         # free | yours | busy (who has it, since when) | unavailable (why) | off
-#   browser release        # done with it: the next run gets it now, not after your run goes quiet
+#   browser status         # yours (how many tabs, who else uses it) | free | unavailable (why) | off
+#   browser release        # done with it: the tabs you opened close now, not after your run goes quiet
 #   browser sign-in <url>  # a page that wants him to sign in: Bulava asks him to, in a window
 #                          # nobody drives (Google refuses yours, whatever is typed into it)
 #
@@ -84,10 +83,10 @@ case "$op" in
   status)
     jq -r '
       (.state) as $s
-      | if $s == "busy" then "busy: \(.holder) has it since \(.since | strflocaltime("%H:%M")) — work on what does not need it, or try later"
-        elif $s == "yours" then "yours"
-        elif $s == "free" then "free"
+      | if $s == "yours" then "yours: \(.tabs // 0) tab(s) of yours" + (if ((.others // []) | length) > 0 then "; also in use by " + (.others | join(", ")) + ", in their own tabs" else "" end)
+        elif $s == "free" then "free" + (if ((.others // []) | length) > 0 then " — in use by " + (.others | join(", ")) + ", in their own tabs; you get tabs of your own" else "" end)
+        elif $s == "busy" then "free"
         elif $s == "unavailable" then "unavailable: \(.reason)"
         else "off" end,
-        (if (.sites // []) | length > 0 then "sites: " + ((.sites | map(.host + (if .withoutMe then "" else " (only with him)" end))) | join(", ")) else empty end)' "$done_file" ;;
+        (if (.sites // []) | length > 0 then "sites: " + ((.sites | map(.host + (if .withoutMe then "" else " (only with him)" end) + (if .signedOut then " (his sign-in ran out: browser sign-in <its page>)" else "" end))) | join(", ")) else empty end)' "$done_file" ;;
 esac

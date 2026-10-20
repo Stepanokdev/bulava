@@ -58,6 +58,20 @@ check "evidence.json written"                     '[ -s "$EV" ]'
 check "the passing check is a pass"               '[ "$(jq -r ".criteria[]|select(.criterion|startswith(\"AC-004\"))|.status" "$EV")" = pass ]'
 check "the failing check is a fail"               '[ "$(jq -r ".criteria[]|select(.criterion|startswith(\"AC-006\"))|.status" "$EV")" = fail ]'
 check "its real exit code is recorded"            '[ "$(jq -r ".criteria[]|select(.criterion|startswith(\"AC-006\"))|.exit_code" "$EV")" = 3 ]'
+
+echo
+echo "===== a script given inline runs WHOLE, not just its first line ====="
+# 13 Oct: a check written as `bash -c "set -e\n…\nexit …"` was cut into one argument per line, so
+# bash ran `set -e` alone and the check passed without testing anything.
+rm -f "$IDIR/checks.jsonl"
+IDIR="$IDIR" bash "$ADD" "AC-007: багаторядкова перевірка" -- bash -c 'set -e
+n=1
+exit 7' >/dev/null 2>&1
+check "a multi-line argument stays one argument"  '[ "$(jq -r ".argv|length" "$IDIR/checks.jsonl")" = 3 ]'
+SID2="add-check-multiline"
+bash "$ROOT/bin/verify.sh" "$PROJ" "$SID2" "$IDIR" "$(git -C "$PROJ" rev-parse HEAD)" >/dev/null 2>&1
+EV2="$IDIR/evidence/$SID2/evidence.json"
+check "its failure is a fail, not a pass"         '[ "$(jq -r ".criteria[]|select(.criterion|startswith(\"AC-007\"))|.exit_code" "$EV2")" = 7 ]'
 check "the command is written down for review"    'jq -r ".criteria[]|select(.criterion|startswith(\"AC-004\"))|.command" "$EV" | grep -q "ui-check.sh --pass"'
 check "one failing check fails the whole run"     '[ "$(jq -r .overall_status "$EV")" = fail ]'
 check "the output is kept"                        '[ -n "$(jq -r ".criteria[]|select(.criterion|startswith(\"AC-006\"))|.artifact" "$EV")" ]'

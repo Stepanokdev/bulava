@@ -146,6 +146,9 @@ final class AppModel {
 
     var renamingProductID: UUID?
 
+    /// The product whose "Remove …?" question is on screen.
+    var removingProductID: UUID?
+
     var renamingChatID: UUID?
 
     var taskDetailID: UUID?
@@ -211,7 +214,7 @@ final class AppModel {
     let decisions = DecisionCenter()
     /// A run in one of his chats seeing and making the product's automations (`$IDIR/automation`).
     let automationDoor = AutomationDoor()
-    /// Bulava's own Chrome, signed in to once and lent to one run at a time.
+    /// Bulava's own Chrome, signed in to once and used by every run that needs it, each in its own tabs.
     let browser = AccountBrowser()
 
     /// This calendar week as the widgets and the phone show it (`AppModel+Week`).
@@ -335,6 +338,8 @@ final class AppModel {
     /// Readying a copy for unattended work writes his Claude config and the engine's MCP record.
     /// A test stands in here so it never writes to the real ones.
     @ObservationIgnored var readyCopyOverride: (@MainActor (WorkCopy) async -> Void)?
+    /// The same for a job's plain folder: trusting it writes his Claude config.
+    @ObservationIgnored var readyJobOverride: (@MainActor (_ folder: String) async -> Void)?
 
     var artifactBase: URL { settings.paths.reportsDir }
 
@@ -367,6 +372,8 @@ final class AppModel {
         products.adoptProjectsIfNeeded(from: projects)
 
         products.clearGeneratedSummariesOnce()
+
+        expireRemovedProducts()
 
         clearFindingsFromTheFeed()
 
@@ -481,6 +488,7 @@ final class AppModel {
         Task { await client.writeAskUserConfig(enabled: askEnabled, waitSeconds: askWait) }
 
         Task { _ = await client.reapAbandonedTemporarySessions() }
+        restartStaleWidgetExtension()
         // The free depth: the paid probes are re-proven from what the last launch remembered, and
         // asked for real only when that memory is a day old or empty. Every launch used to pay
         // both — including every launch of the test host.
@@ -553,7 +561,7 @@ final class AppModel {
 
         syncDirectChats()
 
-        automationsTick()
+        await automationsTick()
 
         await refreshWorkerActivity()
 
@@ -1070,6 +1078,7 @@ final class AppModel {
 
         Task {
             if let pending = inst.pendingQuestion, pending.source == .terminal {
+                noteScreenAnswer(for: inst, at: Date())
                 let result = await client.answerTerminalQuestion(session: inst.session,
                                                                  expected: pending, answer: t)
                 if result.ok {

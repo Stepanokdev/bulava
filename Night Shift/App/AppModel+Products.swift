@@ -62,6 +62,7 @@ extension AppModel {
     func openSkills() { navigate(to: .skills) }
     func openAutomations() { navigate(to: .automations) }
     func openPipelines() { navigate(to: .pipelines) }
+    func openBrowser() { navigate(to: .browser) }
     func openPipeline(_ id: String) { navigate(to: .pipeline(id)) }
 
     // MARK: - Getting a fresh machine ready
@@ -124,26 +125,42 @@ extension AppModel {
         note(.taskEdited, outcome.ok ? .info : .problem,
              outcome.ok ? "Движок встановлено" : "Не вдалося встановити движок",
              detail: outcome.log)
-        if !outcome.ok {
-            // Nothing here repairs it — the engine is the app's own — so it is only reported.
+        // Nothing here repairs it — the engine is the app's own — so it is only reported. A Mac
+        // without Apple's command line tools is not a failure of Bulava's: it is said, with the
+        // button that installs them, and a report from every launch of every such Mac would bury
+        // the failures nobody has explained.
+        if !outcome.ok && !outcome.needsCommandLineTools {
             reportIncident(code: "engine.install_failed",
                            message: String(SkillsPanelBody.plainMessage(outcome.log).suffix(800)),
                            outcome: "not_attempted")
         }
         if outcome.ok && quietly { resolveToast(key: "engine.install"); return true }
-        // One key for the whole story, so "not updated" is replaced by "ready" where it stood.
-        toast = outcome.ok
-            ? ToastMessage(text: String(localized: "The engine is ready — night-shift works in the terminal too."),
-                           kind: .success, key: "engine.install")
-            : ToastMessage(title: String(localized: "The engine could not be installed"),
-                           // The installer's last word is usually the reason; all of it is
-                           // under Details, for a bug report.
-                           text: SkillsPanelBody.plainMessage(outcome.log)
-                               .split(whereSeparator: \.isNewline).last.map(String.init)
-                               ?? String(localized: "The installer stopped without saying why."),
-                           kind: .error, key: "engine.install",
-                           detail: outcome.log.isEmpty ? nil : outcome.log)
+        toast = engineInstallToast(for: outcome)
         return outcome.ok
+    }
+
+    /// What an install says in the corner when it is over. One key for the whole story, so "not
+    /// updated" is replaced by "ready" where it stood.
+    func engineInstallToast(for outcome: EngineInstaller.Outcome) -> ToastMessage {
+        if outcome.ok {
+            return ToastMessage(text: String(localized: "The engine is ready — night-shift works in the terminal too."),
+                                kind: .success, key: "engine.install")
+        }
+        if outcome.needsCommandLineTools {
+            return ToastMessage(title: String(localized: "The engine could not be installed"),
+                                text: outcome.log, kind: .error, key: "engine.install",
+                                actions: [ToastAction(title: String(localized: "Install command line tools")) { [weak self] in
+                                    self?.installCommandLineTools()
+                                }])
+        }
+        return ToastMessage(title: String(localized: "The engine could not be installed"),
+                            // The installer's last word is usually the reason; all of it is
+                            // under Details, for a bug report.
+                            text: SkillsPanelBody.plainMessage(outcome.log)
+                                .split(whereSeparator: \.isNewline).last.map(String.init)
+                                ?? String(localized: "The installer stopped without saying why."),
+                            kind: .error, key: "engine.install",
+                            detail: outcome.log.isEmpty ? nil : outcome.log)
     }
 
     /// What is holding the engine, refreshed alongside readiness so the screen can offer a way
@@ -260,6 +277,32 @@ extension AppModel {
         // keeps a formula of the same name from being installed instead.
         let flag = cask ? "--cask " : ""
         runInTerminal("\(brew) install \(flag)\(names.joined(separator: " "))")
+    }
+
+    /// Apple's own installer for its command line tools, which git and python3 come with.
+    ///
+    /// It is macOS's dialog, and this only asks for it: the tools take minutes to arrive, the
+    /// readiness screen reads itself again when Bulava comes back to the front, and the button
+    /// stays while they are missing — a dialog dismissed with «Not Now» can be asked for again.
+    /// xcode-select says when it put the dialog up; anything else it says («already installed»,
+    /// «no install could be requested») is the reason nothing appeared, and is shown as it was said.
+    func installCommandLineTools() {
+        Task { [weak self] in
+            let result = await Shell.run("/usr/bin/xcode-select --install 2>&1", timeout: 30)
+            if let card = Self.commandLineToolsCard(xcodeSelectSaid: result.combined) { self?.toast = card }
+        }
+    }
+
+    /// What Bulava adds to xcode-select's answer: nothing when it put macOS's dialog up — the dialog
+    /// is the answer, and whether the tools were installed there or the dialog was cancelled is
+    /// read off the disk the next time readiness looks — and xcode-select's own words when it did not.
+    static func commandLineToolsCard(xcodeSelectSaid output: String) -> ToastMessage? {
+        let said = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !said.contains("install requested") else { return nil }
+        return ToastMessage(title: String(localized: "macOS did not start the installation"),
+                            text: said.split(whereSeparator: \.isNewline).last.map(String.init)
+                                ?? String(localized: "The installer stopped without saying why."),
+                            kind: .error)
     }
 
     func signIn(command: String) {
@@ -434,16 +477,63 @@ extension AppModel {
 
     func beginRenaming(_ product: Product) { renamingProductID = product.id }
 
+    /// "Remove product" asks first. It used to act on the click: 14 Oct a product went with a run
+    /// still working in it, and its chat came back only by editing the app's files by hand.
+    func askToRemoveProduct(_ product: Product) { removingProductID = product.id }
+
+    /// What the question under "Remove …?" says: where the chats go, and whether work is running.
+    func removalNote(for product: Product) -> String {
+        var note = String(localized: "Its chats leave the list. Undo brings them back, and so does adding the same folder again.")
+        if liveInstance(forProductID: product.id) != nil {
+            note += "\n\n" + String(localized: "A task is working in it right now. It keeps working; bring the product back to see it.")
+        }
+        return note
+    }
+
+    /// Takes the product off the list. Its chats, their history and anything still running stay as
+    /// they are, so Undo — or adding the same folder again — gives back exactly what was there.
     func removeProduct(_ product: Product) {
         let wasSelected = route.productID == product.id
-        conversations.removeAll(for: product.id)
         products.remove(product.id)
         pendingProposals[product.id] = nil
         if wasSelected {
             if let next = products.sorted.first { route = .product(next.id) } else { route = .products }
         }
+        let id = product.id
         toast = ToastMessage(text: String(format: String(localized: "Removed %@"), product.name),
-                             kind: .success)
+                             kind: .success,
+                             actions: [ToastAction(title: String(localized: "Undo")) { [weak self] in
+                                 self?.undoRemoveProduct(id)
+                             }])
+    }
+
+    func undoRemoveProduct(_ id: UUID) {
+        guard let product = products.restore(id) else { return }
+        route = .product(product.id)
+    }
+
+    /// A folder added again after its product was removed: the chats that worked in it come with it,
+    /// together with the automations that ran there. Returns how many chats came back.
+    @discardableResult
+    func adoptRemovedProducts(into product: Product) -> Int {
+        var moved = 0
+        for old in products.removedProducts(sharingProjects: Set(product.allProjectIDs)) {
+            moved += conversations.moveChats(from: old.id, to: product.id)
+            for automation in automations.automations where automation.productID == old.id {
+                automations.update(automation.id) { $0.productID = product.id }
+            }
+            products.forgetRemoved(old.id)
+        }
+        return moved
+    }
+
+    /// How long a removed product waits to be undone before its history is let go.
+    static let removedProductKeep: TimeInterval = 30 * 24 * 3600
+
+    func expireRemovedProducts(now: Date = Date()) {
+        for id in products.expireRemoved(before: now.addingTimeInterval(-Self.removedProductKeep)) {
+            conversations.removeAll(for: id)
+        }
     }
 
     // MARK: - Product resources

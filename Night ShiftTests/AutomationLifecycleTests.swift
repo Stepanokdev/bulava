@@ -72,7 +72,7 @@ nonisolated final class AutomationLifecycleTests: XCTestCase {
         a.evaluatedThrough = now.addingTimeInterval(-3 * 86_400 - 60)
         m.automations.add(a)
 
-        m.automationsTick(now: now)
+        await m.automationsTick(now: now)
         let runs = m.automations.runs(for: a.id)
         XCTAssertEqual(runs.count, 3, "two nights missed, one due")
         XCTAssertTrue(runs.allSatisfy { $0.state == .skipped })
@@ -80,7 +80,7 @@ nonisolated final class AutomationLifecycleTests: XCTestCase {
                        "the due night says why it could not start: the folder is gone")
         XCTAssertEqual(Set(runs.map(\.occurrence)).count, 3)
 
-        m.automationsTick(now: now.addingTimeInterval(5))
+        await m.automationsTick(now: now.addingTimeInterval(5))
         XCTAssertEqual(m.automations.runs(for: a.id).count, 3, "nothing is recorded twice")
         XCTAssertTrue(box.sent.isEmpty)
     }
@@ -263,6 +263,244 @@ nonisolated final class AutomationLifecycleTests: XCTestCase {
         XCTAssertTrue(parked, "the automation's folder stays for the next run, off any branch")
         let branch = await WorkCopies.refExists("refs/heads/\(copy.branch)", in: project.path)
         XCTAssertFalse(branch, "the merged branch is gone")
+    }
+
+    // MARK: A run merged or cleaned up outside Bulava no longer strands the schedule
+
+    /// The reported bug: a run's copy folder is removed and its branch merged outside Bulava, and the
+    /// run is left `handoff == .waiting` forever — blocking every future run. Now the sweep, when it
+    /// finds the folder gone, reconciles the run against git: a branch that reached its base is
+    /// recorded as merged, and the schedule is free again.
+    @MainActor
+    func testTheSweepResolvesARunMergedOutsideBulavaWhenItsFolderIsGone() async {
+        let (m, _, project, product) = await world()
+        let a = Automation(productID: product.id, projectID: project.id, name: "Reports",
+                           brief: "x", trigger: .manual)
+        m.automations.add(a)
+        var run = AutomationRun(automationID: a.id, occurrence: "m", reason: .manual,
+                                state: .finished, briefRevision: 1)
+        run.result = .changes; run.handoff = .waiting
+        m.automations.record(run)
+        guard case .success(let copy) = await WorkCopies.make(sourcePath: project.path, projectID: project.id,
+                                                              baseRef: nil, branch: "bulava/merged-out",
+                                                              owner: .run(run.id)) else { return XCTFail("no copy") }
+        m.automations.addCopy(copy)
+        m.automations.updateRun(run.id) { $0.workspaceID = copy.id }
+        try? "two\n".write(toFile: copy.path + "/a.txt", atomically: true, encoding: .utf8)
+        let committed = await Shell.run("git add -A && git commit -qm work",
+                                        cwd: URL(fileURLWithPath: copy.path))
+        XCTAssertTrue(committed.ok, committed.combined)
+        // No saved tip (an old record): the branch ref is what proves it. He merges it by hand in his
+        // repo, then the worktree folder is gone.
+        let merged = await Shell.run("git merge --no-ff -m 'merged by hand' bulava/merged-out",
+                                     cwd: URL(fileURLWithPath: project.path))
+        XCTAssertTrue(merged.ok, merged.combined)
+        // Gone the way a hand-deletion leaves it: the folder removed, the branch ref still there.
+        _ = await Shell.run("rm -rf '\(copy.checkoutRoot)' && git worktree prune",
+                            cwd: URL(fileURLWithPath: project.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copy.checkoutRoot))
+
+        XCTAssertNotNil(m.reasonNotToStart(a, now: Date()), "it blocks the schedule while it waits")
+        await m.sweepCopies()
+        XCTAssertEqual(m.automations.run(id: run.id)?.handoff, .merged, "the sweep recognised the merge")
+        XCTAssertEqual(m.automations.copy(id: copy.id)?.state, .removed)
+        XCTAssertNil(m.reasonNotToStart(a, now: Date()), "the schedule is free again")
+    }
+
+    /// Without proof of a merge — no saved tip and no branch left — a copy-less waiting run is NOT
+    /// auto-closed (a missing folder never means "accepted"). It stays waiting, but he can clear it
+    /// with one tap: "Done" records it handled, so the next run is no longer held back, and the
+    /// automation can be deleted again. This is the state the two stuck runs were actually in.
+    @MainActor
+    func testACopylessWaitingRunIsNotAutoClosedButHeCanMarkItHandled() async {
+        let (m, _, project, product) = await world()
+        let a = Automation(productID: product.id, projectID: project.id, name: "Reports",
+                           brief: "x", trigger: .manual)
+        m.automations.add(a)
+        var run = AutomationRun(automationID: a.id, occurrence: "w", reason: .manual,
+                                state: .finished, briefRevision: 1)
+        run.result = .changes; run.handoff = .waiting; run.workspaceID = UUID()  // a copy that is gone
+        m.automations.record(run)
+
+        let closed = await m.reconcileHandoff(run.id)
+        XCTAssertFalse(closed, "nothing proves a merge, so it is not auto-closed")
+        XCTAssertEqual(m.automations.run(id: run.id)?.handoff, .waiting)
+        XCTAssertNotNil(m.reasonNotToStart(a, now: Date()), "still blocking until he resolves it")
+        XCTAssertNotNil(m.deleteAutomation(a.id), "and it cannot be deleted while a run waits")
+
+        let handled = await m.markRunHandled(run.id)
+        XCTAssertNil(handled)
+        XCTAssertEqual(m.automations.run(id: run.id)?.handoff, .merged)
+        XCTAssertNil(m.reasonNotToStart(a, now: Date()), "handled → the next run may start")
+        XCTAssertNil(m.deleteAutomation(a.id), "and the automation can be deleted again")
+    }
+
+    /// Discarding a copy-less waiting run used to be a silent no-op (it needed a live copy). Now it
+    /// records the run as discarded and frees the schedule.
+    @MainActor
+    func testDiscardingACopylessWaitingRunMarksItDiscarded() async {
+        let (m, _, project, product) = await world()
+        let a = Automation(productID: product.id, projectID: project.id, name: "Reports",
+                           brief: "x", trigger: .manual)
+        m.automations.add(a)
+        var run = AutomationRun(automationID: a.id, occurrence: "w", reason: .manual,
+                                state: .finished, briefRevision: 1)
+        run.result = .changes; run.handoff = .waiting; run.workspaceID = UUID()
+        m.automations.record(run)
+
+        let problem = await m.discardRun(run.id)
+        XCTAssertNil(problem, "no live copy is no longer a silent refusal")
+        XCTAssertEqual(m.automations.run(id: run.id)?.handoff, .discarded)
+        XCTAssertNil(m.reasonNotToStart(a, now: Date()))
+    }
+
+    // MARK: Git-optional — which folders a chat may run plain in
+
+    /// The classifier that decides it (`hasCommittedGit`) is what keeps a real repository on git and
+    /// its review while letting a chat in a folder of recordings or documents run with no git at all.
+    /// A commit-less `.git` (an abandoned `git init`, or Xcode's skeleton) is not a baseline, so it
+    /// counts as plain too.
+    @MainActor
+    func testHasCommittedGitTellsARealRepoFromAPlainOrCommitlessFolder() async {
+        let committed = scratch.appendingPathComponent("committed-repo", isDirectory: true)
+        try? FileManager.default.createDirectory(at: committed, withIntermediateDirectories: true)
+        let c = await Shell.run("git init -q -b main && printf 'x\\n' > f.txt && git add f.txt && git commit -qm init",
+                                cwd: URL(fileURLWithPath: committed.path))
+        XCTAssertTrue(c.ok, c.combined)
+        let real = await WorkCopies.hasCommittedGit(at: committed.path)
+        XCTAssertTrue(real, "a repo with a commit keeps its git")
+
+        let plain = scratch.appendingPathComponent("plain-folder", isDirectory: true)
+        try? FileManager.default.createDirectory(at: plain, withIntermediateDirectories: true)
+        let none = await WorkCopies.hasCommittedGit(at: plain.path)
+        XCTAssertFalse(none, "a folder with no git runs plain")
+
+        let broken = scratch.appendingPathComponent("commitless-repo", isDirectory: true)
+        try? FileManager.default.createDirectory(at: broken, withIntermediateDirectories: true)
+        let gi = await Shell.run("git init -q", cwd: URL(fileURLWithPath: broken.path))
+        XCTAssertTrue(gi.ok, gi.combined)
+        let commitless = await WorkCopies.hasCommittedGit(at: broken.path)
+        XCTAssertFalse(commitless, "a commit-less .git is not a baseline — treated as plain")
+
+        // An unborn orphan branch in a repo that still has history must NOT read as plain — its other
+        // branches carry commits that git and review protect.
+        let orphan = scratch.appendingPathComponent("orphan-repo", isDirectory: true)
+        try? FileManager.default.createDirectory(at: orphan, withIntermediateDirectories: true)
+        let og = await Shell.run("git init -q -b main && printf 'y\\n' > g.txt && git add g.txt && git commit -qm c && git checkout -q --orphan fresh",
+                                 cwd: URL(fileURLWithPath: orphan.path))
+        XCTAssertTrue(og.ok, og.combined)
+        let orphanHasGit = await WorkCopies.hasCommittedGit(at: orphan.path)
+        XCTAssertTrue(orphanHasGit, "an unborn HEAD over existing history keeps git, never plain")
+
+        // An inspection error (a folder that is not there) is not proof of plain — keep git.
+        let gone = scratch.appendingPathComponent("gone-\(UUID().uuidString)", isDirectory: true).path
+        let goneHasGit = await WorkCopies.hasCommittedGit(at: gone)
+        XCTAssertTrue(goneHasGit, "a folder git cannot inspect is treated as having git, not plain")
+    }
+
+    /// Restart at a scheduled time with a run that was merged outside Bulava still blocking the gate:
+    /// the tick must reconcile that run BEFORE it decides the schedule, or the due slot is recorded
+    /// "skipped" against work that is really merged and the watermark advances past it for good.
+    @MainActor
+    func testTheTickReconcilesBeforeSchedulingSoADueSlotIsNotLostToAMergedRun() async {
+        let (m, _, project, product) = await world()
+        var a = Automation(productID: product.id, projectID: project.id, name: "Reports",
+                           brief: "x",
+                           trigger: .schedule(AutomationSchedule(cadence: .daily, hour: 3, minute: 0)))
+        a.confirmFirst = true  // so the due slot stops at awaiting-approval instead of doing real work
+        let now = Date()
+        a.evaluatedThrough = now.addingTimeInterval(-2 * 86_400 - 60)  // at least one slot is due
+        m.automations.add(a)
+
+        var waiting = AutomationRun(automationID: a.id, occurrence: "prev", reason: .manual,
+                                    state: .finished, briefRevision: 1)
+        waiting.result = .changes; waiting.handoff = .waiting
+        m.automations.record(waiting)
+        guard case .success(let copy) = await WorkCopies.make(sourcePath: project.path, projectID: project.id,
+                                                              baseRef: nil, branch: "bulava/prev-merged",
+                                                              owner: .run(waiting.id)) else { return XCTFail("no copy") }
+        m.automations.addCopy(copy)
+        m.automations.updateRun(waiting.id) { $0.workspaceID = copy.id }
+        try? "two\n".write(toFile: copy.path + "/a.txt", atomically: true, encoding: .utf8)
+        let committed = await Shell.run("git add -A && git commit -qm work", cwd: URL(fileURLWithPath: copy.path))
+        XCTAssertTrue(committed.ok, committed.combined)
+        let merged = await Shell.run("git merge --no-ff -m merged bulava/prev-merged",
+                                     cwd: URL(fileURLWithPath: project.path))
+        XCTAssertTrue(merged.ok, merged.combined)
+        _ = await Shell.run("rm -rf '\(copy.checkoutRoot)' && git worktree prune",
+                            cwd: URL(fileURLWithPath: project.path))
+
+        await m.automationsTick(now: now)
+
+        XCTAssertEqual(m.automations.run(id: waiting.id)?.handoff, .merged,
+                       "the merged run is reconciled before the schedule is read")
+        XCTAssertTrue(m.automations.runs(for: a.id).contains { $0.state == .awaitingApproval },
+                      "the due slot started (awaiting approval), not skipped behind the stale waiting run")
+    }
+
+    /// The end-of-work actions shown beneath the last answer are decided by `chatOutcomeActions`. Each
+    /// state offers the right ones — including a copyless waiting run, which used to offer nothing in
+    /// the conversation. (The report actions depend on an engine session, so this checks the
+    /// resolution actions, which are what was missing.)
+    @MainActor
+    func testChatOutcomeActionsGiveTheRightResolutionForEachState() async {
+        let (m, _, project, product) = await world()
+        let a = Automation(productID: product.id, projectID: project.id, name: "A", brief: "x", trigger: .manual)
+        m.automations.add(a)
+        func resolution(_ chatID: UUID) -> [AppModel.OutcomeAction] {
+            m.chatOutcomeActions(forChat: chatID).filter {
+                switch $0 { case .createReport, .openReport, .writingReport: return false; default: return true }
+            }
+        }
+
+        // A waiting run whose copy is gone: Done + Discard, right in the conversation.
+        var r1 = AutomationRun(automationID: a.id, occurrence: "1", reason: .manual, state: .finished, briefRevision: 1)
+        r1.result = .changes; r1.handoff = .waiting; r1.workspaceID = UUID()
+        let c1 = m.conversations.newAutomationChat(id: UUID(), for: product.id, runID: r1.id, copyID: UUID(), title: "r1")
+        r1.chatID = c1.id
+        m.automations.record(r1)
+        XCTAssertEqual(resolution(c1.id), [.markDone, .discard])
+
+        // A waiting run with a live copy: Merge + Discard.
+        var r2 = AutomationRun(automationID: a.id, occurrence: "2", reason: .manual, state: .finished, briefRevision: 1)
+        r2.result = .changes; r2.handoff = .waiting
+        let c2 = m.conversations.newAutomationChat(id: UUID(), for: product.id, runID: r2.id, copyID: UUID(), title: "r2")
+        r2.chatID = c2.id
+        m.automations.record(r2)
+        guard case .success(let copy) = await WorkCopies.make(sourcePath: project.path, projectID: project.id,
+                                                              baseRef: nil, branch: "bulava/r2",
+                                                              owner: .run(r2.id)) else { return XCTFail("no copy") }
+        m.automations.addCopy(copy)
+        m.automations.updateRun(r2.id) { $0.workspaceID = copy.id }
+        XCTAssertEqual(resolution(c2.id), [.merge(into: copy.baseRef), .discard])
+
+        // A run that finished unverified: Mark reviewed.
+        var r3 = AutomationRun(automationID: a.id, occurrence: "3", reason: .manual, state: .finished, briefRevision: 1)
+        r3.result = .unverified; r3.seen = false
+        let c3 = m.conversations.newAutomationChat(id: UUID(), for: product.id, runID: r3.id, copyID: UUID(), title: "r3")
+        r3.chatID = c3.id
+        m.automations.record(r3)
+        XCTAssertEqual(resolution(c3.id), [.markReviewed])
+    }
+
+    /// A job's runs share one folder. If he carries on an earlier run's chat after it ended, the next
+    /// scheduled run must wait, so two sessions never write that one folder at once.
+    @MainActor
+    func testAJobsNextRunWaitsWhileAnEarlierRunsChatStillWorks() async {
+        let (m, _, project, product) = await world()
+        var a = Automation(productID: product.id, projectID: project.id, name: "Job", brief: "x", trigger: .manual)
+        a.workMode = .job
+        m.automations.add(a)
+        let chat = m.conversations.newAutomationChat(id: UUID(), for: product.id, runID: UUID(), copyID: nil, title: "j")
+        var run = AutomationRun(automationID: a.id, occurrence: "1", reason: .manual, state: .finished, briefRevision: 1)
+        run.result = .done; run.job = true; run.chatID = chat.id
+        m.automations.record(run)
+
+        XCTAssertNil(m.reasonNotToStart(a, now: Date()), "a finished job run alone does not block the next")
+        m.sendingChatIDs.insert(chat.id)  // he carried the chat on; it is working in the shared folder
+        XCTAssertNotNil(m.reasonNotToStart(a, now: Date()), "the next run waits while that chat still works")
+        m.sendingChatIDs.remove(chat.id)
+        XCTAssertNil(m.reasonNotToStart(a, now: Date()), "and may start once it is idle again")
     }
 
     @MainActor
@@ -569,7 +807,7 @@ nonisolated final class AutomationLifecycleTests: XCTestCase {
         let unlinked = try XCTUnwrap(relaunched.conversations.chat(id: chatID))
         XCTAssertFalse(unlinked.isAutomationRun, "the older build's file is what this launch reads")
 
-        relaunched.automationsTick()
+        await relaunched.automationsTick()
         let chat = try XCTUnwrap(relaunched.conversations.chat(id: chatID))
         XCTAssertEqual(chat.automationRunID, run.id)
         XCTAssertEqual(chat.workCopyID, copy.id)
@@ -584,7 +822,7 @@ nonisolated final class AutomationLifecycleTests: XCTestCase {
         let execution = await relaunched.executionProject(for: chatID, primary: project)
         XCTAssertEqual(try? execution.get().path, copy.path, "the next message runs in the copy")
 
-        relaunched.automationsTick()
+        await relaunched.automationsTick()
         XCTAssertEqual(relaunched.conversations.chat(id: chatID), chat, "a chat that agrees is left alone")
         XCTAssertNil(relaunched.reboundToCopy(chat.session, copy: copy),
                      "a binding already in the copy is not moved again — the send goes through as it is")
@@ -606,7 +844,7 @@ nonisolated final class AutomationLifecycleTests: XCTestCase {
         m.automations.updateRun(run.id) { $0.state = .finished; $0.result = .noChange }
         XCTAssertNil(m.deleteAutomation(a.id))
 
-        m.automationsTick()
+        await m.automationsTick()
         let chat = try XCTUnwrap(m.conversations.chat(id: try XCTUnwrap(run.chatID)))
         XCTAssertNil(chat.automationRunID)
         XCTAssertTrue(chat.archived)

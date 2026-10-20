@@ -675,13 +675,22 @@ internal class DemoMac(
         return Home(
             desktop = desktop(),
             products = products.map { p ->
-                val mine = chats.filter { it.productID == p.id }.sortedWith(compareByDescending<DChat> { it.pinned }.thenByDescending { it.updatedAt })
+                val mine = chats.filter { it.productID == p.id }
+                // As the Mac lists them: the person's own chats pinned first, then by when they began,
+                // newest first; the archived by when they last changed. An automation's run is none of
+                // them, nor work in the product: the runs are listed apart, waiting ones first, then
+                // the newest.
+                val own = mine.filter { it.automation == null }
                 Product(
                     id = p.id, name = p.name, initials = p.initials, pinned = p.pinned, brief = p.brief,
                     status = if (mine.any { it.busy }) Status("running", t.statusRunning, "active", true) else null,
-                    lastWorkedAtMs = mine.maxOfOrNull { it.updatedAt },
-                    chats = mine.filter { !it.archived }.map { summary(it) },
-                    archivedChats = mine.filter { it.archived }.map { summary(it) },
+                    lastWorkedAtMs = own.maxOfOrNull { it.updatedAt },
+                    chats = own.filter { !it.archived }
+                        .sortedWith(compareByDescending<DChat> { it.pinned }.thenByDescending { it.createdAt }).map { summary(it) },
+                    archivedChats = own.filter { it.archived }.sortedByDescending { it.updatedAt }.map { summary(it) },
+                    automationChats = mine.filter { it.automation != null && !it.archived }
+                        .sortedWith(compareByDescending<DChat> { status(it).tone == "attention" }.thenByDescending { it.createdAt })
+                        .map { summary(it) },
                 )
             }.sortedByDescending { it.pinned },
             attention = attention.sortedByDescending { it.atMs },
@@ -777,7 +786,7 @@ internal class DemoMac(
         c.busySince = null
     }
 
-    private fun summary(c: DChat) = ChatSummary(c.id, c.productID, c.title, c.pinned, c.archived, c.createdAt, c.updatedAt, status(c))
+    private fun summary(c: DChat) = ChatSummary(c.id, c.productID, c.title, c.pinned, c.archived, c.createdAt, c.updatedAt, status(c), c.automation)
 
     private fun status(c: DChat): Status = when {
         c.busy -> Status("working", t.statusWorking, "active", true)
@@ -891,6 +900,19 @@ internal class DemoMac(
             c.entries += Entry("demo-landing-card", "report", t0 - 25 * HOUR, card = readyCard("task-landing", t.landingTask))
             chats += c
         }
+        // An automation's run: its brief, sent by itself in the person's name, and the answer — a
+        // conversation of its own, folded under the project's chats as "Automations".
+        DChat(LINKS_RUN, CAFE, t.linksTitle, t0 - 90 * MINUTE).also { c ->
+            c.automation = t.linksAutomation
+            c.updatedAt = t0 - 88 * MINUTE
+            c.entries += Entry("demo-links-q", "user", t0 - 90 * MINUTE, t.you, t.linksBrief)
+            c.entries += Entry(
+                "demo-links-a", "agent", t0 - 88 * MINUTE, t.bulava, t.linksAnswer,
+                blocks = t.linksSteps.mapIndexed { i, s -> Block("s$i", "activity", activity = Activity(s, "done")) } + Block("m", "markdown", t.linksAnswer),
+                finished = true,
+            )
+            chats += c
+        }
         // An answer that is a set of questions: the Mac lists it as "Questions for you".
         DChat(PLAN_CHAT, LEDGER, t.planTitle, t0 - 3 * HOUR).also { c ->
             c.updatedAt = t0 - 2 * HOUR
@@ -911,6 +933,8 @@ internal class DemoMac(
         var busy = false
         var busySince: Long? = null
         var activity: String? = null
+        /** The automation whose run this is, by its name; null for the person's own chats. */
+        var automation: String? = null
         val entries = mutableListOf<Entry>()
     }
 
@@ -926,6 +950,7 @@ internal class DemoMac(
         const val PLAN_CHAT = "demo-plan"
         const val PLAN_REPORT = "plan-questions"
         const val CAFE = "demo-cafe"
+        const val LINKS_RUN = "demo-links"
         private const val RES_FOLDER = "res-folder"
         private const val RES_SITE = "res-site"
         private const val DIFF_SYNC = "diff:sync"

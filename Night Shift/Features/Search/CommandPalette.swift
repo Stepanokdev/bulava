@@ -212,7 +212,7 @@ extension AppModel {
         let query = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
         if query.isEmpty {
-            return products.sorted.prefix(8).map { product in
+            return products.byRecentWork.prefix(8).map { product in
                 SearchResult(id: "p-\(product.id)", kind: .product,
                              title: product.name,
                              subtitle: product.summary.isEmpty

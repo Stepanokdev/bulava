@@ -217,7 +217,7 @@ struct MenuBarView: View {
     // MARK: - Data
 
     private var glances: [Glance] {
-        model.products.sorted.compactMap { product in
+        model.products.byRecentWork.compactMap { product in
             guard let state = model.state(forProductID: product.id) else { return nil }
             return Glance(product: product,
                           state: state,

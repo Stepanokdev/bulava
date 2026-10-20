@@ -8,9 +8,6 @@ struct WorkCopyBar: View {
 
     @State private var status: WorkCopyStatus?
     @State private var showingChanges = false
-    @State private var confirmingDiscard = false
-    @State private var working = false
-    @State private var problem: String?
     @State private var width: CGFloat = 0
 
     private var chat: Chat? { chatID.flatMap { model.conversations.chat(id: $0) } }
@@ -51,16 +48,9 @@ struct WorkCopyBar: View {
                     }
                     if !stacked { Spacer(minLength: 8) }
                     WrappingHStack(horizontalSpacing: 6, verticalSpacing: 6, maximumUnproposedWidth: .infinity) {
-                        if working { ProgressView().controlSize(.small) }
                         actions
                     }
                     .fixedSize(horizontal: !stacked, vertical: false)
-                }
-                if let problem {
-                    Text(verbatim: problem)
-                        .font(Typo.caption)
-                        .foregroundStyle(Palette.orange)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(.horizontal, 16)
@@ -71,13 +61,6 @@ struct WorkCopyBar: View {
             .task(id: "\(copy?.id.uuidString ?? "-")-\(busy)") { await refresh() }
             .sheet(isPresented: $showingChanges) {
                 if let copy { CopyChangesSheet(copy: copy, run: run) }
-            }
-            .confirmationDialog(Text("Throw these changes away?"), isPresented: $confirmingDiscard,
-                                titleVisibility: .visible) {
-                Button("Discard changes", role: .destructive) { discard() }
-                Button("Keep", role: .cancel) {}
-            } message: {
-                Text("The copy and its branch are deleted. Your folder is not touched.")
             }
         }
     }
@@ -98,63 +81,22 @@ struct WorkCopyBar: View {
     }
 
     @ViewBuilder private var actions: some View {
+        // The copy's status and a way to look inside it. Resolving it — merge, discard, mark done —
+        // now lives beneath the last answer (ChatOutcomeActions), where every end-of-work action is
+        // gathered in one place, so it is not offered twice.
         if let copy, copy.isLive {
-            Group {
-                Button("Changes") { showingChanges = true }
-                    .buttonStyle(.bulava(.quiet))
-                Button { model.openCopy(copy.id) } label: { Image(systemName: "folder") }
-                    .buttonStyle(.icon(size: 26, glyph: 11))
-                    .help(Text("Show the copy in Finder"))
-                    .accessibilityLabel(Text("Show the copy in Finder"))
-                if status?.hasWork == true, !busy {
-                    Button(String(format: String(localized: "Merge into %@"), copy.baseRef)) { merge() }
-                        .buttonStyle(.bulava(.primary))
-                        .disabled(busy || working)
-                        .help(busy ? Text("Wait for it to finish") : Text("Moves your branch forward to this work"))
-                }
-                Button("Discard changes") { confirmingDiscard = true }
-                    .buttonStyle(.bulava(.danger))
-                    .disabled(busy || working)
-            }
+            Button("Changes") { showingChanges = true }
+                .buttonStyle(.bulava(.quiet))
+            Button { model.openCopy(copy.id) } label: { Image(systemName: "folder") }
+                .buttonStyle(.icon(size: 26, glyph: 11))
+                .help(Text("Show the copy in Finder"))
+                .accessibilityLabel(Text("Show the copy in Finder"))
         }
     }
 
     private func refresh() async {
         guard let copy, copy.isLive else { status = nil; return }
         status = await model.copyStatus(copy.id)
-    }
-
-    private func merge() {
-        guard let chatID else { return }
-        working = true
-        Task {
-            if let run {
-                problem = await model.mergeRun(run.id)
-            } else {
-                problem = await model.mergeChatCopy(chatID)
-            }
-            working = false
-            if problem == nil, copy?.integrating != nil {
-                model.toast = ToastMessage(text: String(localized: "It could not be merged by itself, so the chat is merging it."), kind: .info)
-            } else if problem == nil {
-                model.toast = ToastMessage(text: String(localized: "Merged. The copy is cleaned up."), kind: .info)
-            }
-            await refresh()
-        }
-    }
-
-    private func discard() {
-        guard let chatID else { return }
-        working = true
-        Task {
-            if let run {
-                problem = await model.discardRun(run.id)
-            } else {
-                problem = await model.discardChatCopy(chatID)
-            }
-            working = false
-            await refresh()
-        }
     }
 }
 

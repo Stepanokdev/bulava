@@ -41,7 +41,10 @@ if [ -f "$CHECKS" ] && [ "$(grep -c . "$CHECKS" 2>/dev/null || echo 0)" -ge 10 ]
   echo "❌ вже 10 перевірок — більше не додаю. Об'єднай їх в одну команду." >&2; exit 2
 fi
 
-argv_json="$(printf '%s\n' "$@" | jq -R . | jq -sc .)"
+# One JSON string per argument, whatever it holds. Splitting on newlines turned `bash -c "<script>"`
+# into `bash -c "<first line>"`, and a check that ran nothing came back as a pass.
+argv_json="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@")" \
+  || { echo "❌ не зміг записати перевірку" >&2; exit 1; }
 jq -nc --arg c "$CRIT" --argjson argv "$argv_json" --arg cwd "$PWD" \
        --arg ts "$(date '+%F %T')" --arg rid "$(cat "$IDIR/run-id" 2>/dev/null || true)" \
    '{ts:$ts, run_id:$rid, criterion:$c, argv:$argv, cwd:$cwd}' >> "$CHECKS" \

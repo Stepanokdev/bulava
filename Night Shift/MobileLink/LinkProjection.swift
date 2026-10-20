@@ -32,6 +32,11 @@ struct LinkProjection {
 
     static let window = 60
 
+    /// How many of a product's automation runs the phone is sent: every one that waits for him, and
+    /// the newest of the rest up to this. The home is sent often and kept on the phone; a year of an
+    /// hourly watch is not.
+    static let automationChatsSent = 30
+
     /// `live` is the stretch of work as `LiveTracker` tells it; the projection itself keeps no
     /// history, so it comes from the link.
     static func build(_ model: AppModel, desktop: LinkDesktop, openChats: Set<UUID>,
@@ -157,7 +162,7 @@ private struct Builder {
     mutating func home(desktop: LinkDesktop) -> HomeDTO {
         var products: [ProductDTO] = []
         var attention: [AttentionDTO] = []
-        for product in model.products.sorted {
+        for product in model.products.byRecentWork {
             let chats = model.conversations.chats(for: product.id).map { summary($0) }
             let archived = model.conversations.archivedChats(for: product.id).map { summary($0) }
             products.append(ProductDTO(
@@ -165,7 +170,8 @@ private struct Builder {
                 pinned: product.pinned, brief: product.brief, icon: icon(product),
                 status: model.state(forProductID: product.id).map(Self.status),
                 lastWorkedAtMs: product.lastWorkedAt.map(LinkCoding.ms),
-                chats: chats, archivedChats: archived))
+                chats: chats, archivedChats: archived,
+                automationChats: automationChats(product)))
             attention += attentionItems(product)
         }
         attention += readinessAttention()
@@ -251,19 +257,39 @@ private struct Builder {
     }
 
     func summary(_ chat: Chat) -> ChatSummaryDTO {
-        ChatSummaryDTO(id: chat.id.uuidString, productID: chat.productID.uuidString,
-                       title: chat.title, pinned: chat.pinned, archived: chat.archived,
-                       createdAtMs: LinkCoding.ms(chat.createdAt),
-                       updatedAtMs: LinkCoding.ms(chat.updatedAt),
-                       status: Self.status(model.directPhase(for: chat.id)))
+        let run = chat.automationRunID.flatMap { model.automations.run(id: $0) }
+        return ChatSummaryDTO(id: chat.id.uuidString, productID: chat.productID.uuidString,
+                              title: chat.title, pinned: chat.pinned, archived: chat.archived,
+                              createdAtMs: LinkCoding.ms(chat.createdAt),
+                              updatedAtMs: LinkCoding.ms(chat.updatedAt),
+                              status: Self.status(model.directPhase(for: chat.id)),
+                              automation: run.map { model.automations.automation(id: $0.automationID)?.name
+                                                    ?? String(localized: "Automation") })
     }
 
+    /// The product's automation runs as the Mac's sidebar folds them: waiting for him first, then
+    /// the newest — every waiting one, and the rest up to `automationChatsSent`.
+    func automationChats(_ product: Product) -> [ChatSummaryDTO] {
+        let all = model.conversations.automationChats(for: product.id)
+        let waiting = all.filter { chat in
+            chat.automationRunID.flatMap { model.automations.run(id: $0) }.map(model.runWantsHim)
+                ?? model.directPhase(for: chat.id).wantsAttention
+        }
+        let waitingIDs = Set(waiting.map(\.id))
+        let rest = all.filter { !waitingIDs.contains($0.id) }
+            .prefix(max(0, LinkProjection.automationChatsSent - waiting.count))
+        return (waiting + rest).map { summary($0) }
+    }
+
+    /// Sent as a small PNG drawn from whatever the icon file is, under a reference that changes
+    /// when the picture does (`LinkIcons`). Nil when there is no icon or it cannot be drawn: the
+    /// phone shows the initials.
     mutating func icon(_ product: Product) -> FileDTO? {
-        guard let path = product.iconPath, FileManager.default.fileExists(atPath: path) else { return nil }
-        let ref = "icon:\(product.id.uuidString)"
-        files[ref] = URL(fileURLWithPath: path)
-        return FileDTO(ref: ref, name: (path as NSString).lastPathComponent, kind: "image",
-                       size: Self.size(of: URL(fileURLWithPath: path)), url: nil)
+        guard let path = product.iconPath, FileManager.default.fileExists(atPath: path),
+              let png = LinkIcons.png(for: product.id, path: path) else { return nil }
+        let ref = "icon:\(product.id.uuidString):\(png.revision)"
+        files[ref] = png.url
+        return FileDTO(ref: ref, name: "icon.png", kind: "image", size: Self.size(of: png.url), url: nil)
     }
 
     // MARK: Attention
@@ -387,7 +413,9 @@ private struct Builder {
             return [Self.onMac(String(localized: "Update Codex on your Mac"))]
         case .askForScreenRecording?:
             return [Self.onMac(String(localized: "Allow it in System Settings on your Mac"))]
-        case .brew?, .brewCask?, .revealInFinder?:
+        // Apple's installer is a dialog on the Mac; asking for it from a pocket would put it up in
+        // front of nobody.
+        case .brew?, .brewCask?, .revealInFinder?, .installCommandLineTools?:
             return [Self.onMac(String(localized: "Finish this on your Mac"))]
         case nil:
             return check.settingsURL != nil
@@ -496,6 +524,48 @@ private struct Builder {
                                     style: "secondary") { model, _ in
                 model.stopDirectChat(chatID); return nil
             })
+        }
+        // The run's end-of-work resolution — the same state-appropriate actions the Mac shows beneath
+        // the answer (`chatOutcomeActions`, the one tested source), so a waiting run can be merged,
+        // marked done or thrown away from the phone too (`markRunHandled` used to exist only on the
+        // Mac). The report actions it also returns are drawn by the block below, so only the
+        // resolution ones are taken here.
+        if !chat.archived {
+            let chatID = chat.id
+            func run(_ m: AppModel) -> AutomationRun? {
+                m.conversations.chat(id: chatID)?.automationRunID.flatMap { m.automations.run(id: $0) }
+            }
+            func fail(_ s: String?) -> LinkError? { s.map { LinkError(code: LinkErrorCode.failed, message: $0) } }
+            for action in model.chatOutcomeActions(forChat: chat.id) {
+                switch action {
+                case .merge(let into):
+                    buttons.append(register("resolveMerge:\(chatID.uuidString)",
+                                            label: String(format: String(localized: "Merge into %@"), into),
+                                            style: "primary") { model, _ in
+                        fail(run(model) != nil ? await model.mergeRun(run(model)!.id) : await model.mergeChatCopy(chatID))
+                    })
+                case .markDone:
+                    buttons.append(register("resolveDone:\(chatID.uuidString)",
+                                            label: String(localized: "Done"), style: "primary") { model, _ in
+                        guard let r = run(model) else { return nil }
+                        return fail(await model.markRunHandled(r.id))
+                    })
+                case .discard:
+                    buttons.append(register("resolveDiscard:\(chatID.uuidString)",
+                                            label: String(localized: "Discard changes"), style: "destructive",
+                                            confirm: String(localized: "Throw these changes away?")) { model, _ in
+                        fail(run(model) != nil ? await model.discardRun(run(model)!.id) : await model.discardChatCopy(chatID))
+                    })
+                case .markReviewed:
+                    buttons.append(register("resolveReviewed:\(chatID.uuidString)",
+                                            label: String(localized: "Mark reviewed"), style: "secondary") { model, _ in
+                        if let r = run(model) { model.markRunSeen(r.id) }
+                        return nil
+                    })
+                case .createReport, .openReport, .writingReport:
+                    break  // the report actions are projected by the block below
+                }
+            }
         }
         if !chat.archived, model.shouldOfferReport(for: chat.id) {
             let chatID = chat.id

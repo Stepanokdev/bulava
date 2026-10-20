@@ -65,6 +65,10 @@ struct ConversationView: View {
                                 .padding(.top, 12)
                         }
 
+                        // The things to do now the turn has ended — make a report, open one — under the
+                        // last answer, where they are seen. They used to live only in the inspector.
+                        ChatOutcomeActions(chatID: chatID)
+
                         Color.clear.frame(height: 1).id(Self.bottomAnchor)
                     }
                     // Every message is a target the scroll position can go to by its id, built
@@ -503,6 +507,113 @@ struct ConversationView: View {
         }
     }
 
+}
+
+/// Under the last answer, once a turn has ended: everything to do about the result — merge or discard
+/// a run's changes, mark it done or reviewed, make a report, open one. These used to live only in the
+/// inspector (a 5-pt dot) or the top copy bar, so a finished chat looked like it offered nothing. The
+/// list is decided by `AppModel.chatOutcomeActions` (tested there); this draws it. Shown whether or
+/// not the chat ever asked a question — the status row above hides itself once it has.
+private struct ChatOutcomeActions: View {
+    @Environment(AppModel.self) private var model
+    let chatID: UUID?
+    @State private var working = false
+    @State private var confirmingDiscard = false
+    @State private var problem: String?
+
+    private var chat: Chat? { chatID.flatMap { model.conversations.chat(id: $0) } }
+    private var run: AutomationRun? { chat?.automationRunID.flatMap { model.automations.run(id: $0) } }
+    private var copyIsLive: Bool { run?.workspaceID.flatMap { model.automations.copy(id: $0)?.isLive } ?? false }
+
+    var body: some View {
+        let actions = model.chatOutcomeActions(forChat: chatID)
+        if let chatID, !actions.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                WrappingHStack(horizontalSpacing: 8, verticalSpacing: 8) {
+                    ForEach(Array(actions.enumerated()), id: \.offset) { _, action in
+                        button(for: action, chatID: chatID)
+                    }
+                }
+                .disabled(working)
+                if let problem {
+                    Text(verbatim: problem)
+                        .font(Typo.caption)
+                        .foregroundStyle(Palette.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.top, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .confirmationDialog(Text("Throw these changes away?"), isPresented: $confirmingDiscard,
+                                titleVisibility: .visible) {
+                Button("Discard changes", role: .destructive) { discard(chatID) }
+                Button("Keep", role: .cancel) {}
+            } message: {
+                Text(copyIsLive
+                     ? "The changes and their branch are deleted. Your folder is not touched."
+                     : "The run is marked thrown away, and its branch is removed if it is still in your repo. Your folder is not touched.")
+            }
+        }
+    }
+
+    @ViewBuilder private func button(for action: AppModel.OutcomeAction, chatID: UUID) -> some View {
+        switch action {
+        case .merge(let into):
+            Button(String(format: String(localized: "Merge into %@"), into)) { performMerge(chatID) }
+                .buttonStyle(.bulava(.primary))
+        case .markDone:
+            Button("Done") { markDone() }
+                .buttonStyle(.bulava(.primary))
+                .help(Text("You have already merged or dealt with this. Marks it done so the next run is no longer held back."))
+        case .discard:
+            Button("Discard changes") { confirmingDiscard = true }
+                .buttonStyle(.bulava(.danger))
+        case .markReviewed:
+            Button("Mark reviewed") { if let run { model.markRunSeen(run.id) } }
+                .buttonStyle(.bulava(.secondary))
+        case .createReport:
+            Button("Create report") { model.generateChatReport(chatID: chatID) }
+                .buttonStyle(.bulava(.secondary))
+        case .openReport(let path):
+            Button("Open report") {
+                let questions = DecisionSet.load(besides: URL(fileURLWithPath: path))
+                model.openChatReport(chatID: chatID, path: path, title: questions?.title ?? chat?.title ?? "")
+            }
+            .buttonStyle(.bulava(.secondary))
+        case .writingReport:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini)
+                Text("Writing the report…")
+                    .font(Typo.caption)
+                    .foregroundStyle(Palette.textTertiary)
+            }
+        }
+    }
+
+    private func performMerge(_ chatID: UUID) {
+        working = true
+        Task {
+            problem = run != nil ? await model.mergeRun(run!.id) : await model.mergeChatCopy(chatID)
+            working = false
+        }
+    }
+
+    private func discard(_ chatID: UUID) {
+        working = true
+        Task {
+            problem = run != nil ? await model.discardRun(run!.id) : await model.discardChatCopy(chatID)
+            working = false
+        }
+    }
+
+    private func markDone() {
+        guard let run else { return }
+        working = true
+        Task {
+            problem = await model.markRunHandled(run.id)
+            working = false
+        }
+    }
 }
 
 private struct SessionStatusRow: View {

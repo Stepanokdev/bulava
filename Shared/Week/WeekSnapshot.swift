@@ -263,7 +263,18 @@ nonisolated enum WeekStore {
     /// team, which on macOS needs no provisioning profile and raises no "access data from other
     /// apps" prompt.
     static let appGroup = "KHU94Q2JSS.group.bulava.week"
-    static let fileName = "week.json"
+    /// One file per channel. Bulava Dev — and the test suite's host, a Debug build of it — counts a
+    /// week of its own data, and wrote it into the same file as his Bulava: every run of the suite
+    /// put the test host's week on his desktop until his Bulava's numbers next changed. The app and
+    /// its widget extension both carry the channel they were built for (`BulavaChannel`, the same
+    /// build setting); one without it is read as his.
+    static var fileName: String {
+        fileName(channel: Bundle.main.object(forInfoDictionaryKey: "BulavaChannel") as? String)
+    }
+
+    static func fileName(channel: String?) -> String {
+        channel?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "dev" ? "week-dev.json" : "week.json"
+    }
 
     /// The shared container, or — for a build signed without the entitlement — the same path under
     /// the home folder, which only a non-sandboxed process can reach.

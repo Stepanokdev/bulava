@@ -227,6 +227,64 @@ nonisolated final class ChatTranscriptSegmentTests: XCTestCase {
         XCTAssertGreaterThan(cards[2].at, date("15:40:00"))
     }
 
+    /// 8 Oct: he allowed a command on Claude's own screen, and everything Claude did after it went on
+    /// growing the card above his "Yes" — a step line appearing and vanishing every second, the
+    /// whole chat jumping with it.
+    @MainActor
+    func testWorkAfterHisAnswerOnClaudesScreenStartsBelowIt() async throws {
+        let lines = [
+            prompt("u1", "Зроби вкладку", at: "12:00:01"),
+            says("a1", "Видаляю стару збірку.", at: "12:00:02"),
+            runs("a2", call: "tool-1", at: "12:00:03"),
+            // His "Yes" on the permission dialog, at 12:00:40: the transcript has no line for it.
+            finished("tool-1", at: "12:00:41"),
+            says("a3", "Збірку видалено.", at: "12:00:45"),
+            runs("a4", call: "tool-2", at: "12:00:46"),
+            finished("tool-2", at: "12:01:10"),
+            says("a5", "Готово.", at: "12:01:20", endTurn: true),
+        ]
+        let (store, chat, feed) = try feed(lines)
+        store.bindSession(ChatSessionBinding(primaryProjectID: nil, projectPath: "/tmp/p",
+                                             claudeSessionID: "session",
+                                             screenAnswers: [date("12:00:40")]), to: chat.id)
+        let answer = store.appendUser("Yes", productID: chat.productID, chatID: chat.id, at: date("12:00:40"))
+        await feed.drain()
+
+        let entries = store.entries(inChat: chat.id)
+        let cards = entries.filter { $0.kind == .foreman }
+        XCTAssertEqual(cards.map(\.text), ["Видаляю стару збірку.", "Збірку видалено.\n\nГотово."])
+        XCTAssertEqual(cards[0].blocks.first { $0.kind == .activity }?.activity?.status, .done,
+                       "the step he allowed finishes in the card that started it")
+        let order = entries.map(\.id)
+        XCTAssertLessThan(try XCTUnwrap(order.firstIndex(of: cards[0].id)), try XCTUnwrap(order.firstIndex(of: answer.id)))
+        XCTAssertLessThan(try XCTUnwrap(order.firstIndex(of: answer.id)), try XCTUnwrap(order.firstIndex(of: cards[1].id)),
+                          "what Claude did after his answer is drawn below it")
+
+        // Bulava restarts and reads the transcript from the start: the same cards, the same ids.
+        let again = ChatTranscriptFeed(chatID: chat.id, productID: chat.productID, sessionID: "session",
+                                       transcript: directory.appendingPathComponent("session.jsonl"), store: store)
+        await again.drain()
+        XCTAssertEqual(store.entries(inChat: chat.id).filter { $0.kind == .foreman }.map(\.id), cards.map(\.id))
+    }
+
+    @MainActor
+    func testWithoutAnAnswerOnScreenTheTurnStaysOneCard() async throws {
+        let (store, chat, feed) = try feed([
+            prompt("u1", "Зроби вкладку", at: "12:00:01"),
+            says("a1", "Видаляю стару збірку.", at: "12:00:02"),
+            runs("a2", call: "tool-1", at: "12:00:03"),
+            finished("tool-1", at: "12:00:41"),
+            says("a3", "Збірку видалено.", at: "12:00:45"),
+        ])
+        // An answer from before this turn began splits nothing in it.
+        store.bindSession(ChatSessionBinding(primaryProjectID: nil, projectPath: "/tmp/p",
+                                             claudeSessionID: "session",
+                                             screenAnswers: [date("11:00:00")]), to: chat.id)
+        await feed.drain()
+        XCTAssertEqual(store.entries(inChat: chat.id).filter { $0.kind == .foreman }.map(\.text),
+                       ["Видаляю стару збірку.\n\nЗбірку видалено."])
+    }
+
     @MainActor
     func testTheFirstCardKeepsTheIdAnEarlierBuildGaveIt() async throws {
         let (store, chat, feed) = try feed([

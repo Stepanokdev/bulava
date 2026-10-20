@@ -3,10 +3,16 @@ package com.stepanok.bulava
 import com.stepanok.bulava.link.ChatDelta
 import com.stepanok.bulava.link.ChatHeader
 import com.stepanok.bulava.link.ChatState
+import com.stepanok.bulava.link.ChatSummary
 import com.stepanok.bulava.link.Entry
+import com.stepanok.bulava.link.Home
 import com.stepanok.bulava.link.LinkClient
+import com.stepanok.bulava.link.Product
+import com.stepanok.bulava.link.Status
 import com.stepanok.bulava.state.ChatMerge
 import com.stepanok.bulava.ui.chat.findMatches
+import com.stepanok.bulava.ui.main.chat
+import com.stepanok.bulava.ui.main.runsWaiting
 import com.stepanok.bulava.ui.report.REPORT_POLICY
 import com.stepanok.bulava.ui.report.inlineResources
 import com.stepanok.bulava.ui.report.isolate
@@ -14,6 +20,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.assertTrue
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
@@ -54,6 +61,33 @@ class PhoneLogicTest {
         assertEquals("b grown", next.entries[1].text)
         assertEquals("Renamed", next.state.title)
         assertEquals(true, next.state.busy)
+    }
+
+    @Test
+    fun aRunsChatIsFoundAmongItsProductsAutomationRuns() {
+        val run = ChatSummary(id = "R1", productID = "P1", title = "Meetings to tasks · Today", automation = "Meetings to tasks")
+        val home = Home(products = listOf(Product(
+            id = "P1",
+            chats = listOf(ChatSummary(id = "C1", productID = "P1")),
+            archivedChats = listOf(ChatSummary(id = "A1", productID = "P1", archived = true)),
+            automationChats = listOf(run),
+        )))
+        assertEquals(run, home.chat("R1"), "opened from a notification, a run's chat is the run's, not an empty new chat")
+        assertEquals("C1", home.chat("C1")?.id)
+        assertEquals("A1", home.chat("A1")?.id)
+        assertNull(home.chat("a chat the phone made just now"))
+    }
+
+    @Test
+    fun theFoldedAutomationsAreMarkedWhileARunInThemWaits() {
+        fun run(id: String, tone: String, active: Boolean = false) = ChatSummary(id = id, status = Status(tone = tone, active = active))
+        val done = run("R1", "good")
+        val working = run("R2", "active", active = true)
+        assertFalse(runsWaiting(listOf(done, working), emptySet()), "done or working is nothing to wait on")
+        assertTrue(runsWaiting(listOf(done, run("R3", "attention")), emptySet()), "a run that asks")
+        assertTrue(runsWaiting(listOf(done, run("R4", "problem")), emptySet()), "a run that failed")
+        assertTrue(runsWaiting(listOf(done, working), setOf("R2")), "a request the Mac lists for one of them")
+        assertFalse(runsWaiting(emptyList(), setOf("R1")))
     }
 
     @Test

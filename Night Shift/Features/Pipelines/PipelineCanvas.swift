@@ -79,7 +79,11 @@ struct PipelineCanvas: View {
                         .frame(width: w, height: h, alignment: .topLeading)
                         .scaleEffect(zoom, anchor: .topLeading)
                         .frame(width: w * zoom, height: h * zoom, alignment: .topLeading)
-                        .contentShape(Rectangle())
+                        // The output dots sit ON the box's edge, half of each outside it. Answering only
+                        // inside the box left that half dead: at 70% a press on a dot's centre started
+                        // nothing about half the time (measured in a VM with the real pointer, 20 Oct).
+                        // The box answers as far out as `outputPort` looks for a dot.
+                        .contentShape(Rectangle().inset(by: -Self.portReach(zoom)))
                         .gesture(nodeGesture(node))
                         .position(x: (Self.inset.width + CGFloat(node.x ?? 0)) * zoom + w * zoom / 2,
                                   y: (Self.inset.height + CGFloat(node.y ?? 0)) * zoom + h * zoom / 2)
@@ -91,6 +95,9 @@ struct PipelineCanvas: View {
     }
 
     private static let space = "pipeline-canvas"
+
+    /// How far from a dot's centre a press still takes that dot, at this zoom.
+    static func portReach(_ zoom: CGFloat) -> CGFloat { max(10, 12 * zoom) }
 
     /// Room around the boxes for wires that bend outside them and for the tools along the bottom.
     private static let inset = CGSize(width: 64, height: 32)
@@ -136,7 +143,7 @@ struct PipelineCanvas: View {
 
     /// The output dot of this box under a point, if the point is close enough to one.
     private func outputPort(of node: PipelineNode, near point: CGPoint) -> PipelinePortSpec? {
-        let reach = max(10, 12 * zoom)
+        let reach = Self.portReach(zoom)
         return spec(node)?.outPorts.first { port in
             let q = outPoint(node, port.id)
             return hypot(q.x - point.x, q.y - point.y) <= reach
@@ -158,7 +165,7 @@ struct PipelineCanvas: View {
                     .stroke(selected ? Palette.accent : (loop ? Palette.orange : Palette.textFaint.opacity(0.7)),
                             style: StrokeStyle(lineWidth: selected ? 2 : 1.4, lineCap: .round, dash: loop ? [5, 4] : []))
                 if let max = edge.loop?.max {
-                    Text(String(localized: "back · at most \(max)"))
+                    Text(verbatim: Fmt.count("back · at most %lld", max))
                         .font(Typo.panelMeta)
                         .foregroundStyle(Palette.orange)
                         .padding(.horizontal, 5)

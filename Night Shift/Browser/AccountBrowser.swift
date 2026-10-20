@@ -9,9 +9,10 @@ import Observation
 /// - **signing in** — plain Chrome, no debugging at all, so a site sees an ordinary browser (Google
 ///   refuses sign-in to one that is being driven). He opens it from Settings, signs in, quits it —
 ///   or from where Bulava asks him to, when a run reached a sign-in (`askToSignIn`).
-/// - **working** — the same profile with DevTools on a pipe only Bulava holds, lent to one run at a
-///   time through `BrowserBroker`. Started when a run first needs it, kept open afterwards: some
-///   sign-ins live only as long as the browser does.
+/// - **working** — the same profile with DevTools on a pipe only Bulava holds, used by every run that
+///   needs it at once, each in tabs of its own, through `BrowserBroker`. Started when a run first
+///   needs it, and quit once nobody has used it for a while — the way ⌘Q would, so a sign-in that
+///   lives only as long as the browser is kept.
 ///
 /// A run that needs no sign-in gets a throwaway headless browser of its own instead (the engine's
 /// `browser` server), so runs never wait on each other for that.
@@ -53,7 +54,8 @@ final class AccountBrowser {
     private(set) var enabled = false
     private(set) var chrome: URL?
     private(set) var sites: [BrowserSite] = []
-    private(set) var lease: BrowserBroker.Lease?
+    /// The runs using it now.
+    private(set) var leases: [BrowserBroker.Lease] = []
     private(set) var mode: Mode = .idle
     private(set) var port: UInt16 = 0
     /// The site being signed in to, while he is.
@@ -85,8 +87,15 @@ final class AccountBrowser {
             return try ChromePipe.launch(executable: ChromeApp.executable(of: chrome),
                                          arguments: ChromeApp.baseArguments(profile: profile) + ["--remote-debugging-pipe"])
         }
-        broker.onChange = { [weak self] lease in
-            Task { @MainActor in self?.leaseChanged(lease) }
+        // For Bulava's own visits while no run uses it: the same profile, with no window to pop up.
+        broker.makeQuietTransport = {
+            guard let chrome else { throw ChromePipe.LaunchError.spawn(ENOENT) }
+            ChromeApp.prepare(profile: profile)
+            return try ChromePipe.launch(executable: ChromeApp.executable(of: chrome),
+                                         arguments: ChromeApp.baseArguments(profile: profile) + ["--remote-debugging-pipe", "--headless=new"])
+        }
+        broker.onChange = { [weak self] leases in
+            Task { @MainActor in self?.leasesChanged(leases) }
         }
         broker.onSignInNeeded = { [weak self] url, run in
             Task { @MainActor in self?.signInSeen(at: url, by: run) }
@@ -102,6 +111,7 @@ final class AccountBrowser {
                 ticks += 1
                 if ticks % 4 == 0 { self.refreshRuns() }
                 if ticks % 10 == 0 { self.announce() }
+                if ticks % 120 == 0, self.signInCheckDue() { Task { await self.checkSignIns() } }
             }
         }
     }
@@ -123,15 +133,17 @@ final class AccountBrowser {
         } else {
             broker.stop()
             port = 0
-            lease = nil
+            leases = []
         }
         announce()
     }
 
-    private func leaseChanged(_ lease: BrowserBroker.Lease?) {
-        self.lease = lease
-        // A sign-in Bulava saw in a run's tab waits only while that run has the browser.
-        if let waiting = signInRequest, waiting.automatic, lease?.run.token != waiting.runToken { dismissSignInRequest() }
+    private func leasesChanged(_ leases: [BrowserBroker.Lease]) {
+        self.leases = leases
+        // A sign-in Bulava saw in a run's tab waits only while that run is using the browser.
+        if let waiting = signInRequest, waiting.automatic, !leases.contains(where: { $0.run.token == waiting.runToken }) {
+            dismissSignInRequest()
+        }
         if mode != .signingIn { mode = broker.browserRunning ? .working : .idle }
     }
 
@@ -169,11 +181,62 @@ final class AccountBrowser {
         announce()
     }
 
+    // MARK: Keeping sign-ins
+
+    /// How often each site is opened in the background: often enough to keep a sign-in that lasts
+    /// while it is used, and to see one that ran out before a run meets its sign-in page.
+    static let signInCheckEvery: TimeInterval = 6 * 3600
+    private(set) var checkingSignIns = false
+
+    /// Whether a site is due a look now.
+    func signInCheckDue(now: Date = Date()) -> Bool {
+        guard enabled, mode != .signingIn, !checkingSignIns else { return false }
+        return sites.contains { site in
+            guard site.signedInAt != nil else { return false }
+            return site.checkedAt.map { now.timeIntervalSince($0) > Self.signInCheckEvery } ?? true
+        }
+    }
+
+    /// Opens every site he signed in to, one after another, in a tab no run sees, and notes whether it
+    /// still lets Bulava in. A sign-in that ran out is said at once — in Settings, and once in a notice
+    /// with "Sign in" — rather than found by a run at night on its sign-in page.
+    func checkSignIns(force: Bool = false) async {
+        guard enabled, mode != .signingIn, !checkingSignIns else { return }
+        checkingSignIns = true
+        defer { checkingSignIns = false; broker.quitIfUnused() }
+        for site in sites where site.signedInAt != nil {
+            guard force || site.checkedAt.map({ Date().timeIntervalSince($0) > Self.signInCheckEvery }) ?? true,
+                  let url = URL(string: site.url), mode != .signingIn else { continue }
+            let broker = self.broker
+            let landed: URL? = await withCheckedContinuation { done in broker.visit(url) { done.resume(returning: $0) } }
+            guard let landed, let i = sites.firstIndex(where: { $0.id == site.id }) else { continue }
+            let out = BrowserSite.asksToSignIn(opened: url, landed: landed)
+            let wasOut = sites[i].signedOut
+            sites[i].checkedAt = Date()
+            sites[i].signedOut = out
+            saveSites()
+            if out, !wasOut { tellSignedOut(sites[i]) }
+        }
+    }
+
+    private func tellSignedOut(_ site: BrowserSite) {
+        model?.toast = ToastMessage(
+            title: String(format: String(localized: "%@: the sign-in has run out"), site.host),
+            text: String(localized: "Runs that need this site will stop at its sign-in page until you sign in again."),
+            kind: .info, key: "browser-signed-out-\(site.host)",
+            actions: [
+                ToastAction(title: String(localized: "Sign in")) { [weak self] in
+                    Task { await self?.signIn(site) }
+                },
+                ToastAction(title: String(localized: "Later"), primary: false) {},
+            ])
+    }
+
     // MARK: Signing in
 
     static var signingInReason: String { String(localized: "He is signing in to a site in Bulava's browser right now.") }
 
-    /// Plain Chrome on Bulava's profile, at `address` or else `site`, for him to sign in. Whoever was
+    /// Plain Chrome on Bulava's profile, at `address` or else `site`, for him to sign in. Every run
     /// using the browser loses it — the profile cannot be open twice — so the caller asks him first,
     /// unless it was that run's own sign-in he was asked for.
     func signIn(_ site: BrowserSite?, at address: URL? = nil) async {
@@ -185,7 +248,7 @@ final class AccountBrowser {
         let broker = self.broker
         let reason = Self.signingInReason
         await Task.detached { broker.setUnavailable(reason) }.value
-        lease = nil
+        leases = []
         ChromeApp.prepare(profile: profile)
         let process = Process()
         process.executableURL = ChromeApp.executable(of: chrome)
@@ -215,15 +278,21 @@ final class AccountBrowser {
 
     private func signInEnded() {
         guard mode == .signingIn else { return }
-        if let site = signingIn, let i = sites.firstIndex(where: { $0.id == site.id }) {
-            sites[i].signedInAt = Date()
-            saveSites()
-        }
+        if let site = signingIn { noteSignedIn(site.id) }
         signInProcess = nil
         signingIn = nil
         mode = .idle
         if enabled { broker.setUnavailable(nil) }
         announce()
+    }
+
+    /// He signed in to this site just now: whatever a check said before no longer holds.
+    func noteSignedIn(_ id: UUID, at date: Date = Date()) {
+        guard let i = sites.firstIndex(where: { $0.id == id }) else { return }
+        sites[i].signedInAt = date
+        sites[i].signedOut = false
+        sites[i].checkedAt = nil
+        saveSites()
     }
 
     static let signInToastKey = "browser-sign-in"
@@ -258,7 +327,7 @@ final class AccountBrowser {
     /// Bulava saw a run's tab reach Google's sign-in. By the time this is read the run may have let
     /// go of the browser, or ended: then nobody waits, and he is asked for nothing.
     func signInSeen(at url: URL, by run: BrowserBroker.Run) {
-        guard broker.currentLease?.run.token == run.token else { return }
+        guard broker.isUsing(token: run.token) else { return }
         askToSignIn(at: url, for: run, automatic: true)
     }
 
@@ -276,7 +345,7 @@ final class AccountBrowser {
         model?.mobileLink.scheduleRefresh()
     }
 
-    /// He takes the browser back from the run that has it.
+    /// He takes the browser back from every run using it.
     func endLease() {
         broker.endCurrentLease()
     }
@@ -288,8 +357,14 @@ final class AccountBrowser {
         guard enabled, let model, let stateDir else { return }
         let paths = SupervisorPaths(stateDir: stateDir)
         var runs: [BrowserBroker.Run] = []
-        // A finished run (its `done` is written) has nothing left to do in the browser.
-        for instance in model.snapshot.instances where instance.finishedAt == nil {
+        // While the worker is alive, not "before it reports an outcome". A Bulava chat declares a
+        // result (`done` is written) and keeps going — needs-user, blocked, a change accepted and
+        // the chat continuing — and the worker is still there to be asked to open a page. Keying
+        // on `finishedAt` (set the moment `done` exists) revoked the token the instant a run
+        // reported anything, so every accounts call after that was refused 401 with the right token
+        // in hand (8 Oct: appstoreconnect could not be opened from a run that had declared blocked).
+        // The watchdog going is what ends a run; until then it may still use the browser.
+        for instance in model.snapshot.instances where instance.mayUseBrowser {
             let file = paths.instanceDir(slug: instance.slug).appendingPathComponent("browser.json")
             guard let data = try? Data(contentsOf: file),
                   let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
@@ -316,7 +391,7 @@ final class AccountBrowser {
             "enabled": enabled && port != 0,
             "port": Int(port),
             "blocked": blockedHosts,
-            "sites": sites.map { ["host": $0.host, "withoutMe": $0.withoutMe] },
+            "sites": sites.map { ["host": $0.host, "withoutMe": $0.withoutMe, "signedOut": $0.signedOut] },
         ]
         if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) {
             try? data.write(to: serviceFile, options: .atomic)
@@ -346,7 +421,7 @@ final class AccountBrowser {
             return ["ok": false, "error": "unreadable request"]
         }
         refreshRuns()
-        let held = broker.currentLease
+        let using = broker.leases
         switch op {
         case "release":
             return ["ok": true, "released": broker.release(token: token)]
@@ -366,18 +441,17 @@ final class AccountBrowser {
             return asked ? ["ok": true, "asked": true] : ["ok": true, "asked": false, "reason": "Bulava did not ask him."]
         case "status":
             var answer: [String: Any] = ["ok": true, "enabled": enabled,
-                                         "sites": sites.map { ["host": $0.host, "withoutMe": $0.withoutMe] }]
+                                         "sites": sites.map { ["host": $0.host, "withoutMe": $0.withoutMe, "signedOut": $0.signedOut] }]
             if !enabled {
                 answer["state"] = "off"
             } else if mode == .signingIn {
                 answer["state"] = "unavailable"
                 answer["reason"] = Self.signingInReason
-            } else if let held {
-                answer["state"] = held.run.token == token ? "yours" : "busy"
-                answer["holder"] = held.run.title
-                answer["since"] = Int(held.since.timeIntervalSince1970)
             } else {
-                answer["state"] = "free"
+                // Every run may use it at once, each in its own tabs: there is no "busy" any more.
+                answer["state"] = using.contains { $0.run.token == token } ? "yours" : "free"
+                answer["others"] = using.filter { $0.run.token != token }.map(\.run.title)
+                answer["tabs"] = broker.tabs(of: token).count
             }
             return answer
         default:

@@ -1,12 +1,10 @@
 #!/bin/bash
-# An automation's run never waits on a permission dialog nobody can answer.
+# Ordinary chat commands are answered automatically; dangerous removals get a useful refusal.
 #
-# His Claude Code settings had collected 605 "always allow" clicks, and a night run that met a
-# dialog of its own waited in a pane nobody watched, counted as "waiting" rather than frozen. Pinned
-# here: with nobody there the run's own browser is allowed and anything else is declined with the
-# reason; with a person there nothing changes; every decision is written down; a dialog that slips
-# past the hook is declined after a deadline; and an automation's worker is launched with a browser
-# of its own and a Claude that does not update itself mid-run.
+# Bash permission requests in attended chats are allowed unless a removal's target is dynamic or
+# critical. Questions, plans, and other tools still wait for a person. Every automatic decision is
+# recorded. Unattended runs retain their own browser policy and decline a missed dialog after its
+# deadline. Commands below are sent as JSON to the hook only; none of them is executed.
 set -u
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-tmux.sh"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -39,10 +37,147 @@ ask() {  # $1=event $2=tool $3=tool_input json → the hook's stdout
     | bash "$HOOK"
 }
 
-echo "===== with a person there, the dialog is his ====="
-out="$(ask PermissionRequest Bash '{"command":"rm -rf build"}')"
-check "the hook says nothing"                    '[ -z "$out" ]'
-check "and writes nothing down"                  '[ ! -s "$DEC" ]'
+expect_command() {  # $1=label $2=allow|deny $3=command (classified, never executed)
+  local label="$1" expected="$2" command="$3" result actual
+  result="$(ask PermissionRequest Bash "$(jq -nc --arg command "$command" '{command:$command}')")"
+  actual="$(printf '%s' "$result" | jq -r '.hookSpecificOutput.decision.behavior' 2>/dev/null)"
+  if [ "$actual" = "$expected" ]; then ok "$label"; else bad "$label (expected $expected, got ${actual:-no decision})"; fi
+  if ! tail -1 "$DEC" | jq -e --arg expected "$expected" --arg command "$command" \
+    '.event == "PermissionRequest" and .tool == "Bash" and .decision == $expected and .what == ($command | gsub("[\\n\\r]+"; " ") | .[0:240])' >/dev/null; then
+    bad "$label: automatic decision was not recorded"
+  fi
+  if [ "$expected" = deny ] && ! printf '%s' "$result" | jq -e \
+    '.hookSpecificOutput.decision.message | test("literal path"; "i")' >/dev/null; then
+    bad "$label: refusal did not ask for a literal path"
+  fi
+}
+
+expect_human() {  # $1=label $2=tool $3=tool_input json
+  local label="$1" count result
+  count="$(wc -l < "$DEC" | tr -d ' ')"
+  result="$(ask PermissionRequest "$2" "$3")"
+  if [ -z "$result" ]; then ok "$label"; else bad "$label: hook answered a human prompt"; fi
+  if [ "$(wc -l < "$DEC" | tr -d ' ')" != "$count" ]; then
+    bad "$label: hook recorded an automatic decision"
+  fi
+}
+
+echo "===== with a person there, ordinary command requests are allowed and recorded ====="
+expect_command "a normal command is allowed" allow 'printf "%s\n" hello'
+expect_command "ordinary echo is allowed" allow 'echo hello'
+expect_command "numeric arguments do not confuse redirection parsing" allow 'printf 123 hello'
+expect_command "a literal build directory may be removed" allow 'rm -rf build'
+expect_command "a literal path with spaces may be removed" allow "rm -- 'build cache'"
+expect_command "a project child by absolute path may be removed" allow "rm -rf -- '$PROJ/build'"
+expect_command "a quoted dollar sign is a literal filename" allow 'rm -- '\''$TARGET'\'''
+expect_command "a quoted substitution is a literal filename" allow 'rm -- '\''$(printf build)'\'''
+expect_command "a quoted glob is a literal filename" allow "rm -- 'build*'"
+expect_command "an escaped glob is a literal filename" allow 'rm -- build\*'
+expect_command "a dash filename after -- is a literal target" allow 'rm -- -literal'
+expect_command "removal text in printf is not a removal" allow 'printf "%s\n" "rm -rf /"'
+expect_command "removal text in echo is not a removal" allow "echo 'rm -rf /'"
+expect_command "a comment is not a removal" allow $'printf "%s\\n" hello\n# rm -rf /'
+expect_command "an inline comment is not a removal" allow 'printf hello # rm -rf /'
+
+echo "===== dynamic removals ask the model to rewrite with a literal path ====="
+expect_command "a variable target is refused" deny 'rm -rf "$TARGET"'
+expect_command "an unquoted variable target is refused" deny 'rm -rf $TARGET'
+expect_command "a braced variable target is refused" deny 'rm -rf "${TARGET}/build"'
+expect_command "a command substitution target is refused" deny 'rm -rf "$(printf build)"'
+expect_command "a backtick substitution target is refused" deny 'rm -rf `printf build`'
+expect_command "a wildcard target is refused" deny 'rm -rf build*'
+expect_command "a question-mark glob target is refused" deny 'rm -rf build?'
+expect_command "a bracket glob target is refused" deny 'rm -rf build[ab]'
+expect_command "a brace expansion target is refused" deny 'rm -rf build{1,2}'
+expect_command "an extended glob target is refused" deny 'rm -rf @(build|cache)'
+expect_command "xargs removal targets from a file are refused" deny 'xargs -a targets rm -rf'
+expect_command "xargs removal targets with a custom delimiter are refused" deny "xargs -d ':' rm -rf"
+expect_command "a dangerous second target is refused" deny 'rm -rf build "$TARGET"'
+
+echo "===== critical paths and their aliases are refused ====="
+expect_command "the filesystem root is refused" deny 'rm -rf /'
+expect_command "a root child is refused" deny 'rm -rf /tmp'
+expect_command "the home directory is refused" deny "rm -rf -- '$HOME'"
+expect_command "a tilde home target is refused" deny 'rm -rf ~'
+expect_command "the working directory is refused" deny 'rm -rf .'
+expect_command "the absolute working directory is refused" deny "rm -rf -- '$PROJ'"
+expect_command "the working directory parent is refused" deny 'rm -rf ..'
+expect_command "an absolute working directory parent is refused" deny "rm -rf -- '$TMP'"
+expect_command "path normalization cannot hide the working directory" deny 'rm -rf build/..'
+ln -s "$PROJ" "$TMP/project-link"
+expect_command "a symlink to the working directory is refused" deny "rm -rf -- '$TMP/project-link'"
+expect_command "rmdir protects the working directory too" deny 'rmdir .'
+expect_command "an absolute rm executable still protects root" deny '/bin/rm -rf /'
+expect_command "sudo cannot bypass root protection" deny 'sudo rm -rf /'
+expect_command "env cannot bypass root protection" deny 'env rm -rf /'
+expect_command "command cannot bypass root protection" deny 'command rm -rf /'
+expect_command "a busybox removal applet cannot bypass root protection" deny 'busybox rm -rf /'
+expect_command "a wrapper working-directory option cannot bypass root protection" deny 'env --chdir=/ rm -rf usr'
+expect_command "a Windows drive root is refused on every platform" deny "rm -rf 'C:\\'"
+expect_command "a Windows root child is refused" deny "rm -rf 'C:\\Windows'"
+expect_command "a backslash-only target is refused" deny "rm -rf '\\'"
+
+echo "===== nested shells and a changed working directory keep the safeguards ====="
+expect_command "a nested shell variable removal is refused" deny 'sh -c '\''rm -rf "$TARGET"'\'''
+expect_command "a grouped removal is refused" deny '(rm -rf /)'
+expect_command "a brace-group removal is refused" deny '{ rm -rf /; }'
+expect_command "a process-substitution removal is refused" deny 'cat <(rm -rf /)'
+expect_command "an executed substitution removal is refused" deny 'printf "%s\n" "$(rm -rf /)"'
+expect_command "parameter expansion cannot hide an executed removal" deny 'echo "${TARGET:-$(rm -rf /)}"'
+expect_command "arithmetic expansion cannot hide an executed removal" deny 'echo "$(( $(rm -rf /) ))"'
+expect_command "an executed backtick removal is refused" deny 'printf "%s\n" `rm -rf /`'
+expect_command "changing directory before removing it is refused" deny 'cd .. && rm -rf .'
+expect_command "removing the original working directory from its parent is refused" deny 'cd .. && rm -rf project'
+expect_command "an unknown working directory cannot make removal safe" deny 'cd "$TARGET" && rm -rf build'
+expect_command "eval cannot hide a critical working-directory change" deny "eval 'cd /'; rm -rf usr"
+expect_command "pushd cannot hide a critical working-directory change" deny 'pushd /; rm -rf usr'
+mkdir -p "$PROJ/build"
+expect_command "a child removal from a known child directory is allowed" allow 'cd build && rm -rf cache'
+padding="$(printf '%0250d' 0)"
+expect_command "a dangerous target beyond the log preview is still refused" deny "printf '%s' '$padding'; rm -rf /"
+
+echo "===== questions, plans, other tools, and malformed command requests stay human ====="
+expect_human "AskUserQuestion stays with the person" AskUserQuestion '{"questions":[]}'
+expect_human "ExitPlanMode stays with the person" ExitPlanMode '{}'
+expect_human "an MCP interaction stays with the person" mcp__browser__navigate_page '{"url":"https://lawria.ai/app","requiresUserInteraction":true}'
+expect_human "other MCP requests stay with the person" mcp__accounts__navigate_page '{"url":"https://lawria.ai/app"}'
+expect_human "non-command tools stay with the person" Write '{"file_path":"example.txt","content":"hello"}'
+expect_human "a missing Bash command stays human" Bash '{}'
+expect_human "an empty Bash command stays human" Bash '{"command":""}'
+expect_human "a null Bash command stays human" Bash '{"command":null}'
+expect_human "a non-string Bash command stays human" Bash '{"command":["rm","-rf","/"]}'
+expect_human "an attached env script option stays human" Bash '{"command":"env --split-string=\"rm -rf /\""}'
+expect_human "a short attached env script option stays human" Bash '{"command":"env -S\"rm -rf /\""}'
+
+echo "===== organization-managed ask rules keep their human approval ====="
+POLICY_CONFIG="$TMP/policy-config"; mkdir -p "$POLICY_CONFIG"
+printf '%s\n' '{"permissions":{"ask":["Bash(deploy *)"]}}' > "$POLICY_CONFIG/remote-settings.json"
+CLAUDE_CONFIG_DIR="$POLICY_CONFIG" expect_human "a managed Bash ask keeps command prompts human" Bash '{"command":"printf hello"}'
+printf '%s\n' 'not json' > "$POLICY_CONFIG/remote-settings.json"
+CLAUDE_CONFIG_DIR="$POLICY_CONFIG" expect_human "an unreadable managed policy cannot auto-approve" Bash '{"command":"printf hello"}'
+python3 - "$BIN_DIR/lib/permission-policy.py" "$TMP/policy-sources" <<'PY'
+import importlib.util, json, pathlib, plistlib, sys
+spec = importlib.util.spec_from_file_location("permission_policy", sys.argv[1])
+policy = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(policy)
+root = pathlib.Path(sys.argv[2]); config = root / "config"; managed = root / "managed"
+config.mkdir(parents=True); (managed / "managed-settings.d").mkdir(parents=True)
+assert policy.policy_requires_human({"permissions": {"ask": ["Bash(run_in_background:true)"]}})
+assert policy.policy_requires_human({"permissions": {"ask": ["B*"]}})
+assert policy.policy_requires_human({"policyHelper": "never run this"})
+assert not policy.policy_requires_human({"permissions": {"ask": ["Read", "mcp__service"]}})
+paths = [config / "remote-settings.json", managed / "managed-settings.json",
+         managed / "managed-settings.d" / "team.json"]
+for path in paths:
+    path.write_text(json.dumps({"permissions": {"ask": ["Bash(deploy *)"]}}))
+    assert any(policy.policy_requires_human(p) for p in policy.managed_policies(config, managed, []))
+    path.unlink()
+mdm = root / "mdm.plist"
+mdm.write_bytes(plistlib.dumps({"permissions": {"ask": ["Bash"]}}))
+assert any(policy.policy_requires_human(p) for p in policy.managed_policies(config, managed, [mdm]))
+PY
+policy_rc=$?
+check "remote, system, drop-in and MDM sources preserve managed asks" '[ "$policy_rc" = 0 ]'
 
 echo "===== with nobody there, the run's own browser is allowed ====="
 export SUPERVISOR_UNATTENDED=1

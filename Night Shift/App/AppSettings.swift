@@ -428,7 +428,7 @@ nonisolated struct AppSettings: Codable, Equatable {
     var shareLinksEnabled: Bool = true
 
     /// Whether runs work in Bulava's own browser (`AccountBrowser`): a Chrome with its own profile
-    /// he signs in to once, lent to one run at a time, beside a throwaway one for everything that
+    /// he signs in to once, used by several runs at once, each in its own tabs, beside a throwaway one for everything that
     /// needs no sign-in. On, runs no longer reach the Chrome he works in.
     var accountBrowserEnabled: Bool = true
 
@@ -500,6 +500,36 @@ nonisolated struct AppSettings: Codable, Equatable {
         AppSettings(stateDirPath: defaultStateDirPath,
                     orchestratorHomePath: OrchestratorHome.detect()?.path,
                     pollSeconds: 4)
+    }
+
+    /// The Settings screen edits an advanced DRAFT and applies it on Save; everything else — the
+    /// switches, the model pickers, the language menus, the browser section in its own place — is
+    /// live. Save must keep those live values and overwrite only the draft's advanced fields, or a
+    /// change made live and then a Save here would revert it (the browser switch did, once the
+    /// browser moved out of Settings). This is the one list of "live, not the draft's to own", used
+    /// by `SettingsView.merged` and checked by a test so a new live field cannot be forgotten.
+    func applyingAdvancedDraft(_ draft: AppSettings) -> AppSettings {
+        var merged = draft
+        merged.appearance = appearance
+        merged.interfaceLanguage = interfaceLanguage
+        merged.reportLanguage = reportLanguage
+        merged.dictationLanguage = dictationLanguage
+        merged.reportWriter = reportWriter
+        merged.claudeModel = claudeModel
+        merged.claudeEffort = claudeEffort
+        merged.codexModel = codexModel
+        merged.codexEffort = codexEffort
+        merged.claudeStandsInForCodex = claudeStandsInForCodex
+        merged.workersMayDriveApps = workersMayDriveApps
+        merged.accountBrowserEnabled = accountBrowserEnabled
+        merged.autoRepair = autoRepair
+        merged.shareErrorReports = shareErrorReports
+        merged.weeklyStats = weeklyStats
+        merged.shareUsage = shareUsage
+        merged.usageSince = usageSince
+        merged.usageReportedWeek = usageReportedWeek
+        merged.devLearningEnabled = devLearningEnabled
+        return merged
     }
 
     var paths: SupervisorPaths {

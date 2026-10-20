@@ -268,10 +268,12 @@ struct AddProductSheet: View {
         }
         if isAddingToExisting, let target {
             for resource in resources { model.products.addResource(resource, to: target.id) }
+            if let updated = model.products.product(id: target.id) { model.adoptRemovedProducts(into: updated) }
             model.toast = ToastMessage(
                 text: String(format: String(localized: "Connected to %@"), target.name), kind: .success)
         } else {
             let product = model.products.add(name: name, resources: resources, brief: brief)
+            model.adoptRemovedProducts(into: product)
             model.open(product: product.id)
         }
         dismiss()

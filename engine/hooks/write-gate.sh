@@ -55,13 +55,16 @@ if [ -n "$command" ]; then
   case "$command" in
     *codex-decision-answer.json*|*codex-fallback.json*|*codex-decision.json*|*codex-owed.json*|\
     *consult-unanswered.jsonl*|*paused-for-limit.json*|*review-pending*|*review-off*|\
-    *ask-user.json*|*resume-refused*|*decision-key.pem*) _touches_control=1 ;;
+    *ask-user.json*|*resume-refused*|*decision-key.pem*|\
+    *writable-dirs*|*writable-directories*) _touches_control=1 ;;
   esac
   # And the ones whose names are ordinary. `answer.json` and `outcome.json` could plausibly belong
   # to the repository being worked on, so for these the command has to be reaching into the run's
   # own folder before it counts as touching control state at all.
+  # `plain-folder` and the run's saved choices (`run-env`) are among them: a run that wrote either
+  # could call itself a job with no git, whose word the gate takes about how it ended.
   case "$command" in
-    *answer.json*|*outcome.json*)
+    *answer.json*|*outcome.json*|*plain-folder*|*run-env*)
       case "$command" in
         *"$IDIR"*|*.claude/supervisor*) _touches_control=1 ;;
       esac ;;
@@ -98,6 +101,17 @@ fi
 
 broad_fence() {
   case "$abs/" in "$PROJ"/*) exit 0 ;; esac
+  # The product's other folders that the director let this chat change. Without this the policy he
+  # set in the app said "can change" and the gate said no: 13 Oct a dashboard in the product's second
+  # folder could not be edited. The list is the app's, copied into the run's folder at launch, where
+  # the worker cannot add to it; a folder he gave only for reading is never on it.
+  if [ -s "$IDIR/writable-dirs" ]; then
+    local _w
+    while IFS= read -r _w || [ -n "$_w" ]; do
+      [ -n "$_w" ] || continue
+      case "$abs/" in "${_w%/}"/*) exit 0 ;; esac
+    done < "$IDIR/writable-dirs"
+  fi
   case "$abs/" in /tmp/*|/private/tmp/*|/var/folders/*|/private/var/folders/*) exit 0 ;; esac
   [ -n "${TMPDIR:-}" ] && case "$abs/" in "${TMPDIR%/}"/*) exit 0 ;; esac
   deny "запис поза межами репозиторію задачі ($abs) — по інших файлах передай через report-finding, не редагуй напряму"

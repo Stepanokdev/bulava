@@ -311,6 +311,9 @@ nonisolated struct ProductDTO: Codable, Equatable, Sendable {
     var lastWorkedAtMs: Int64?
     var chats: [ChatSummaryDTO]
     var archivedChats: [ChatSummaryDTO]
+    /// Its automations' runs, each a conversation of its own: those waiting for him, then the
+    /// newest, up to `LinkProjection.automationChatsSent`. Nil from a Mac that sends none.
+    var automationChats: [ChatSummaryDTO]? = nil
 }
 
 nonisolated struct ChatSummaryDTO: Codable, Equatable, Sendable {
@@ -322,6 +325,8 @@ nonisolated struct ChatSummaryDTO: Codable, Equatable, Sendable {
     var createdAtMs: Int64
     var updatedAtMs: Int64
     var status: StatusDTO
+    /// The automation whose run this conversation is, by its name. Nil for his own chats.
+    var automation: String? = nil
 }
 
 /// A state as the Mac words it. `code` is for the phone's own logic (icons, sorting) and may be a

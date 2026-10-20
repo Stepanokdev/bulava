@@ -84,11 +84,29 @@ codex_prefer_newest
 # SUPERVISOR_UNATTENDED=1 is an automation's run: nobody is at the computer while it works. The
 # worker's own hooks read it from the environment they inherit (`hooks/permission-request.sh`), and
 # the launch gives it a browser of its own (`automation_mcp_flags`).
+#
+# SUPERVISOR_PLAIN_FOLDER=1 is a run that does a job rather than change code — reads files, uses a
+# service — in a plain folder of its own. It has no git, so its start makes no checkpoint and no
+# branch, and a resume must keep knowing that, which is why it is here and not a flag of `start`.
+# What the review gate believes about it is Bulava's signed record, not this (`plain_folder_run`).
+#
+# SUPERVISOR_ALLOW_TOOLS names the MCP servers such a run may use with nobody there to approve them
+# (`allowed_tool_rules`) — the ones its automation was set up with, and no others.
 _RUN_ENV_VARS="SUPERVISOR_CODEX_EFFORT SUPERVISOR_CODEX_MODEL \
 SUPERVISOR_CLAUDE_EFFORT SUPERVISOR_CLAUDE_MODEL \
 SUPERVISOR_REPORT_LANGUAGE SUPERVISOR_REPORT_WRITER \
 SUPERVISOR_COLLABORATION_MODE SUPERVISOR_CONSULT_TIMEOUT \
-SUPERVISOR_UNATTENDED"
+SUPERVISOR_UNATTENDED SUPERVISOR_PLAIN_FOLDER SUPERVISOR_ALLOW_TOOLS SUPERVISOR_NO_WEB"
+
+# SUPERVISOR_NO_WEB=1 is a run that must not reach the internet through either model: no server-side
+# search, no connectors, no browsing tools, in the worker and in every Codex and Claude call around
+# it. A network firewall cannot do this alone — Codex's search and ChatGPT's connectors travel over
+# the same host as its model traffic, and claude.ai connectors and WebSearch run on Anthropic's side.
+# Codex was measured: with only `web_search="disabled"` it still answered a question about a live
+# web page through the ChatGPT apps connector; with the features below off it could not.
+if [ "${SUPERVISOR_NO_WEB:-}" = 1 ]; then
+  export ENABLE_CLAUDEAI_MCP_SERVERS=false
+fi
 
 run_env_stamp() {
   local v
@@ -107,6 +125,9 @@ run_env_stamp() {
   # the folder permissions it was given go with the old one: a night run that updated at 2 a.m.
   # asked for them again with nobody there. It updates the next time he runs it himself.
   printf 'DISABLE_AUTOUPDATER=1 '
+  # The worker reads this itself, and a tmux session inherits the tmux server's environment rather
+  # than ours, so a run without the web says so on its own launch line.
+  [ "${SUPERVISOR_NO_WEB:-}" = 1 ] && printf 'ENABLE_CLAUDEAI_MCP_SERVERS=false '
   return 0
 }
 
@@ -121,8 +142,8 @@ automation_mcp_flags() {
 }
 
 # Bulava's own browser, when it is on: its service file says so and Bulava is alive. Prints the
-# file. A Chrome on a profile of Bulava's that he signed in to once, lent to one run at a time
-# through a door on the loopback (`AccountBrowser`, `BrowserBroker` in the app).
+# file. A Chrome on a profile of Bulava's that he signed in to once, used by every run that needs it
+# at once, each in its own tabs, through a door on the loopback (`AccountBrowser`, `BrowserBroker`).
 bulava_browser_service() {
   local f="$SUP_STATE/browser/service.json" pid
   [ -s "$f" ] || return 1
@@ -291,6 +312,31 @@ claude_effort_launch_flag() {
 codex_effort_flags() {
   [ -n "${SUPERVISOR_CODEX_EFFORT:-}" ] && printf -- '-c model_reasoning_effort=%s' "$SUPERVISOR_CODEX_EFFORT"
   [ -n "${SUPERVISOR_CODEX_MODEL:-}" ] && printf -- ' -m %s' "$SUPERVISOR_CODEX_MODEL"
+  # Every `codex exec` in the engine passes through here, so a run without the web is enforced at
+  # every call, including the ones that never asked for search and would otherwise inherit it.
+  [ "${SUPERVISOR_NO_WEB:-}" = 1 ] && printf -- ' %s' "$(codex_no_web_flags)"
+  return 0
+}
+
+# What turns the web off for Codex: the search setting under both of its names, and every feature
+# that reaches past this machine — the ChatGPT apps connector (it carries a search service of its
+# own), the browsers, computer use and remote plugins.
+codex_no_web_flags() {
+  printf -- '-c web_search="disabled" -c tools.web_search=false -c features.apps=false'
+  printf -- ' -c features.browser_use=false -c features.browser_use_external=false'
+  printf -- ' -c features.computer_use=false -c features.in_app_browser=false -c features.remote_plugin=false'
+}
+
+# For the calls that are research by design (preflight research and design precedent, the report
+# review, the director's proxy): search on, unless this run is without the web.
+codex_web_search_flags() {
+  if [ "${SUPERVISOR_NO_WEB:-}" = 1 ]; then codex_no_web_flags; else printf -- '-c tools.web_search=true'; fi
+}
+
+# The same for a `claude -p` the engine starts itself. Placed before another flag: the option takes
+# a list and would swallow a positional prompt that followed it.
+claude_no_web_args() {
+  [ "${SUPERVISOR_NO_WEB:-}" = 1 ] && printf -- '--disallowedTools WebSearch,WebFetch'
   return 0
 }
 
@@ -915,10 +961,10 @@ _transcript_since() {   # $1=transcript $2=offset
 
 # What kind of entry the CLI wrote, for the few questions asked of it. A user entry is a prompt or
 # a tool result unless it is one of the CLI's own asides: a meta line, a local slash command and its
-# output, or the note an interruption leaves — an explicit stop is not a question waiting for an
-# answer. On the assistant side, `<synthetic>` is the CLI talking to itself: resuming a session
-# whose last word was a question writes "No response requested." there, which is not the model
-# doing anything.
+# output, the note an interruption leaves — an explicit stop is not a question waiting for an
+# answer — or the summary a compaction leaves. On the assistant side, `<synthetic>` is the CLI
+# talking to itself: resuming a session whose last word was a question writes "No response
+# requested." there, which is not the model doing anything.
 _TRANSCRIPT_KIND='
   def text: (.message.content | if type == "string" then . elif type == "array"
              then (map(select(.type == "text") | .text) | first // "") else "" end);
@@ -927,7 +973,8 @@ _TRANSCRIPT_KIND='
      elif (.message.model // "") == "<synthetic>" then "synthetic"
      else "assistant" end)
   elif .type == "user" then
-    (if (.isMeta // false) then "meta"
+    (if (.isCompactSummary // false) then "compact"
+     elif (.isMeta // false) then "meta"
      elif (text | startswith("[Request interrupted by user")) then "interrupted"
      elif (text | test("^<(command-name|command-message|local-command-|bash-input|bash-stdout|bash-stderr)")) then "local"
      elif ((.message.content | type) == "array" and ((.message.content | map(.type) | index("tool_result")) != null)) then "tool-result"
@@ -965,11 +1012,20 @@ transcript_progress_since() {   # $1=transcript $2=offset
 
 # The last word in the conversation: "<kind> <uuid> <api status or -> <epoch or 0>". `prompt` and
 # `tool-result` are a question nobody has answered; `api-error` is a turn the service ended.
+#
+# A compaction's summary is not a word in the conversation, and it is passed over. Claude Code
+# writes it as a user entry, and it compacts on its own — an idle session too, "before the prompt
+# cache expired". Read as the last word, that summary was a question nobody had answered: on 13 Oct
+# a chat whose answer had been finished for an hour took no message after it, because delivery and
+# the retry queue would not type past a question owed, and a run with a verdict is never restarted.
+# The word before it is where the conversation actually stands — a finished answer, or a question
+# that really is still open and stays recoverable.
 transcript_last_word() {   # $1=transcript
   [ -r "${1:-}" ] || return 1
   tail -n "${SUPERVISOR_TRANSCRIPT_TAIL:-400}" "$1" 2>/dev/null \
     | jq -c -R 'fromjson? // empty' 2>/dev/null \
-    | jq -r -s "map(select((.type == \"user\" or .type == \"assistant\") and ((.isSidechain // false) | not)))
+    | jq -r -s "map(select((.type == \"user\" or .type == \"assistant\") and ((.isSidechain // false) | not)
+                           and (($_TRANSCRIPT_KIND) != \"compact\")))
                 | last // empty
                 | [ ($_TRANSCRIPT_KIND), (.uuid // \"-\"),
                     ((.apiErrorStatus // \"-\") | tostring),
@@ -4160,6 +4216,27 @@ repo_measuring_base() {   # $1=dir → a revision that will still mean the same 
     || printf '%s\n' 4b825dc642cb6eb9a060e54bf8d69288fbee4904
 }
 
+# The folders besides the project that this run may change, as the app decided them: written beside
+# the list of folders the worker is handed (`additional-directories.txt`), and copied into the run's
+# folder so the write gate reads the app's word, not anything the worker could have edited. A missing
+# file — an older app, or a job whose other folders are for reading — leaves no folder writable.
+record_writable_dirs() {   # $1=instance dir
+  local idir="$1" src="" dir
+  [ -n "$idir" ] && [ -d "$idir" ] || return 0
+  [ -n "${SUPERVISOR_EXTRA_DIRS_FILE:-}" ] \
+    && src="$(dirname "$SUPERVISOR_EXTRA_DIRS_FILE")/writable-directories.txt"
+  if [ -z "$src" ] || [ ! -s "$src" ]; then rm -f "$idir/writable-dirs" 2>/dev/null; return 0; fi
+  : > "$idir/writable-dirs.tmp.$$" 2>/dev/null || return 0
+  while IFS= read -r dir || [ -n "$dir" ]; do
+    [ -n "$dir" ] && [ -d "$dir" ] || continue
+    dir="$(canon_path "$dir")"
+    # Never the whole disk or a home folder: a list that said "/" would switch the gate off.
+    case "$dir" in /|"$HOME"|"$(canon_path "$HOME")") continue ;; esac
+    printf '%s\n' "$dir" >> "$idir/writable-dirs.tmp.$$"
+  done < "$src"
+  mv -f "$idir/writable-dirs.tmp.$$" "$idir/writable-dirs"
+}
+
 # Write down every additional repository this run can write in, and the state it starts from.
 #
 # One line per repository: path, base commit, the digest above, and whether it already had
@@ -5345,9 +5422,12 @@ browser_mcp_names() {   # $1=project dir
 # browser he works in is out of reach whatever he has clicked. Claude in Chrome's tools go the
 # same way: they drive his real, signed-in browser too.
 worker_settings_for() {   # $1=instance dir $2=project dir → the settings path to hand the worker
-  local idir="$1" d="$2" base="$SUP_STATE/worker-settings.json" f out unattended=false deny='[]' own=false
+  local idir="$1" d="$2" base="$SUP_STATE/worker-settings.json" f out unattended=false deny='[]' own=false tools
+  local noweb=false
   f="$(mcp_decisions_file "$d")"
   [ "${SUPERVISOR_UNATTENDED:-}" = 1 ] && unattended=true
+  [ "${SUPERVISOR_NO_WEB:-}" = 1 ] && noweb=true
+  tools="$(allowed_tool_rules)"
   # With Bulava's browser on, every run — a chat he is in too — has its two browsers allowed and
   # his own denied: the "Allow remote debugging?" his Chrome asks on every new connection is what
   # kept the work waiting for him.
@@ -5357,24 +5437,94 @@ worker_settings_for() {   # $1=instance dir $2=project dir → the settings path
       | jq -R -s -c 'split("\n") | map(select(length > 0) | "mcp__" + .) | unique')"
     [ -n "$deny" ] || deny='["mcp__chrome-devtools","mcp__claude-in-chrome"]'
   fi
-  if [ ! -s "$f" ] && [ "$unattended" = false ] && [ "$own" = false ]; then
+  if [ ! -s "$f" ] && [ "$unattended" = false ] && [ "$own" = false ] && [ "$tools" = '[]' ] \
+     && [ "$noweb" = false ]; then
     [ -f "$base" ] && printf '%s\n' "$base"
     return 0
   fi
   [ -s "$f" ] || f=/dev/null
   out="$idir/worker-settings.json"
+  # In a proxy-only run (the no-web benchmark, any egress-locked host) the worker process must carry
+  # the egress proxy itself, or Claude cannot reach the API at all: it dies on launch, the pane drops
+  # to a bare shell prompt, and the injector — seeing a prompt — types the brief into a dead shell.
+  # Claude Code applies settings.json `env`, so whatever proxy variables the dispatch environment
+  # holds are carried through to the worker. Empty when the host has none, so normal runs are untouched.
+  local envadd
+  envadd="$(jq -nc '
+      [ {key:"HTTPS_PROXY", value:env.HTTPS_PROXY}, {key:"HTTP_PROXY", value:env.HTTP_PROXY},
+        {key:"ALL_PROXY", value:env.ALL_PROXY}, {key:"NO_PROXY", value:env.NO_PROXY},
+        {key:"ENABLE_CLAUDEAI_MCP_SERVERS", value:env.ENABLE_CLAUDEAI_MCP_SERVERS} ]
+      | map(select(.value != null and .value != "")) | from_entries' 2>/dev/null)"
+  [ -n "$envadd" ] || envadd='{}'
+  # The servers its automation names are allowed whole, after the browsers: a deny above still wins
+  # over them, so naming his own Chrome here gets nobody into it.
   { if [ -f "$base" ]; then cat "$base"; else echo '{}'; fi; } \
-    | jq --slurpfile dec "$f" --argjson unattended "$unattended" --argjson own "$own" --argjson deny "$deny" '
+    | jq --slurpfile dec "$f" --argjson unattended "$unattended" --argjson own "$own" --argjson deny "$deny" \
+         --argjson tools "$tools" --argjson noweb "$noweb" --argjson envadd "$envadd" '
         (($dec[0] // {}) as $d
          | .enabledMcpjsonServers = (((.enabledMcpjsonServers // []) + ($d.enabled // [])) | unique)
          | .disabledMcpjsonServers = (((.disabledMcpjsonServers // []) + ($d.disabled // [])) | unique))
         | if $unattended or $own then
             .permissions.allow = (((.permissions.allow // []) + ["mcp__browser"] + (if $own then ["mcp__accounts"] else [] end)) | unique)
             | .permissions.deny = (((.permissions.deny // []) + $deny) | unique)
-          else . end' \
+          else . end
+        | if ($tools | length) > 0 then
+            .permissions.allow = (((.permissions.allow // []) + $tools) | unique)
+          else . end
+        | if $noweb then
+            .permissions.deny = (((.permissions.deny // []) + ["WebSearch", "WebFetch"]) | unique)
+            | .disableClaudeAiConnectors = true
+          else . end
+        | if ($envadd | length) > 0 then .env = ((.env // {}) + $envadd) else . end' \
       > "$out" 2>/dev/null && { printf '%s\n' "$out"; return 0; }
   [ -f "$base" ] && printf '%s\n' "$base"
   return 0
+}
+
+# The MCP servers an automation's run may use with nobody there to approve a call, as permission
+# rules: `SUPERVISOR_ALLOW_TOOLS`, names separated by commas or spaces. Without this a service the
+# job needs — a task list, a tracker — is refused at its first call (`hooks/permission-gate.sh`), the
+# run ends as blocked, and the automation asks for him every evening.
+#
+# A name is a server as Claude Code names it: a letter or digit, then letters, digits, `-` and `_`.
+# Anything else in the list is dropped, never written into a rule.
+allowed_tool_rules() {
+  { printf '%s\n' "${SUPERVISOR_ALLOW_TOOLS:-}" | tr ', ' '\n\n' | grep -E '^[A-Za-z0-9][A-Za-z0-9_-]*$' || true; } \
+    | jq -R -s -c 'split("\n") | map(select(length > 0) | "mcp__" + .) | unique'
+}
+
+# A run that does a job in a plain folder of its own: no git, so no checkpoint, no branch and no
+# diff — and the review gate takes its word for how it ended.
+#
+# That makes the answer to "is this one of those?" worth faking, so it is not a file the run could
+# write. Bulava signs `plain-folder|<slug>` when it starts a job's run (`plain_folder_file`), as it
+# signs the review being turned off, and only a record that verifies against its key counts. The
+# slug is the folder's own, so a record made for a job's folder says nothing about a copy of code
+# somewhere else, whatever is moved or renamed inside either. Kept beside the instances rather than
+# in one, so a run that is resumed into a fresh instance folder is still what it was.
+plain_folder_file() { printf '%s/plain-folders/%s.json' "$SUP_STATE" "${1:-}"; }
+
+plain_folder_run() {   # $1 = instance dir
+  local idir="${1:-}" slug sig proj
+  [ -n "$idir" ] || return 1
+  slug="$(basename "$idir")"
+  # The run's folder is the one the record names: an instance folder moved under a job's name with
+  # another project in it is not that job.
+  proj="$(cat "$idir/project" 2>/dev/null)"
+  [ -n "$proj" ] && [ "$(slug_for "$(canon_path "$proj")")" = "$slug" ] || return 1
+  # A key swapped since Bulava published it proves nothing: the guard has seen it, and this run's
+  # word is not taken while it stands marked.
+  control_tampered "$idir" && return 1
+  # Bound to the folder still being plain, not only to a past signature. A plain chat signs its
+  # folder; if the director later turns that folder into a git repository, the old record must not go
+  # on licensing a run to skip review there. Any commit on any ref — including history behind an
+  # unborn orphan branch — means this is no longer a plain run, whatever was signed before.
+  if [ -n "$proj" ] && command -v git >/dev/null 2>&1 \
+     && [ -n "$(git -C "$proj" rev-list -n 1 --all 2>/dev/null)" ]; then
+    return 1
+  fi
+  sig="$(jq -r '.signature // empty' "$(plain_folder_file "$slug")" 2>/dev/null)"
+  [ -n "$sig" ] && signature_verifies "plain-folder|$slug" "$sig"
 }
 
 # What the worker is told when it starts on top of the director's uncommitted work.

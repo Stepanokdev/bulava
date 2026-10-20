@@ -62,6 +62,30 @@ else
   ok "mismatched run nonce writes nothing"
 fi
 
+echo "===== a compaction is not a new process ====="
+# Claude Code fires SessionStart again when it compacts ("source":"compact"), in the same process and
+# the same conversation. handshake-ok is when the process started — the time a question is owed from —
+# so a compaction leaves it as it was, while a real start still stamps it.
+said_start() {   # said_start <source>
+  printf '{"cwd":"%s","session_id":"%s","source":"%s"}' "$PROJECT" "$SID" "$1" \
+    | ORCHESTRATOR_RUN_ID="run-A" bash "$HOOK_DIR/safety-check.sh" >/dev/null 2>&1
+}
+printf 'run-A\n' > "$IDIR/run-id"
+: > "$IDIR/handshake-ok"; touch -t 202601010000 "$IDIR/handshake-ok"
+born="$(stat -f %m "$IDIR/handshake-ok")"
+said_start compact
+[ "$(stat -f %m "$IDIR/handshake-ok" 2>/dev/null)" = "$born" ] \
+  && ok "a compaction leaves the process's start time as it was" \
+  || bad "a compaction restamped handshake-ok as though the process had just started"
+rm -f "$IDIR/handshake-ok"
+said_start compact
+[ -e "$IDIR/handshake-ok" ] && bad "a compaction confirmed a start that has not happened" \
+  || ok "nor does a compaction stand in for a start being waited for"
+: > "$IDIR/handshake-ok"; touch -t 202601010000 "$IDIR/handshake-ok"
+said_start resume
+[ "$(stat -f %m "$IDIR/handshake-ok" 2>/dev/null || echo "$born")" != "$born" ] \
+  && ok "a real start still stamps it" || bad "a resume no longer stamps handshake-ok"
+
 echo "===== launching a run clears the previous run's handshake ====="
 # Otherwise the app reads LAST night's session id and shows last night's work as this run's.
 

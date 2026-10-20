@@ -232,6 +232,24 @@
         "archivedChats" : [
 
         ],
+        "automationChats" : [
+          {
+            "archived" : false,
+            "automation" : "Meetings to tasks",
+            "createdAtMs" : 1790000100000,
+            "id" : "C2",
+            "pinned" : false,
+            "productID" : "P1",
+            "status" : {
+              "active" : false,
+              "code" : "failed",
+              "label" : "The run failed",
+              "tone" : "problem"
+            },
+            "title" : "Meetings to tasks · 7 Oct",
+            "updatedAtMs" : 1790000160000
+          }
+        ],
         "brief" : "Meeting recorder",
         "chats" : [
           {
@@ -253,7 +271,7 @@
         "icon" : {
           "kind" : "image",
           "name" : "icon.png",
-          "ref" : "icon:P1",
+          "ref" : "icon:P1:3f2a9c0b1d",
           "size" : 2048
         },
         "id" : "P1",

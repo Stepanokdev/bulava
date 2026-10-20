@@ -39,8 +39,8 @@ struct AccountBrowserSection: View {
             Button { if let pick = confirmTaking { confirmTaking = nil; open(pick, force: true) } } label: { Text("Sign in anyway") }
             Button(role: .cancel) { confirmTaking = nil } label: { Text("Wait") }
         } message: {
-            Text(String(format: String(localized: "“%@” is using it right now. Signing in stops its work in the browser; it can ask again afterwards."),
-                        browser.lease?.run.title ?? ""))
+            Text(String(format: String(localized: "Using it right now: %@. Signing in stops their work in the browser; they can ask again afterwards."),
+                        names))
         }
     }
 
@@ -58,7 +58,7 @@ struct AccountBrowserSection: View {
             case .signingIn:
                 Button { browser.finishSigningIn() } label: { Text("Done signing in") }
                     .buttonStyle(.bulava(.primary))
-            case .working where browser.lease != nil:
+            case .working where !browser.leases.isEmpty:
                 Button { browser.endLease() } label: { Text("Take it back") }
                     .buttonStyle(.bulava(.quiet))
             default:
@@ -76,22 +76,25 @@ struct AccountBrowserSection: View {
         case .signingIn:
             return String(localized: "Signing in. Sign in to the site in the window that opened, then press “Done signing in” or quit that Chrome.")
         case .working:
-            if let lease = browser.lease {
-                let time = DateFormatter.localizedString(from: lease.since, dateStyle: .none, timeStyle: .short)
-                return String(format: String(localized: "“%@” is using it since %@. Other runs wait or work without it."),
-                              lease.run.title, time)
+            if !browser.leases.isEmpty {
+                return String(format: String(localized: "In use now: %@. Each run works in its own tabs, at the same time."), names)
             }
-            return String(localized: "Open and free. The next run that needs a signed-in site gets it.")
+            return String(localized: "Open, and nobody is using it. It closes by itself after a few minutes.")
         case .idle:
             return String(localized: "Ready. It opens when a run first needs a signed-in site; runs that need no sign-in get a throwaway browser of their own.")
         }
+    }
+
+    /// The runs using it, by the names he knows them by.
+    private var names: String {
+        ListFormatter.localizedString(byJoining: browser.leases.map { "“\($0.run.title)”" })
     }
 
     private var statusColor: Color {
         guard browser.enabled else { return Palette.textFaint }
         switch browser.mode {
         case .signingIn: return Palette.orange
-        case .working: return browser.lease != nil ? Palette.accent : Palette.green
+        case .working: return browser.leases.isEmpty ? Palette.green : Palette.accent
         case .idle: return Palette.green
         }
     }
@@ -102,12 +105,18 @@ struct AccountBrowserSection: View {
                 Text(site.host)
                     .font(Typo.panelRow)
                     .foregroundStyle(Palette.text)
-                Text(site.signedInAt.map {
-                    String(format: String(localized: "Signed in %@"),
-                           DateFormatter.localizedString(from: $0, dateStyle: .medium, timeStyle: .none))
-                } ?? String(localized: "Not signed in yet"))
-                    .font(Typo.panelMeta)
-                    .foregroundStyle(Palette.textFaint)
+                if site.signedOut {
+                    Text("The sign-in has run out. Sign in again.")
+                        .font(Typo.panelMeta)
+                        .foregroundStyle(Palette.orange)
+                } else {
+                    Text(site.signedInAt.map {
+                        String(format: String(localized: "Signed in %@"),
+                               DateFormatter.localizedString(from: $0, dateStyle: .medium, timeStyle: .none))
+                    } ?? String(localized: "Not signed in yet"))
+                        .font(Typo.panelMeta)
+                        .foregroundStyle(Palette.textFaint)
+                }
             }
             Spacer(minLength: 8)
             Toggle(isOn: Binding(get: { site.withoutMe }, set: { browser.setWithoutMe(site.id, $0) })) {
@@ -146,6 +155,20 @@ struct AccountBrowserSection: View {
                 .font(Typo.panelMeta)
                 .foregroundStyle(Palette.textFaint)
                 .fixedSize(horizontal: false, vertical: true)
+            if browser.sites.contains(where: { $0.signedInAt != nil }) {
+                HStack(spacing: 8) {
+                    Text("Every few hours Bulava opens these sites in the background, without a window: that keeps a sign-in alive, and shows here when one has run out.")
+                        .font(Typo.panelMeta)
+                        .foregroundStyle(Palette.textFaint)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button { Task { await browser.checkSignIns(force: true) } } label: {
+                        Text(browser.checkingSignIns ? "Checking…" : "Check now")
+                    }
+                    .buttonStyle(.bulava(.quiet))
+                    .disabled(browser.checkingSignIns || browser.mode == .signingIn)
+                }
+            }
         }
     }
 
@@ -160,7 +183,7 @@ struct AccountBrowserSection: View {
     }
 
     private func open(_ site: BrowserSite?, force: Bool = false) {
-        if browser.lease != nil, !force { confirmTaking = .some(site); return }
+        if !browser.leases.isEmpty, !force { confirmTaking = .some(site); return }
         Task { await browser.signIn(site) }
     }
 }

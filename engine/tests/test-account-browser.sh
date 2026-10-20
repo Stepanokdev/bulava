@@ -88,11 +88,17 @@ fake_bulava() {
     done ) &
   FAKE=$!
 }
-fake_bulava '{"ok":true,"state":"busy","holder":"Nightly","since":1791300000,"sites":[{"host":"bank.example","withoutMe":false}]}'
+# Several runs use it at once, each in its own tabs: another run using it is said, never "busy".
+fake_bulava '{"ok":true,"state":"free","others":["Nightly"],"sites":[{"host":"bank.example","withoutMe":false},{"host":"play.google.com","withoutMe":true,"signedOut":true}]}'
 out="$("$CHAT/browser" status 2>&1)"; rc=$?
-check "busy: who has it" '[ "$rc" = 0 ] && printf "%s" "$out" | grep -q "^busy: Nightly has it since"'
+check "free, with who else uses it" '[ "$rc" = 0 ] && printf "%s" "$out" | grep -q "^free — in use by Nightly, in their own tabs"'
 check "and the sites, with the ones kept for him" 'printf "%s" "$out" | grep -q "bank.example (only with him)"'
+check "and a sign-in that ran out" 'printf "%s" "$out" | grep -q "play.google.com (his sign-in ran out"'
 check "the request carries the run's token" '[ "$(jq -r .token "$TMP/last-request.json")" = "$token" ] && [ "$(jq -r .op "$TMP/last-request.json")" = status ]'
+kill "$FAKE" 2>/dev/null; wait "$FAKE" 2>/dev/null; FAKE=""
+fake_bulava '{"ok":true,"state":"yours","tabs":2,"others":[]}'
+out="$("$CHAT/browser" status 2>&1)"
+check "yours, with how many tabs" 'printf "%s" "$out" | grep -q "^yours: 2 tab(s) of yours$"'
 kill "$FAKE" 2>/dev/null; wait "$FAKE" 2>/dev/null; FAKE=""
 fake_bulava '{"ok":true,"released":true}'
 check "release" '[ "$("$CHAT/browser" release)" = released ]'

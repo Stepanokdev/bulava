@@ -1096,6 +1096,34 @@ actor SupervisorClient {
         return r.stdout.contains("yes")
     }
 
+    /// Commands a chat's Claude left running in the background in this session — a benchmark, a
+    /// server, a long build — counted as the shells Claude Code starts for its Bash tool
+    /// (`zsh -c source …/.claude/shell-snapshots/…`) anywhere under the session's pane. A chat at
+    /// rest with one of these still has work under way: 13 Oct a second chat took the folder from a
+    /// chat that looked finished, and the benchmark pilot running behind it died with its session.
+    func backgroundCommandCount(session: String) async -> Int {
+        guard !session.isEmpty else { return 0 }
+        let script = """
+        pane="$(tmux list-panes -t "=$1" -F '#{pane_pid}' 2>/dev/null | head -1)"
+        [ -n "$pane" ] || { echo 0; exit 0; }
+        ps -axo pid=,ppid=,command= | awk -v root="$pane" '
+          { pid=$1; ppid[pid]=$2; $1=""; $2=""; cmd[pid]=$0 }
+          END {
+            n=0
+            for (p in ppid) {
+              if (index(cmd[p], "/shell-snapshots/snapshot-") == 0) continue
+              if (index(cmd[ppid[p]], "/shell-snapshots/snapshot-") > 0) continue
+              q=p; d=0
+              while ((q in ppid) && q != root && d < 30) { q=ppid[q]; d++ }
+              if (q == root) n++
+            }
+            print n
+          }'
+        """
+        let r = await Shell.run(script, args: [session], timeout: 10)
+        return Int(r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+    }
+
     func killSession(_ name: String) async -> CommandResult {
         guard !name.isEmpty else { return CommandResult(stdout: "", stderr: "no session", exitCode: -1, launched: false) }
         return await Shell.run("tmux kill-session -t \"$1\" 2>/dev/null || echo ok", args: [name], timeout: 10)

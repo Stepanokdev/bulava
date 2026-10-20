@@ -78,7 +78,9 @@ struct AutomationRunRow: View {
             Button("Discard changes", role: .destructive) { discard() }
             Button("Keep", role: .cancel) {}
         } message: {
-            Text("The changes and their branch are deleted. Your folder is not touched.")
+            Text(copy?.isLive == true
+                 ? "The changes and their branch are deleted. Your folder is not touched."
+                 : "The run is marked thrown away, and its branch is removed if it is still in your repo. Your folder is not touched.")
         }
     }
 
@@ -95,7 +97,7 @@ struct AutomationRunRow: View {
     }
 
     private enum Action: Hashable {
-        case start, skip, open, stop, changes, showCopy, merge, discard, report, writingReport, evidence
+        case start, skip, open, stop, changes, showCopy, merge, markHandled, discard, report, writingReport, evidence
     }
 
     private var writingReport: Bool {
@@ -115,9 +117,15 @@ struct AutomationRunRow: View {
             let report: [Action] = model.reportPage(for: run) != nil ? [.report]
                 : writingReport ? [.writingReport]
                 : model.evidenceOnlyFolder(for: run) != nil ? [.evidence] : []
-            if run.result == .changes, run.handoff == .waiting, copy?.isLive == true {
+            if run.result == .changes, run.handoff == .waiting {
                 if model.runIsWorking(run) != nil { return [.open] }
-                return [.changes, .merge] + report + [.showCopy, .open, .discard]
+                if copy?.isLive == true {
+                    return [.changes, .merge] + report + [.showCopy, .open, .discard]
+                }
+                // The copy is gone — merged or cleaned up outside Bulava. He can still say it is
+                // handled, or throw its branch away; neither needs the folder. This is what clears a
+                // run that used to strand here with no button at all.
+                return [.markHandled] + report + [.open, .discard]
             }
             if run.result == .needsYou { return [.open, .stop] }
             return report + (run.chatID == nil ? [] : [.open])
@@ -149,6 +157,10 @@ struct AutomationRunRow: View {
         case .merge:
             Button(String(format: String(localized: "Merge into %@"), copy?.baseRef ?? "")) { merge() }
                 .buttonStyle(.bulava(.primary))
+        case .markHandled:
+            Button("Done") { markHandled() }
+                .buttonStyle(.bulava(.primary))
+                .help(Text("Its copy is gone, so there is nothing to merge here. This marks the run as dealt with — use it when you have already merged it by hand — so the next run is no longer held back."))
         case .discard:
             Button("Discard changes") { confirmingDiscard = true }.buttonStyle(.bulava(.danger))
         case .report:
@@ -186,6 +198,14 @@ struct AutomationRunRow: View {
         working = true
         Task {
             problem = await model.discardRun(run.id)
+            working = false
+        }
+    }
+
+    private func markHandled() {
+        working = true
+        Task {
+            problem = await model.markRunHandled(run.id)
             working = false
         }
     }

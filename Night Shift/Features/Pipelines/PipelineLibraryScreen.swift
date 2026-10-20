@@ -87,10 +87,13 @@ struct PipelineLibraryScreen: View {
                     .buttonStyle(.bulava(.primary))
                     .keyboardShortcut("n", modifiers: [.command, .option, .shift])
             }
+            // Wraps in the width it is given, and no more. `fixedSize(vertical:)` here made the line
+            // as tall as it would be one word per line when the window asked how small it could be,
+            // and the window, unable to be that tall, slid everything up under its title bar.
             Text("What a message goes through before and after the worker has it. The built-in ones cannot be changed: duplicate one to make it yours.")
                 .font(Typo.caption)
                 .foregroundStyle(Palette.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(3)
         }
         .padding(.horizontal, 18)
         .padding(.top, 16)
@@ -234,9 +237,11 @@ private struct PipelineRow: View {
 
     private var meta: String {
         if let broken = summary.broken { return String(localized: "Cannot be read: \(broken)") }
-        var parts = [String(localized: "\(summary.nodes ?? 0) steps")]
-        if problemCount > 0 { parts.append(String(localized: "\(problemCount) problems to fix before it can run")) }
-        if uses > 0 { parts.append(String(localized: "used in \(uses) places")) }
+        // Counted with the app's own plural rules: `String(localized:)` with a number left
+        // "12 steps" in English on a Ukrainian screen.
+        var parts = [Fmt.count("%lld steps", summary.nodes ?? 0)]
+        if problemCount > 0 { parts.append(Fmt.count("%lld problems to fix before it can run", problemCount)) }
+        if uses > 0 { parts.append(Fmt.count("used in %lld places", uses)) }
         return parts.joined(separator: " · ")
     }
 

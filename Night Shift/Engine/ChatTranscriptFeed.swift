@@ -67,13 +67,24 @@ final class ChatTranscriptFeed {
         var pendingAsks: Set<String> = []
 
         var split = false
+        /// When he answered a screen of Claude's own in this chat — a permission dialog, a choice
+        /// (`ChatSessionBinding.screenAnswers`). The transcript records no such answer as a prompt
+        /// of his, so the work after it kept going into the turn ABOVE his "Yes": that entry changed
+        /// height every second as steps ran and finished, and the whole chat jumped with it.
+        var screenAnswers: [Date] = []
+        /// When the current turn last began a step, or began at all: an answer after this and before
+        /// the next step is what splits the turn there. Decided from the transcript's own times, so
+        /// a fold from the start after a restart splits it in the same places.
+        var lastWorkAt: Date?
     }
 
     func drain() async {
         guard !folding else { return }
         folding = true
         defer { folding = false }
-        let (next, changed) = await Self.foldOffMain(transcript: transcript, from: reading)
+        var from = reading
+        from.screenAnswers = store.chat(id: chatID)?.session?.screenAnswers ?? []
+        let (next, changed) = await Self.foldOffMain(transcript: transcript, from: from)
         // Replaced while it was reading: what it read belongs to a transcript nobody follows now.
         guard !stopped else { return }
         reading = next
@@ -105,6 +116,7 @@ final class ChatTranscriptFeed {
                         state.current = state.turns.indices.last
                     }
                     state.split = false
+                    state.lastWorkAt = prompt.at
                     continue
                 }
                 state.pendingAsks.formUnion(askedQuestionIDs(in: line))
@@ -122,6 +134,17 @@ final class ChatTranscriptFeed {
                 let opensWork = events.contains {
                     if case .toolResult = $0 { return false }
                     return true
+                }
+                // The result of the step he just allowed still belongs to that step; the first new
+                // step written after his answer is where the turn below it begins.
+                if opensWork, let at = timestamp(in: line) {
+                    let since = state.lastWorkAt
+                    if state.screenAnswers.contains(where: { answer in
+                        answer <= at && (since.map { answer > $0 } ?? false)
+                    }) {
+                        state.split = true
+                    }
+                    state.lastWorkAt = at
                 }
                 if state.split, opensWork {
                     let previous = state.turns[index]
@@ -155,7 +178,11 @@ final class ChatTranscriptFeed {
         guard let handle = try? FileHandle(forReadingFrom: transcript) else { return (state, false) }
         defer { try? handle.close() }
         let size = (try? FileManager.default.attributesOfItem(atPath: transcript.path)[.size]) as? UInt64 ?? 0
-        if size < state.offset { state = Reading() }
+        if size < state.offset {
+            let answers = state.screenAnswers
+            state = Reading()
+            state.screenAnswers = answers
+        }
         if size > state.offset {
             try? handle.seek(toOffset: state.offset)
             while let chunk = try? handle.read(upToCount: 1 << 20), !chunk.isEmpty {

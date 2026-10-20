@@ -40,6 +40,7 @@
     <string name="drawer_search">Search chats</string>
     <string name="drawer_new_chat">New chat</string>
     <string name="drawer_archived">Archived</string>
+    <string name="drawer_automations">Automations</string>
     <string name="drawer_settings">Settings</string>
     <string name="drawer_no_products">No projects yet. Projects are added on the Mac, where the folders are.</string>
     <string name="drawer_no_chats">No chats yet</string>

@@ -132,7 +132,8 @@ struct WeekFaceView: View {
     private func header(_ s: WeekSnapshot, _ title: String, trailing: String? = nil) -> FaceHeader {
         FaceHeader(title: title, trailing: trailing ?? (size == .small ? "" : s.period),
                    time: size == .small ? nil : s.generatedAt, staleSince: stale ? s.generatedAt : nil,
-                   staleWords: size == .small ? nil : (place == .mac ? s.words.appClosed : s.words.macAway))
+                   staleWords: size == .small ? nil : (place == .mac ? s.words.appClosed : s.words.macAway),
+                   asOf: now)
     }
 }
 
@@ -142,6 +143,18 @@ struct FaceHeader: View {
     var time: Date?
     var staleSince: Date?
     var staleWords: String?
+    /// The moment this face is shown at: a widget timeline's own entry date.
+    var asOf: Date = .now
+
+    /// How old the numbers are at the moment the face is shown — not at the moment it was drawn.
+    /// WidgetKit draws a timeline's later entries in advance: the stale entry was drawn six seconds
+    /// after the numbers were written, and three hours later still said "6 sec. ago".
+    nonisolated static func age(of date: Date, at now: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        formatter.dateTimeStyle = .numeric
+        return formatter.localizedString(for: date, relativeTo: now)
+    }
 
     var body: some View {
         HStack(spacing: 5) {
@@ -156,7 +169,7 @@ struct FaceHeader: View {
                 HStack(spacing: 3) {
                     Image(systemName: "clock")
                     if let staleWords { Text(verbatim: staleWords + " ·") }
-                    Text(staleSince, format: .relative(presentation: .numeric, unitsStyle: .abbreviated))
+                    Text(verbatim: Self.age(of: staleSince, at: asOf))
                 }
                 .font(.system(size: 10.5, weight: .semibold))
                 .foregroundStyle(WeekPalette.warn)

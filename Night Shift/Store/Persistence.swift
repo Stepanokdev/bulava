@@ -68,6 +68,8 @@ nonisolated final class CoalescedWrites: @unchecked Sendable {
     private let lock = NSLock()
     private var pending: [URL: @Sendable () -> Data?] = [:]
     private var fileLocks: [URL: NSLock] = [:]
+    /// How many times the write waiting for a file has already failed.
+    private var retries: [URL: Int] = [:]
     private let queue = DispatchQueue(label: "bulava.persistence", qos: .utility)
 
     private func fileLock(_ url: URL) -> NSLock {
@@ -94,9 +96,10 @@ nonisolated final class CoalescedWrites: @unchecked Sendable {
         file.lock(); defer { file.unlock() }
         lock.lock()
         let job = pending.removeValue(forKey: url)
+        let attempt = retries.removeValue(forKey: url) ?? 0
         lock.unlock()
         guard let job else { return }
-        if !write(job, to: url) { requeue(job, for: url) }
+        _ = write(job, to: url, attempt: attempt)
     }
 
     /// A synchronous save. It supersedes whatever was waiting, and holds the file's lock for the
@@ -121,7 +124,7 @@ nonisolated final class CoalescedWrites: @unchecked Sendable {
         for url in urls { flush(url) }
     }
 
-    private func write(_ job: @Sendable () -> Data?, to url: URL) -> Bool {
+    private func write(_ job: @Sendable () -> Data?, to url: URL, attempt: Int = 0) -> Bool {
         guard let data = job() else {
             // The same value will not encode any better a second time; only a failed write is
             // worth trying again.
@@ -132,20 +135,30 @@ nonisolated final class CoalescedWrites: @unchecked Sendable {
             try data.write(to: url, options: .atomic)
             return true
         } catch {
+            // The folder is gone: there is nobody left to save for, and trying again every two
+            // seconds for ever — encoding tens of megabytes each time — is what it did. Seen in the
+            // test suite as twelve thousand failed saves, enough to starve the tests running beside it.
+            guard FileManager.default.fileExists(atPath: url.deletingLastPathComponent().path) else {
+                Log.lifecycle.error("not saving \(url.lastPathComponent, privacy: .public): its folder is gone")
+                return true
+            }
             Log.lifecycle.error("could not save \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            return false
+            // Tried again with the bytes already made, not by encoding the value once more.
+            requeue({ data }, for: url, attempt: attempt + 1)
+            return true
         }
     }
 
     /// A write that failed is tried again later — unless something newer is already waiting,
-    /// which will carry the same history and more.
-    private func requeue(_ job: @escaping @Sendable () -> Data?, for url: URL) {
+    /// which will carry the same history and more — each time a little later, up to a minute.
+    private func requeue(_ job: @escaping @Sendable () -> Data?, for url: URL, attempt: Int) {
         lock.lock()
         let newer = pending[url] != nil
-        if !newer { pending[url] = job }
+        if !newer { pending[url] = job; retries[url] = attempt }
         lock.unlock()
         guard !newer else { return }
-        queue.asyncAfter(deadline: .now() + 2) { [self] in flush(url) }
+        let wait = min(60, 2 * pow(2, Double(max(0, attempt - 1))))
+        queue.asyncAfter(deadline: .now() + wait) { [self] in flush(url) }
     }
 }
 

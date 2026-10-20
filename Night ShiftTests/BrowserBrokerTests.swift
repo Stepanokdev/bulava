@@ -3,40 +3,59 @@ import Network
 @testable import Bulava
 
 /// The door to Bulava's browser, against a browser that answers like Chrome and a client that
-/// connects like chrome-devtools-mcp: who gets in, one run at a time, what a run leaves behind,
-/// and what a run without the director cannot do there.
+/// connects like chrome-devtools-mcp: who gets in, several runs at once, what a run leaves behind,
+/// and what a run without the director cannot do there. What each run sees of the others' tabs is
+/// proved against a real Chrome further down.
 nonisolated final class BrowserBrokerTests: XCTestCase {
 
-    /// Answers every command `{"id":N,"result":{}}` — an attach with a session id — and records
-    /// what it was sent.
+    /// Answers like Chrome does for what the door asks of it — a browser session, a new tab, an
+    /// attach — echoing the session a command came on, and records what it was sent.
     final class FakeBrowser: CDPTransport, @unchecked Sendable {
         private let lock = NSLock()
         private var received: [[String: Any]] = []
         private var deliver: (@Sendable (Data) -> Void)?
-        private var sessions = 0
+        private var counter = 0
+        private(set) var browserSessions: [String] = []
+        private(set) var created: [String] = []
         var isRunning: Bool { true }
 
         func send(_ message: Data) {
             guard let object = (try? JSONSerialization.jsonObject(with: message)) as? [String: Any],
                   let id = object["id"] as? Int else { return }
             let method = object["method"] as? String ?? ""
-            let reply: String = lock.withLock {
+            let session = object["sessionId"] as? String
+            let result: [String: Any] = lock.withLock {
                 received.append(object)
-                if method == "Target.attachToTarget" { sessions += 1; return #"{"id":\#(id),"result":{"sessionId":"S-\#(sessions)"}}"# }
-                if method == "Target.getTargetInfo" {
-                    let target = (object["params"] as? [String: Any])?["targetId"] as? String ?? "T1"
-                    let url = target == "BANK" ? "https://online.bank.example/" : "https://console.example/"
-                    return #"{"id":\#(id),"result":{"targetInfo":{"targetId":"\#(target)","type":"page","url":"\#(url)"}}}"#
+                counter += 1
+                switch method {
+                case "Target.attachToBrowserTarget":
+                    let made = "BS-\(counter)"; browserSessions.append(made); return ["sessionId": made]
+                case "Target.createTarget":
+                    let made = "T-\(counter)"; created.append(made); return ["targetId": made]
+                case "Target.attachToTarget": return ["sessionId": "S-\(counter)"]
+                case "Target.getTargets":
+                    return ["targetInfos": created.map { ["targetId": $0, "type": "page", "url": "about:blank"] }]
+                case "Browser.getVersion": return ["product": "Chrome/Fake"]
+                default: return [:]
                 }
-                return #"{"id":\#(id),"result":{}}"#
             }
-            deliver?(Data(reply.utf8))
+            var reply: [String: Any] = ["id": id, "result": result]
+            if let session { reply["sessionId"] = session }
+            if let data = try? JSONSerialization.data(withJSONObject: reply) { deliver?(data) }
         }
         func listen(onMessage: @escaping @Sendable (Data) -> Void, onExit: @escaping @Sendable () -> Void) {
             lock.withLock { deliver = onMessage }
         }
         func terminate() {}
-        func emit(_ event: String) { deliver?(Data(event.utf8)) }
+        func emit(_ event: [String: Any]) {
+            if let data = try? JSONSerialization.data(withJSONObject: event) { deliver?(data) }
+        }
+        /// Bulava's watcher hears a tab change address — the first browser session is the watcher's.
+        func navigated(_ target: String, to url: String) {
+            guard let watcher = lock.withLock({ browserSessions.first }) else { return }
+            emit(["method": "Target.targetInfoChanged", "sessionId": watcher,
+                  "params": ["targetInfo": ["targetId": target, "type": "page", "url": url]]])
+        }
         var commands: [[String: Any]] { lock.withLock { received } }
         func methods() -> [String] { commands.compactMap { $0["method"] as? String } }
     }
@@ -119,7 +138,8 @@ nonisolated final class BrowserBrokerTests: XCTestCase {
         let run = Client(port: port, token: attended.token)
         let answer = try await run.call(1, "Browser.getVersion")
         XCTAssertNotNil(answer["result"])
-        XCTAssertEqual(broker.currentLease?.run.slug, "chat-run")
+        XCTAssertNil(answer["sessionId"], "a command the run sent at its root is answered at its root")
+        XCTAssertEqual(broker.leases.map(\.run.slug), ["chat-run"])
         run.close()
     }
 
@@ -136,55 +156,116 @@ nonisolated final class BrowserBrokerTests: XCTestCase {
         XCTAssertFalse(listening.contains("*:\(port)"), "and not to every address: \(listening)")
     }
 
-    func testOneRunAtATimeAndTheNextGetsItWhenTheFirstLetsGo() async throws {
+    /// 13 Oct: a second chat that needed App Store Connect was turned away (`423`) while another
+    /// chat held the browser. Now both are in, at once, each on a browser session of its own.
+    func testTwoRunsUseItAtOnceEachOnItsOwnSession() async throws {
         let first = Client(port: port, token: attended.token)
         _ = try await first.call(1, "Browser.getVersion")
-        let second = await Client(port: port, token: night.token).refusedStatus()
-        XCTAssertEqual(second, 423, "busy, said at once — not queued behind a socket")
-        XCTAssertTrue(broker.release(token: attended.token), "the holder lets go ($IDIR/browser release)")
-        try await settle()
-        let next = Client(port: port, token: night.token)
-        _ = try await next.call(1, "Browser.getVersion")
-        XCTAssertEqual(broker.currentLease?.run.slug, "night-run")
-        next.close()
+        let second = Client(port: port, token: night.token)
+        let answer = try await second.call(1, "Browser.getVersion")
+        XCTAssertNotNil(answer["result"], "the second run is not turned away")
+        XCTAssertEqual(Set(broker.leases.map(\.run.slug)), ["chat-run", "night-run"])
+        let rooted = fake.commands.filter { $0["method"] as? String == "Browser.getVersion" }.compactMap { $0["sessionId"] as? String }
+        XCTAssertEqual(rooted.count, 2)
+        XCTAssertEqual(Set(rooted).count, 2, "each run's root commands go on its own browser session")
+        let ids = fake.commands.filter { $0["method"] as? String == "Browser.getVersion" }.compactMap { $0["id"] as? Int }
+        XCTAssertEqual(Set(ids).count, 2, "upstream, the two are different commands, though both clients said id 1")
+        first.close(); second.close()
     }
 
-    func testTheSameRunReconnectingKeepsItsLease() async throws {
+    func testEachRunStartsWithABlankTabOfItsOwn() async throws {
+        let run = Client(port: port, token: attended.token)
+        _ = try await run.call(1, "Browser.getVersion")
+        try await settle(0.2)
+        XCTAssertEqual(broker.tabs(of: attended.token).count, 1, "chrome-devtools-mcp has a page to work in from the start")
+        let list = try await run.call(2, "Target.getTargets")
+        let ids = ((list["result"] as? [String: Any])?["targetInfos"] as? [[String: Any]] ?? []).compactMap { $0["targetId"] as? String }
+        XCTAssertEqual(ids, broker.tabs(of: attended.token), "and lists only its own")
+        run.close()
+    }
+
+    func testARunCannotNameAnotherRunsTabOrSession() async throws {
         let first = Client(port: port, token: attended.token)
         _ = try await first.call(1, "Browser.getVersion")
+        let second = Client(port: port, token: night.token)
+        _ = try await second.call(1, "Browser.getVersion")
+        try await settle(0.2)
+        let theirs = try XCTUnwrap(broker.tabs(of: attended.token).first)
+        for (n, method) in ["Target.attachToTarget", "Target.closeTarget", "Target.activateTarget", "Target.getTargetInfo"].enumerated() {
+            let answer = try await second.call(10 + n, method, ["targetId": theirs, "flatten": true])
+            XCTAssertNotNil(answer["error"], "\(method) on another run's tab")
+        }
+        let mine = try await first.call(2, "Target.attachToTarget", ["targetId": theirs, "flatten": true])
+        let session = try XCTUnwrap((mine["result"] as? [String: Any])?["sessionId"] as? String)
+        let foreign = try await second.call(20, "Runtime.evaluate", ["expression": "1"], session: session)
+        XCTAssertNotNil(foreign["error"], "a session of another run's is not this run's to use")
+        let own = try await first.call(3, "Runtime.evaluate", ["expression": "1"], session: session)
+        XCTAssertNil(own["error"], "its own session is")
+        XCTAssertFalse(fake.commands.contains { $0["method"] as? String == "Target.closeTarget"
+            && ($0["params"] as? [String: Any])?["targetId"] as? String == theirs }, "nothing of another run's reached the browser")
+        first.close(); second.close()
+    }
+
+    func testTheSameRunReconnectingKeepsItsTabs() async throws {
+        let first = Client(port: port, token: attended.token)
+        _ = try await first.call(1, "Browser.getVersion")
+        try await settle(0.2)
+        let tabs = broker.tabs(of: attended.token)
         first.close()
-        // chrome-devtools-mcp comes straight back; another run trying in between is turned away.
-        let between = await Client(port: port, token: night.token).refusedStatus()
-        XCTAssertEqual(between, 423)
+        // chrome-devtools-mcp comes straight back, within the grace.
         let again = Client(port: port, token: attended.token)
         _ = try await again.call(2, "Browser.getVersion")
-        XCTAssertEqual(broker.currentLease?.run.slug, "chat-run")
+        try await settle(0.4)
+        XCTAssertEqual(broker.tabs(of: attended.token), tabs, "its tabs are still its own")
+        XCTAssertFalse(fake.methods().contains("Target.closeTarget"), "and nothing was closed")
         again.close()
         try await settle(0.6)
-        XCTAssertNil(broker.currentLease, "and once it is really gone, the lease is free")
+        XCTAssertTrue(broker.leases.isEmpty, "once it is really gone, it is not using the browser")
+        let closed = fake.commands.filter { $0["method"] as? String == "Target.closeTarget" }
+            .compactMap { ($0["params"] as? [String: Any])?["targetId"] as? String }
+        XCTAssertEqual(Set(closed), Set(tabs), "and the tabs it opened are closed")
     }
 
-    func testAnEndedRunAndAnIdleOneLoseIt() async throws {
+    func testReleaseClosesOnlyThatRunsTabs() async throws {
+        let first = Client(port: port, token: attended.token)
+        _ = try await first.call(1, "Browser.getVersion")
+        let second = Client(port: port, token: night.token)
+        _ = try await second.call(1, "Browser.getVersion")
+        try await settle(0.2)
+        let mine = broker.tabs(of: attended.token), theirs = broker.tabs(of: night.token)
+        XCTAssertTrue(broker.release(token: attended.token), "$IDIR/browser release")
+        try await settle(0.2)
+        let closed = Set(fake.commands.filter { $0["method"] as? String == "Target.closeTarget" }
+            .compactMap { ($0["params"] as? [String: Any])?["targetId"] as? String })
+        XCTAssertEqual(closed, Set(mine))
+        XCTAssertTrue(closed.isDisjoint(with: theirs), "the other run's tabs are left alone")
+        let still = try await second.call(2, "Browser.getVersion")
+        XCTAssertNotNil(still["result"], "and the other run goes on")
+        XCTAssertFalse(broker.release(token: attended.token), "nothing left to release")
+        second.close()
+    }
+
+    func testAnEndedRunLosesItAndAnUnusedBrowserIsQuit() async throws {
         let run = Client(port: port, token: attended.token)
         _ = try await run.call(1, "Browser.getVersion")
         broker.setRuns([night])
         try await settle()
-        XCTAssertNil(broker.currentLease, "the run ended: its lease with it")
+        XCTAssertTrue(broker.leases.isEmpty, "the run ended: it is no longer using the browser")
         do { _ = try await run.call(2, "Browser.getVersion"); XCTFail("the socket of an ended run still works") } catch {}
-
-        let idle = Client(port: port, token: night.token)
-        _ = try await idle.call(1, "Browser.getVersion")
+        XCTAssertTrue(broker.browserRunning)
+        broker.checkIdle(now: Date().addingTimeInterval(broker.idleLimit - 10))
+        XCTAssertTrue(broker.browserRunning, "not yet")
         broker.checkIdle(now: Date().addingTimeInterval(broker.idleLimit + 1))
-        try await settle()
-        XCTAssertNil(broker.currentLease, "a run that went quiet lets the next one in")
-        idle.close()
+        XCTAssertFalse(broker.browserRunning, "nobody used it for a while: it is quit, not left open")
     }
 
     func testHeSigningInTakesItFromEveryRun() async throws {
         let run = Client(port: port, token: attended.token)
         _ = try await run.call(1, "Browser.getVersion")
+        let other = Client(port: port, token: night.token)
+        _ = try await other.call(1, "Browser.getVersion")
         broker.setUnavailable("signing in")
-        XCTAssertNil(broker.currentLease)
+        XCTAssertTrue(broker.leases.isEmpty)
         let refused = await Client(port: port, token: attended.token).refusedStatus()
         XCTAssertEqual(refused, 503)
         broker.setUnavailable(nil)
@@ -195,50 +276,24 @@ nonisolated final class BrowserBrokerTests: XCTestCase {
 
     // MARK: What passes
 
-    func testEachClientKeepsItsOwnIdsAndTheBrowserNeverSeesTwoAlike() async throws {
-        let first = Client(port: port, token: attended.token)
-        let a = try await first.call(1, "Browser.getVersion")
-        XCTAssertEqual(a["id"] as? Int, 1)
-        XCTAssertTrue(broker.release(token: attended.token))
-        try await settle()
-        let second = Client(port: port, token: night.token)
-        let b = try await second.call(1, "Browser.getVersion")
-        XCTAssertEqual(b["id"] as? Int, 1, "the second client hears its own id back")
-        let ids = fake.commands.filter { $0["method"] as? String == "Browser.getVersion" }.compactMap { $0["id"] as? Int }
-        XCTAssertEqual(ids.count, 2)
-        XCTAssertEqual(Set(ids).count, 2, "upstream, the two are different commands")
-        second.close()
-    }
-
-    func testWhatARunLeftAttachedIsDetachedBeforeTheNext() async throws {
+    func testNoRunReadsCookiesClosesTheBrowserOrTakesItWhole() async throws {
         let run = Client(port: port, token: attended.token)
-        let attach = try await run.call(1, "Target.attachToTarget", ["targetId": "T1", "flatten": true])
-        XCTAssertEqual((attach["result"] as? [String: Any])?["sessionId"] as? String, "S-1")
-        fake.emit(#"{"method":"Target.attachedToTarget","params":{"sessionId":"AUTO-1","targetInfo":{"targetId":"T2"},"waitingForDebugger":true}}"#)
-        let event = try await run.receive()
-        XCTAssertEqual(event["method"] as? String, "Target.attachedToTarget", "events reach the client")
-        XCTAssertTrue(broker.release(token: attended.token))
-        try await settle()
-        let detached = fake.commands.filter { $0["method"] as? String == "Target.detachFromTarget" }
-            .compactMap { ($0["params"] as? [String: Any])?["sessionId"] as? String }
-        XCTAssertEqual(Set(detached), ["S-1", "AUTO-1"])
-        XCTAssertTrue(fake.methods().contains("Target.setAutoAttach"), "and the browser stops attaching for nobody")
-    }
-
-    func testNoRunReadsCookiesOrClosesTheBrowser() async throws {
-        let run = Client(port: port, token: attended.token)
-        for method in ["Network.getAllCookies", "Storage.getCookies", "Browser.close"] {
+        for method in ["Network.getAllCookies", "Storage.getCookies", "Browser.close", "Network.clearBrowserCookies",
+                       "Target.attachToBrowserTarget", "Target.sendMessageToTarget"] {
             let answer = try await run.call(7, method)
             XCTAssertNotNil(answer["error"], method)
         }
-        XCTAssertFalse(fake.methods().contains { BrowserBroker.forbidden.contains($0) }, "none of them reached the browser")
+        let forwarded = fake.commands.filter { $0["method"] as? String == "Target.attachToBrowserTarget" }.count
+        XCTAssertEqual(forwarded, 2, "only Bulava's own: its watcher and this run's session")
+        XCTAssertFalse(fake.methods().contains { BrowserBroker.forbidden.contains($0) && $0 != "Target.attachToBrowserTarget" },
+                       "none of them reached the browser")
         run.close()
     }
 
     /// Google refuses to sign in to a browser an agent drives, whatever is typed into it. A run's tab
     /// that reaches Google's sign-in is told to Bulava, with the page the sign-in was for and the run
-    /// that waits — once per tab — so he signs in where nobody drives.
-    func testGooglesSignInInADrivenTabIsHandedToHim() async throws {
+    /// whose tab it is — once per tab — so he signs in where nobody drives.
+    func testGooglesSignInInARunsTabIsHandedToHim() async throws {
         final class Heard: @unchecked Sendable {
             let lock = NSLock()
             var calls: [(URL, String)] = []
@@ -247,34 +302,26 @@ nonisolated final class BrowserBrokerTests: XCTestCase {
         broker.onSignInNeeded = { url, run in heard.lock.withLock { heard.calls.append((url, run.slug)) } }
         let run = Client(port: port, token: attended.token)
         _ = try await run.call(1, "Browser.getVersion")
-        let signIn = #"{"method":"Target.targetInfoChanged","params":{"targetInfo":{"targetId":"G1","type":"page","url":"https://accounts.google.com/v3/signin/identifier?continue=https%3A%2F%2Fsearch.google.com%2Fsearch-console&flowName=GlifWebSignIn"}}}"#
-        fake.emit(signIn)
-        fake.emit(signIn)
-        fake.emit(#"{"method":"Target.targetInfoChanged","params":{"targetInfo":{"targetId":"G2","type":"page","url":"https://console.example/dashboard"}}}"#)
+        let other = Client(port: port, token: night.token)
+        _ = try await other.call(1, "Browser.getVersion")
+        try await settle(0.2)
+        let tab = try XCTUnwrap(broker.tabs(of: attended.token).first)
+        let signIn = "https://accounts.google.com/v3/signin/identifier?continue=https%3A%2F%2Fsearch.google.com%2Fsearch-console&flowName=GlifWebSignIn"
+        fake.navigated(tab, to: signIn)
+        fake.navigated(tab, to: signIn)
+        fake.navigated(tab, to: "https://console.example/dashboard")
+        fake.navigated("NOBODYS", to: signIn)
         try await settle(0.2)
         let calls = heard.lock.withLock { heard.calls }
         XCTAssertEqual(calls.map(\.0.absoluteString), ["https://search.google.com/search-console"],
-                       "where the sign-in was for, once, and nothing for an ordinary page")
-        XCTAssertEqual(calls.first?.1, attended.slug, "with the run that waits for it")
+                       "where the sign-in was for, once; nothing for an ordinary page or a tab no run has")
+        XCTAssertEqual(calls.first?.1, attended.slug, "with the run whose tab it is")
 
-        // The run lets go: a sign-in page in a tab nobody drives asks him for nothing.
-        XCTAssertTrue(broker.release(token: attended.token))
-        fake.emit(#"{"method":"Target.targetCreated","params":{"targetInfo":{"targetId":"G3","type":"page","url":"https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fanalytics.google.com%2F"}}}"#)
+        let theirs = try XCTUnwrap(broker.tabs(of: night.token).first)
+        fake.navigated(theirs, to: signIn)
         try await settle(0.2)
-        XCTAssertEqual(heard.lock.withLock { heard.calls.count }, 1, "no run holds the browser: nothing is asked")
-        run.close()
-
-        // The next run, in the very same tab at the very same sign-in: asked for afresh.
-        try await settle(0.3)
-        let next = Client(port: port, token: night.token)
-        _ = try await next.call(1, "Browser.getVersion")
-        fake.emit(signIn)
-        try await settle(0.2)
-        let after = heard.lock.withLock { heard.calls }
-        XCTAssertEqual(after.count, 2, "what the last run was told is not this run's")
-        XCTAssertEqual(after.last?.1, night.slug)
-        XCTAssertEqual(after.last?.0.absoluteString, "https://search.google.com/search-console")
-        next.close()
+        XCTAssertEqual(heard.lock.withLock { heard.calls.last?.1 }, night.slug, "another run's own tab is asked about for it")
+        run.close(); other.close()
     }
 
     func testWhichPagesOnlyHeCanSignInOn() {
@@ -292,26 +339,20 @@ nonisolated final class BrowserBrokerTests: XCTestCase {
     func testARunWithoutHimCannotOpenTheSitesHeKeeps() async throws {
         broker.setBlocked(["bank.example"])
         let run = Client(port: port, token: night.token)
-        let navigate = try await run.call(1, "Page.navigate", ["url": "https://online.bank.example/accounts"], session: "S-x")
-        XCTAssertNotNil(navigate["error"], "his bank, at night")
-        XCTAssertEqual(navigate["sessionId"] as? String, "S-x", "answered on the session it was asked on")
-        let open = try await run.call(2, "Target.createTarget", ["url": "https://bank.example/"])
-        XCTAssertNotNil(open["error"])
-        let lift = try await run.call(3, "Network.emulateNetworkConditionsByRule", ["offline": false, "matchedNetworkConditions": []], session: "S-x")
-        XCTAssertNotNil(lift["error"], "the rule cannot be lifted by the run")
-        let fine = try await run.call(4, "Page.navigate", ["url": "https://console.example/"], session: "S-x")
-        XCTAssertNil(fine["error"], "everything else is open")
-
-        let his = try await run.call(6, "Target.attachToTarget", ["targetId": "BANK", "flatten": true])
-        XCTAssertNotNil(his["error"], "a tab already open on his bank is not the run's to attach to")
-        XCTAssertFalse("\(his)".contains("bank"), "and the refusal does not say which site it is")
-        _ = try await run.call(5, "Target.attachToTarget", ["targetId": "T1", "flatten": true])
+        _ = try await run.call(0, "Browser.getVersion")
         try await settle(0.2)
-        let rule = try XCTUnwrap(fake.commands.first { $0["method"] as? String == "Network.emulateNetworkConditionsByRule" },
-                                 "Bulava closes his sites on the page the run attached to")
-        XCTAssertEqual(rule["sessionId"] as? String, "S-1")
-        let patterns = ((rule["params"] as? [String: Any])?["matchedNetworkConditions"] as? [[String: Any]])?.compactMap { $0["urlPattern"] as? String }
-        XCTAssertEqual(patterns, ["*://{*.}?bank.example/*"])
+        let tab = try XCTUnwrap(broker.tabs(of: night.token).first)
+        let attach = try await run.call(1, "Target.attachToTarget", ["targetId": tab, "flatten": true])
+        let session = try XCTUnwrap((attach["result"] as? [String: Any])?["sessionId"] as? String)
+        let navigate = try await run.call(2, "Page.navigate", ["url": "https://online.bank.example/accounts"], session: session)
+        XCTAssertNotNil(navigate["error"], "his bank, at night")
+        XCTAssertEqual(navigate["sessionId"] as? String, session, "answered on the session it was asked on")
+        let open = try await run.call(3, "Target.createTarget", ["url": "https://bank.example/"])
+        XCTAssertNotNil(open["error"])
+        let lift = try await run.call(4, "Network.emulateNetworkConditionsByRule", ["offline": false, "matchedNetworkConditions": []], session: session)
+        XCTAssertNotNil(lift["error"], "the rule cannot be lifted by the run")
+        let fine = try await run.call(5, "Page.navigate", ["url": "https://console.example/"], session: session)
+        XCTAssertNil(fine["error"], "everything else is open")
         XCTAssertFalse(fake.commands.contains { ($0["method"] as? String) == "Page.navigate"
             && (($0["params"] as? [String: Any])?["url"] as? String)?.contains("bank") == true })
         run.close()
@@ -320,8 +361,8 @@ nonisolated final class BrowserBrokerTests: XCTestCase {
     func testAChatHeIsInMayOpenThemAll() async throws {
         broker.setBlocked(["bank.example"])
         let run = Client(port: port, token: attended.token)
-        let navigate = try await run.call(1, "Page.navigate", ["url": "https://bank.example/"], session: "S-x")
-        XCTAssertNil(navigate["error"])
+        let open = try await run.call(1, "Target.createTarget", ["url": "https://bank.example/"])
+        XCTAssertNil(open["error"])
         run.close()
     }
 
@@ -444,9 +485,9 @@ nonisolated final class LockedBox<Value>: @unchecked Sendable {
 }
 
 /// What an agent actually uses — chrome-devtools-mcp 1.10.1, the version the engine pins — through
-/// Bulava's door to a real Chrome on a pipe: it connects with the run's token, works, and a second
-/// run is turned away while the first has it; a run without him cannot open his sites. Skipped
-/// where node or that package is not on this Mac.
+/// Bulava's door to a real Chrome on a pipe: two runs connect with their tokens and work at the same
+/// time, each in its own tabs; a run without him cannot open his sites. Skipped where node or that
+/// package is not on this Mac.
 nonisolated final class AccountBrowserMCPTests: XCTestCase {
 
     /// An MCP server over stdio, one JSON-RPC message per line.
@@ -541,7 +582,10 @@ nonisolated final class AccountBrowserMCPTests: XCTestCase {
         return nil
     }
 
-    func testTheAgentsOwnClientWorksThroughTheDoorOneRunAtATime() async throws {
+    /// Two chats at once, each with the agent's own client, through Bulava's door to one real Chrome:
+    /// both work at the same time, each sees only its own pages, and the sign-ins they share are the
+    /// browser's. 13 Oct the second chat was turned away for as long as the first held the browser.
+    func testTwoAgentsUseTheBrowserAtOnceEachInItsOwnTabs() async throws {
         guard let chrome = ChromeApp.find() else { throw XCTSkip("Google Chrome is not installed") }
         guard let node = Self.node(), let script = Self.mcpScript() else { throw XCTSkip("node or chrome-devtools-mcp 1.10.1 is not here") }
         let profile = FileManager.default.temporaryDirectory.appendingPathComponent("bulava-mcp-\(UUID().uuidString)")
@@ -569,44 +613,51 @@ nonisolated final class AccountBrowserMCPTests: XCTestCase {
 
         let first = try client(chat)
         defer { first.stop() }
-        try await first.start()
-        let opened = try await first.call("new_page", ["url": "data:text/html,<title>Bulava</title><h1>Signed in as the director</h1>"])
-        XCTAssertFalse(opened.failed, opened.text)
-        // 1.10.1 routes page tools by id: the page "new_page" opened is the selected one.
-        let listed = try await first.call("list_pages")
-        let selected = try XCTUnwrap(listed.text.split(separator: "\n").first { $0.contains("[selected]") }, listed.text)
-        let pageID = try XCTUnwrap(Int(selected.prefix { $0.isNumber }), listed.text)
-        let snapshot = try await first.call("take_snapshot", ["pageId": pageID])
-        XCTAssertTrue(snapshot.text.contains("Signed in as the director"), snapshot.text)
-        XCTAssertEqual(broker.currentLease?.run.slug, "chat")
-        // He leaves his bank open in a tab of its own.
-        let bankOpened = try await first.call("new_page", ["url": "http://bank.test:\(sites.port)/accounts"])
-        XCTAssertFalse(bankOpened.failed, bankOpened.text)
-
         let second = try client(night)
         defer { second.stop() }
+        try await first.start()
         try await second.start()
-        let refused = try await second.call("list_pages")
-        XCTAssertTrue(refused.text.contains("423"), "another run is turned away while the first has it: \(refused.text)")
 
-        first.stop()
-        XCTAssertTrue(broker.release(token: chat.token) || broker.currentLease == nil)
-        try await Task.sleep(for: .seconds(1))
-        let pages = try await second.call("list_pages")
-        XCTAssertFalse(pages.failed, "the next run gets it once the first is gone: \(pages.text)")
-        XCTAssertEqual(broker.currentLease?.run.slug, "night")
-        XCTAssertFalse(pages.text.contains("bank.test"), "his open bank tab is not among the run's pages: \(pages.text)")
-        XCTAssertTrue(pages.text.contains("Signed in as the director") || pages.text.contains("data:"),
-                      "the tabs it may use are: \(pages.text)")
+        // Both at once.
+        async let a = first.call("new_page", ["url": "data:text/html,<title>First</title><h1>FIRST-CHAT-PAGE</h1>"])
+        async let b = second.call("new_page", ["url": "http://console.test:\(sites.port)/"])
+        let (openedA, openedB) = try await (a, b)
+        XCTAssertFalse(openedA.failed, openedA.text)
+        XCTAssertFalse(openedB.failed, "the second run is not turned away: \(openedB.text)")
+        XCTAssertEqual(Set(broker.leases.map(\.run.slug)), ["chat", "night"])
+
+        let listedA = try await first.call("list_pages")
+        let listedB = try await second.call("list_pages")
+        XCTAssertTrue(listedA.text.contains("FIRST-CHAT-PAGE") || listedA.text.contains("data:text/html"), listedA.text)
+        XCTAssertFalse(listedA.text.contains("console.test"), "the first run does not see the second's page: \(listedA.text)")
+        XCTAssertTrue(listedB.text.contains("console.test"), listedB.text)
+        XCTAssertFalse(listedB.text.contains("FIRST-CHAT-PAGE") || listedB.text.contains("data:text/html"),
+                       "nor the second the first's: \(listedB.text)")
+
+        let selected = try XCTUnwrap(listedA.text.split(separator: "\n").first { $0.contains("[selected]") }, listedA.text)
+        let pageID = try XCTUnwrap(Int(selected.prefix { $0.isNumber }), listedA.text)
+        let snapshot = try await first.call("take_snapshot", ["pageId": pageID])
+        XCTAssertTrue(snapshot.text.contains("FIRST-CHAT-PAGE"), "the first run works in its page meanwhile: \(snapshot.text)")
+
+        // A run without him cannot open his bank — Bulava's refusal, not a lookup failure.
         let bank = try await second.call("new_page", ["url": "https://bank.example/"])
-        XCTAssertTrue(bank.text.contains("kept for the director"), "a run without him cannot open his bank — Bulava's refusal, not a lookup failure: \(bank.text)")
+        XCTAssertTrue(bank.text.contains("kept for the director"), bank.text)
+
+        // The first lets go: its pages close, the second goes on untouched.
+        first.stop()
+        XCTAssertTrue(broker.release(token: chat.token) || !broker.isUsing(token: chat.token))
+        try await Task.sleep(for: .seconds(1))
+        XCTAssertTrue(broker.tabs(of: chat.token).isEmpty, "what the first run opened is gone with it")
+        let after = try await second.call("list_pages")
+        XCTAssertFalse(after.failed, after.text)
+        XCTAssertTrue(after.text.contains("console.test"), "the second run's page is where it was: \(after.text)")
     }
 }
 
-/// His own tab, left open in Bulava's browser, and the browser then lent to a run working without
-/// him: the run cannot list it, attach to it, show, close or read it, nor reach the site's storage
-/// or pages from a tab it does have; and a site he closes while the run has the browser is taken
-/// from it at once. Real Chrome, a local "bank" and "console" served on the loopback.
+/// His own tab, open in Bulava's browser in a chat he is in, while a run working without him uses the
+/// same browser at the same time: the run cannot list it, attach to it, show, close or read it, nor
+/// reach the site's storage or pages from a tab it does have; and a site he closes while the run is
+/// at it is taken from it at once. Real Chrome, a local "bank" and "console" served on the loopback.
 nonisolated final class AccountBrowserProtectedTabTests: XCTestCase {
 
     /// Two sites on the loopback, told apart by the Host header.
@@ -624,6 +675,12 @@ nonisolated final class AccountBrowserProtectedTabTests: XCTestCase {
                 connection.start(queue: queue)
                 connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { data, _, _, _ in
                     let request = String(decoding: data ?? Data(), as: UTF8.self).lowercased()
+                    // A page that sends a browser nobody signed in with to the site's sign-in.
+                    if request.hasPrefix("get /private") {
+                        let moved = "HTTP/1.1 302 Found\r\nLocation: /login?next=/private\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        connection.send(content: Data(moved.utf8), completion: .contentProcessed { _ in connection.cancel() })
+                        return
+                    }
                     let body = request.contains("host: bank.test")
                         ? "<!doctype html><title>Bank</title><h1>\(Sites.secret)</h1><script>localStorage.setItem('session','\(Sites.secret)')</script>"
                         : "<!doctype html><title>Console</title><h1>Console page</h1>"
@@ -712,11 +769,10 @@ nonisolated final class AccountBrowserProtectedTabTests: XCTestCase {
         let bankURL = "http://bank.test:\(port)/accounts"
         let consoleURL = "http://console.test:\(port)/"
 
-        // He, in a chat: opens his bank and a console, and the bank's page is really there.
+        // He, in a chat: opens his bank, and the bank's page is really there.
         let him = Recorder(port: door, token: chat.token)
         let created = try await him.call(1, "Target.createTarget", ["url": bankURL])
-        let bank = try XCTUnwrap((created["result"] as? [String: Any])?["targetId"] as? String)
-        _ = try await him.call(2, "Target.createTarget", ["url": consoleURL])
+        let bank = try XCTUnwrap((created["result"] as? [String: Any])?["targetId"] as? String, "\(created)")
         let attachedToBank = try await him.call(3, "Target.attachToTarget", ["targetId": bank, "flatten": true])
         let bankSession = try XCTUnwrap((attachedToBank["result"] as? [String: Any])?["sessionId"] as? String)
         var seen = ""
@@ -725,17 +781,14 @@ nonisolated final class AccountBrowserProtectedTabTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(100))
         }
         XCTAssertTrue(seen.contains(Sites.secret), "with him there, his bank is readable: \(seen)")
-        him.close()
-        XCTAssertTrue(broker.release(token: chat.token))
-        try await Task.sleep(for: .milliseconds(400))
 
-        // The browser goes to a run without him; the bank tab stays open.
+        // A run without him comes in at the same time; his bank tab stays open, his chat stays in.
         broker.setBlocked(["bank.test"])
         let run = Recorder(port: door, token: night.token)
         let list = try await run.call(1, "Target.getTargets")
-        let urls = ((list["result"] as? [String: Any])?["targetInfos"] as? [[String: Any]] ?? []).compactMap { $0["url"] as? String }
-        XCTAssertTrue(urls.contains { $0.hasPrefix(consoleURL) }, "the console is the run's: \(urls)")
-        XCTAssertFalse(urls.contains { $0.contains("bank.test") }, "his bank is not in the run's list: \(urls)")
+        let infos = (list["result"] as? [String: Any])?["targetInfos"] as? [[String: Any]] ?? []
+        XCTAssertFalse(infos.contains { ($0["targetId"] as? String) == bank }, "his bank is not in the run's list: \(infos)")
+        XCTAssertEqual(Set(broker.leases.map(\.run.slug)), ["chat", "night"], "both are in at once")
 
         for (n, method) in ["Target.attachToTarget", "Target.activateTarget", "Target.closeTarget", "Target.getTargetInfo",
                             "Target.exposeDevToolsProtocol", "Browser.getWindowForTarget"].enumerated() {
@@ -744,20 +797,23 @@ nonisolated final class AccountBrowserProtectedTabTests: XCTestCase {
         }
         let relayed = try await run.call(110, "Target.sendMessageToTarget", ["targetId": bank, "message": "{}"])
         XCTAssertTrue(Self.failed(relayed))
+        let onHisSession = try await run.call(111, "Runtime.evaluate", ["expression": "document.body.innerText"], session: bankSession)
+        XCTAssertTrue(Self.failed(onHisSession), "nor through his session")
 
-        _ = try await run.call(120, "Target.setDiscoverTargets", ["discover": true])
-        _ = try await run.call(121, "Target.setAutoAttach", ["autoAttach": true, "waitForDebuggerOnStart": false, "flatten": true])
+        // What Puppeteer asks for when it connects: the browser attaches the run to its own tabs only.
+        _ = try await run.call(120, "Target.setDiscoverTargets", ["discover": true, "filter": [["type": "tab", "exclude": true], [:]]])
+        _ = try await run.call(121, "Target.setAutoAttach", ["autoAttach": true, "waitForDebuggerOnStart": false, "flatten": true,
+                                                             "filter": [["type": "page", "exclude": true], [:]]])
+        let console = try await run.call(122, "Target.createTarget", ["url": consoleURL])
+        let consoleTarget = try XCTUnwrap((console["result"] as? [String: Any])?["targetId"] as? String, "\(console)")
+        let consoleAttach = try await run.call(123, "Target.attachToTarget", ["targetId": consoleTarget, "flatten": true])
+        let consoleSession = try XCTUnwrap((consoleAttach["result"] as? [String: Any])?["sessionId"] as? String, "\(consoleAttach)")
         try await Task.sleep(for: .seconds(1.5))
-        let attachedEvents = run.events.filter { $0["method"] as? String == "Target.attachedToTarget" }
-        let consoleSession = try XCTUnwrap(attachedEvents.compactMap { event -> String? in
-            let params = event["params"] as? [String: Any]
-            let url = (params?["targetInfo"] as? [String: Any])?["url"] as? String ?? ""
-            return url.hasPrefix(consoleURL) ? params?["sessionId"] as? String : nil
-        }.first, "the browser attaches the run to its console")
         XCTAssertFalse(run.transcript.contains("bank.test"),
                        "nothing about his bank reaches the run, not even its address: \(run.transcript.split(separator: "\n").filter { $0.contains("bank.test") })")
+        XCTAssertFalse(run.transcript.contains(bank), "nor its id")
 
-        // From the console tab: his bank's storage, a way there, a request to it.
+        // From its console tab: his bank's storage, a way there, a request to it.
         let storage = try await run.call(130, "DOMStorage.getDOMStorageItems",
                                          ["storageId": ["securityOrigin": "http://bank.test:\(port)", "isLocalStorage": true]], session: consoleSession)
         XCTAssertTrue(Self.failed(storage), "his bank's storage, read from another tab: \(storage)")
@@ -768,7 +824,7 @@ nonisolated final class AccountBrowserProtectedTabTests: XCTestCase {
         XCTAssertFalse(Self.text(fetched).contains(Sites.secret), "the bank does not answer the run: \(fetched)")
         XCTAssertFalse(run.transcript.contains(Sites.secret), "his bank's contents never reached the run")
 
-        // He closes the console to such runs while this one has it: the tab is taken from it.
+        // He closes the console to such runs while this one is at it: the tab is taken from it.
         broker.setBlocked(["bank.test", "console.test"])
         var taken = false
         for _ in 0..<40 where !taken {
@@ -776,18 +832,148 @@ nonisolated final class AccountBrowserProtectedTabTests: XCTestCase {
                 && ($0["params"] as? [String: Any])?["sessionId"] as? String == consoleSession }
             try await Task.sleep(for: .milliseconds(100))
         }
-        XCTAssertTrue(taken, "a site he closes mid-lease is taken from the run at once")
+        XCTAssertTrue(taken, "a site he closes mid-work is taken from the run at once")
         let after = try await run.call(140, "Runtime.evaluate", ["expression": "1"], session: consoleSession)
         XCTAssertTrue(Self.failed(after), "nothing more can be done in the tab taken from it")
         run.close()
         XCTAssertTrue(broker.release(token: night.token))
         try await Task.sleep(for: .milliseconds(400))
 
-        // His tab was never closed: back with him, it is still there.
-        let back = Recorder(port: door, token: chat.token)
-        let again = try await back.call(1, "Target.getTargets")
+        // His tab was never closed, and his chat never lost the browser.
+        let again = try await him.call(200, "Target.getTargets")
         let still = ((again["result"] as? [String: Any])?["targetInfos"] as? [[String: Any]] ?? []).compactMap { $0["url"] as? String }
         XCTAssertTrue(still.contains { $0.contains("bank.test") }, "his bank tab is where he left it: \(still)")
-        back.close()
+        let stillReadable = Self.text(try await him.call(201, "Runtime.evaluate", ["expression": "document.body.innerText", "returnByValue": true], session: bankSession))
+        XCTAssertTrue(stillReadable.contains(Sites.secret), "and his session in it still works: \(stillReadable)")
+        him.close()
+    }
+}
+
+/// Bulava's own look at a site, to keep his sign-in alive and see when it has run out: opened in a
+/// tab no run sees, in a browser with no window when no run is using it, and closed again.
+nonisolated final class AccountBrowserSignInCheckTests: XCTestCase {
+
+    /// A browser that takes commands and never answers, and can be made to die.
+    final class SilentBrowser: CDPTransport, @unchecked Sendable {
+        private let lock = NSLock()
+        private var exit: (@Sendable () -> Void)?
+        private var alive = true
+        var isRunning: Bool { lock.withLock { alive } }
+        func send(_ message: Data) {}
+        func listen(onMessage: @escaping @Sendable (Data) -> Void, onExit: @escaping @Sendable () -> Void) {
+            lock.withLock { exit = onExit }
+        }
+        func terminate() { die() }
+        func die() {
+            let gone: (@Sendable () -> Void)? = lock.withLock { guard alive else { return nil }; alive = false; return exit }
+            gone?()
+        }
+    }
+
+    private func visitAnswered(_ broker: BrowserBroker, settle: TimeInterval = 0.1, meanwhile: () -> Void) async -> (answered: Bool, url: URL?) {
+        let box = LockedBox<(Bool, URL?)>((false, nil))
+        broker.visit(URL(string: "https://console.example/")!, settle: settle) { url in box.set((true, url)) }
+        meanwhile()
+        for _ in 0..<60 where !box.get().0 { try? await Task.sleep(for: .milliseconds(50)) }
+        return box.get()
+    }
+
+    /// The visit used to wait for ever when Chrome went before answering, and the sign-in check with
+    /// it — and every check after it, since one was still "running".
+    func testAVisitIsAnsweredWhenTheBrowserDiesStopsOrNeverAnswers() async throws {
+        let broker = BrowserBroker()
+        broker.visitTimeout = 0.3
+        let silent = LockedBox<SilentBrowser?>(nil)
+        broker.makeQuietTransport = { let made = SilentBrowser(); silent.set(made); return made }
+        broker.start(preferredPort: 0)
+        defer { broker.stop() }
+
+        let died = await visitAnswered(broker) { usleep(100_000); silent.get()?.die() }
+        XCTAssertTrue(died.answered, "Chrome gone before it answered: the visit is answered")
+        XCTAssertNil(died.url)
+
+        let stopped = await visitAnswered(broker) { usleep(100_000); broker.setUnavailable("he is signing in") }
+        XCTAssertTrue(stopped.answered, "the browser taken for signing in: the visit is answered")
+        broker.setUnavailable(nil)
+
+        let silentOne = await visitAnswered(broker) {}
+        XCTAssertTrue(silentOne.answered, "a browser that never answers: the visit is answered after its time")
+        XCTAssertNil(silentOne.url)
+    }
+
+    @MainActor
+    func testTheSignInCheckEndsWhenTheBrowserGoesMidVisit() async throws {
+        guard ChromeApp.find() != nil else { throw XCTSkip("Google Chrome is not installed") }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("bulava-check-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let browser = AccountBrowser(folder: folder)
+        _ = browser.addSite("console.example")
+        let model = AppModel()
+        browser.attach(model, enabled: true, stateDir: nil)
+        defer { browser.detach() }
+        let silent = LockedBox<SilentBrowser?>(nil)
+        browser.broker.makeQuietTransport = { let made = SilentBrowser(); silent.set(made); return made }
+        browser.noteSignedIn(try XCTUnwrap(browser.sites.first?.id))
+
+        let check = Task { await browser.checkSignIns(force: true) }
+        for _ in 0..<40 where silent.get() == nil { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertTrue(browser.checkingSignIns)
+        silent.get()?.die()
+        _ = await check.value
+        XCTAssertFalse(browser.checkingSignIns, "the check ended; the next one can run")
+        XCTAssertNil(browser.sites.first?.checkedAt, "and nothing was concluded from a visit that never happened")
+    }
+
+    func testWhatASignedOutPageLooksLike() {
+        func out(_ opened: String, _ landed: String) -> Bool {
+            BrowserSite.asksToSignIn(opened: URL(string: opened)!, landed: URL(string: landed)!)
+        }
+        XCTAssertTrue(out("https://play.google.com/console", "https://accounts.google.com/v3/signin/identifier?continue=x"))
+        XCTAssertTrue(out("https://appstoreconnect.apple.com/", "https://idmsa.apple.com/IDMSWebAuth/signin"))
+        XCTAssertTrue(out("https://analytics.stepanok.com/websites", "https://analytics.stepanok.com/login"))
+        XCTAssertFalse(out("https://analytics.stepanok.com/websites", "https://analytics.stepanok.com/websites"))
+        XCTAssertFalse(out("https://play.google.com/console", "https://play.google.com/console/u/0/developers/123/app-list"))
+        XCTAssertFalse(out("https://example.com/login", "https://example.com/login"), "a page he chose that is itself a sign-in is not news")
+    }
+
+    func testAVisitSaysWhereThePageLandedAndNoRunSeesIt() async throws {
+        guard let chrome = ChromeApp.find() else { throw XCTSkip("Google Chrome is not installed") }
+        let sites = try AccountBrowserProtectedTabTests.Sites()
+        defer { sites.stop() }
+        let profile = FileManager.default.temporaryDirectory.appendingPathComponent("bulava-visit-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: profile) }
+        let broker = BrowserBroker()
+        let quiet = LockedBox(false)
+        let launch: @Sendable (Bool) throws -> CDPTransport = { headless in
+            if headless { quiet.set(true) }
+            return try ChromePipe.launch(executable: ChromeApp.executable(of: chrome),
+                                         arguments: ChromeApp.baseArguments(profile: profile)
+                                            + ["--remote-debugging-pipe", "--headless=new", "--host-resolver-rules=MAP *.test 127.0.0.1", "about:blank"])
+        }
+        broker.makeTransport = { try launch(false) }
+        broker.makeQuietTransport = { try launch(true) }
+        let door = broker.start(preferredPort: 0)
+        defer { broker.setUnavailable("test over"); broker.stop() }
+
+        func visit(_ address: String) async -> URL? {
+            await withCheckedContinuation { done in broker.visit(URL(string: address)!, settle: 2) { done.resume(returning: $0) } }
+        }
+        let signedOut = await visit("http://console.test:\(sites.port)/private")
+        XCTAssertTrue(quiet.get(), "with no run using it, the browser opens without a window")
+        XCTAssertEqual(signedOut?.path, "/login", "where a signed-out browser is sent: \(String(describing: signedOut))")
+        XCTAssertTrue(BrowserSite.asksToSignIn(opened: URL(string: "http://console.test:\(sites.port)/private")!, landed: signedOut!))
+
+        let token = String(repeating: "k", count: 48)
+        broker.setRuns([.init(token: token, slug: "run", title: "Run", unattended: false)])
+        let run = AccountBrowserProtectedTabTests.Recorder(port: door, token: token)
+        _ = try await run.call(1, "Target.setDiscoverTargets", ["discover": true])
+        let fine = await visit("http://console.test:\(sites.port)/")
+        XCTAssertEqual(fine?.host, "console.test")
+        let list = try await run.call(2, "Target.getTargets")
+        let urls = ((list["result"] as? [String: Any])?["targetInfos"] as? [[String: Any]] ?? []).compactMap { $0["url"] as? String }
+        XCTAssertFalse(urls.contains { $0.contains("console.test") }, "Bulava's own tab is no run's: \(urls)")
+        XCTAssertFalse(run.transcript.contains("console.test"), "nothing about it reached the run")
+        run.close()
+        broker.quitIfUnused()
     }
 }

@@ -393,13 +393,16 @@ extension AppModel {
             answerUnboundQuestion(entry: entry, text: text)
             return nil
         }
+        let answeredAt = Date()
+        noteScreenAnswer(chatID: entry.chatID, at: answeredAt)
         let result = await client.answerTerminalQuestion(session: holding.session, expected: pending, answer: t)
         guard result.ok else {
             let detail = (result.stderr.isEmpty ? result.stdout : result.stderr)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             return detail.isEmpty ? String(localized: "Could not answer Claude.") : detail
         }
-        conversations.appendUser(t, productID: entry.productID, chatID: entry.chatID)
+        // At the moment it was given: what Claude did after it is drawn below it.
+        conversations.appendUser(t, productID: entry.productID, chatID: entry.chatID, at: answeredAt)
         if let productID = task(forInstance: holding)?.productID { products.worked(productID) }
         note(.answerSent, .info, "Відповідь надіслано — «\(holding.projectName)» продовжує.",
              detail: t, projectPath: holding.projectPath, taskID: task(forInstance: holding)?.id)

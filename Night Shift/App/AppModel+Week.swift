@@ -14,6 +14,11 @@ extension AppModel {
     /// The widgets are asked to redraw at most this often for numbers that merely grew; what is
     /// working now, and statistics switched on or off, redraw them at once.
     static let weekReloadEvery: TimeInterval = 900
+    /// The same week is written again after this long all the same. A widget tells the age of what
+    /// it shows by the moment the file was written, and a quiet afternoon — nothing running,
+    /// nothing changing — left it unwritten for three hours, after which every widget said
+    /// "Булава закрита" over a Bulava that was open. Well inside `WeekSnapshot.staleAfter`.
+    static let weekRewriteEvery: TimeInterval = 3600
 
     /// One step of the refresh loop.
     func tickWeek(now: Date = Date()) {
@@ -58,7 +63,8 @@ extension AppModel {
         let snapshot = WeekPresenter(raw: raw, capacity: capacity, running: off ? [] : weekRunningLines,
                                      off: off, now: now).snapshot()
         let previous = week
-        if let previous, previous.saysTheSame(as: snapshot) { return }
+        if let previous, previous.saysTheSame(as: snapshot),
+           now.timeIntervalSince(previous.generatedAt) < Self.weekRewriteEvery { return }
         week = snapshot
 
         // Redraw the widgets for what matters at once; let growing numbers wait their turn.
@@ -80,6 +86,15 @@ extension AppModel {
         guard url.scheme == "bulava", url.host == "week" else { return false }
         NSApp.activate(ignoringOtherApps: true)
         return true
+    }
+
+    /// At launch: a widget extension left running from before an update is ended, and the widgets
+    /// are asked for a fresh timeline from the current one (`WidgetExtension`).
+    func restartStaleWidgetExtension() {
+        Task.detached(priority: .utility) {
+            guard WidgetExtension.endStale() > 0 else { return }
+            await MainActor.run { WidgetCenter.shared.reloadAllTimelines() }
+        }
     }
 
     /// Statistics switched on or off in Settings.
@@ -104,6 +119,88 @@ extension AppModel {
             }
         }
         return lines
+    }
+}
+
+/// The widgets' extension as macOS keeps it: one process, started when a widget needs drawing and
+/// then left alive for days.
+///
+/// An update replaces Bulava.app on disk, and nothing tells the extension process started from the
+/// old copy to go: it keeps running the old file. Every reload after that was refused — "Bundle
+/// version did not match; LaunchServices DB may need to be rebuilt" — so the faces froze: one kept
+/// its last numbers until they went stale, the rest drew placeholders. On 8 Oct the extension from
+/// 7 Oct's 1.12 was still running under 1.13.
+///
+/// So at launch, an extension process started from this copy's own path but no longer running the
+/// file at that path is ended. macOS starts the current one at the next reload.
+nonisolated enum WidgetExtension {
+    static let name = "BulavaMacWidgets"
+
+    /// This copy's extension executable, as the processes started from it name it.
+    static var executable: String? {
+        guard let plugins = Bundle.main.builtInPlugInsURL else { return nil }
+        let path = plugins.appendingPathComponent("\(name).appex/Contents/MacOS/\(name)").path
+        return FileManager.default.fileExists(atPath: path) ? canonical(path) : nil
+    }
+
+    /// Ends every stale one; how many it ended.
+    @discardableResult
+    static func endStale() -> Int {
+        guard let ours = executable else { return 0 }
+        var ended = 0
+        for pid in processIDs() where pid != getpid() && processName(pid) == name {
+            // Started from this copy's path — not a Bulava Dev's or another copy's, those are theirs.
+            guard let launched = launchPath(pid), canonical(launched) == ours else { continue }
+            // And no longer running what is there: macOS reports no path at all for a process whose
+            // file was replaced under it.
+            guard isStale(running: runningPath(pid), ours: ours) else { continue }
+            if kill(pid, SIGTERM) == 0 {
+                ended += 1
+                Log.lifecycle.notice("ended a widget extension left over from before an update (pid \(pid, privacy: .public))")
+            }
+        }
+        return ended
+    }
+
+    static func isStale(running: String?, ours: String) -> Bool {
+        guard let running else { return true }
+        return canonical(running) != ours
+    }
+
+    static func canonical(_ path: String) -> String {
+        guard let real = realpath(path, nil) else { return (path as NSString).standardizingPath }
+        defer { free(real) }
+        return String(cString: real)
+    }
+
+    private static func processIDs() -> [pid_t] {
+        let count = proc_listallpids(nil, 0)
+        guard count > 0 else { return [] }
+        var pids = [pid_t](repeating: 0, count: Int(count) + 32)
+        let got = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
+        return got > 0 ? Array(pids.prefix(Int(got))) : []
+    }
+
+    private static func processName(_ pid: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: 64)
+        return proc_name(pid, &buffer, UInt32(buffer.count)) > 0 ? String(cString: buffer) : nil
+    }
+
+    private static func runningPath(_ pid: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        return proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 ? String(cString: buffer) : nil
+    }
+
+    /// The path the process was started by: the string after argc in its KERN_PROCARGS2.
+    private static func launchPath(_ pid: pid_t) -> String? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = 0
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return nil }
+        var buffer = [UInt8](repeating: 0, count: size)
+        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0 else { return nil }
+        let start = MemoryLayout<Int32>.size
+        guard let end = buffer[start..<size].firstIndex(of: 0), end > start else { return nil }
+        return String(decoding: buffer[start..<end], as: UTF8.self)
     }
 }
 

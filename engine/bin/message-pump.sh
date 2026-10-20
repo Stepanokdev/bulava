@@ -189,11 +189,25 @@ while :; do
   # Cancelled from outside: the pipeline was killed mid-stage rather than reaching its own check.
   [ -n "${mid:-}" ] && message_cancelled "$IDIR" "$mid" && rc=7
   case "$rc" in
-    0) log "message $seq delivered" ;;
+    # The deliver stage also succeeds when the worker would not take the prompt and it went into the
+    # retry queue instead. That is accepted, not delivered: 13 Oct the log said "delivered" for two
+    # messages that were sitting in the queue while their chat stood silent.
+    0) if [ -n "${mid:-}" ] && jq -e --arg id "$mid" 'select(.id == $id)' \
+            "$(undelivered_file "$IDIR")" >/dev/null 2>&1; then
+         log "message $seq prepared, but the worker did not take it — queued for retry, NOT delivered yet"
+       else
+         log "message $seq delivered"
+       fi ;;
     # 143/137: the pipeline was killed rather than reaching its own cancellation check — Stop, or
     # a withdrawal on a message that carried no id. Either way the director asked for it to end.
     7|143|137) log "message $seq withdrawn during preparation — nothing was injected"
        [ -n "${mid:-}" ] && thread_cancelled "$IDIR" "$mid" ;;
+    # A step he marked "Required" failed: the work must not start without it, so the worker gets
+    # nothing. His words are kept beside the run, not in the retry queue — the watchdog injects
+    # whatever is there, and that would be the unprepared delivery he ruled out.
+    5) held="$IDIR/held"; mkdir -p "$held" 2>/dev/null || true
+       cp -f "$env_file" "$held/$seq.json" 2>/dev/null || true
+       log "message $seq HELD: a required step failed — NOT delivered; kept in held/$seq.json" ;;
     *) # A required stage broke in a way composition could not absorb. Losing the director's words
        # is the one outcome worse than an unprepared delivery, so it goes into the retry queue and
        # the log says plainly that it will arrive without its briefs.

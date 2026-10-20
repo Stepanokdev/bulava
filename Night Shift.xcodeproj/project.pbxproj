@@ -723,7 +723,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 1.13;
+				MARKETING_VERSION = 1.15.1;
 				BULAVA_BUNDLE_BASE = "stepanok.com.Night-Shift.dev";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BULAVA_BUNDLE_BASE)";
 				PRODUCT_NAME = Bulava;
@@ -771,7 +771,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 1.13;
+				MARKETING_VERSION = 1.15.1;
 				BULAVA_BUNDLE_BASE = "stepanok.com.Night-Shift";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BULAVA_BUNDLE_BASE)";
 				PRODUCT_NAME = Bulava;
@@ -788,6 +788,7 @@
 		ABCDEF00000000000000MW09 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				BULAVA_CHANNEL = dev;
 				CODE_SIGN_ENTITLEMENTS = BulavaMacWidgets/BulavaMacWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -805,7 +806,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 1.13;
+				MARKETING_VERSION = 1.15.1;
 				BULAVA_BUNDLE_BASE = "stepanok.com.Night-Shift.dev";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BULAVA_BUNDLE_BASE).widgets";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -821,6 +822,7 @@
 		ABCDEF00000000000000MW10 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				BULAVA_CHANNEL = production;
 				CODE_SIGN_ENTITLEMENTS = BulavaMacWidgets/BulavaMacWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -838,7 +840,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 1.13;
+				MARKETING_VERSION = 1.15.1;
 				BULAVA_BUNDLE_BASE = "stepanok.com.Night-Shift";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BULAVA_BUNDLE_BASE).widgets";
 				PRODUCT_NAME = "$(TARGET_NAME)";

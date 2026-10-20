@@ -137,6 +137,17 @@ extension SupervisorClient {
         return nil
     }
 
+    /// The lines of a report request that say whose it is: the chat's name and his first message.
+    /// The request is copied into the finished report's folder, so these are how Bulava recognises a
+    /// report of this chat that was built again under a new name (`healReportPaths`). One function
+    /// writes them and reads them, so the two cannot drift apart.
+    nonisolated static func reportRequestMarks(title: String, originalRequest: String) -> [String] {
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanRequest = originalRequest.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ["Назва діалогу: \(cleanTitle.isEmpty ? "Звіт про результат" : cleanTitle)",
+                "<director-request>\n\(cleanRequest)\n</director-request>"]
+    }
+
     func prepareChatReportRequest(projectPath: String, orchestratorHome: String,
                                   language: String, title: String,
                                   originalRequest: String, id: UUID = UUID()) -> ChatReportRequest? {
@@ -154,8 +165,7 @@ extension SupervisorClient {
         guard let shared = try? String(contentsOf: template, encoding: .utf8),
               shared.contains("{{DIR}}") else { return nil }
 
-        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cleanRequest = originalRequest.trimmingCharacters(in: .whitespacesAndNewlines)
+        let marks = Self.reportRequestMarks(title: title, originalRequest: originalRequest)
         let explicitCommand = "$IDIR/artifact \"\(directory.path)\" \"\(project.path)\""
         let directive = shared
             .replacingOccurrences(of: "{{DIR}}", with: directory.path)
@@ -177,12 +187,10 @@ extension SupervisorClient {
         цієї роботи у `\(artifactsRoot.path)`; скопіюй потрібні файли до теки маніфесту й прив'яжи їх до
         конкретних пунктів. Не замінюй наявні кадри фразою про те, що схему збірки не знайдено.
 
-        Назва діалогу: \(cleanTitle.isEmpty ? "Звіт про результат" : cleanTitle)
+        \(marks[0])
 
         Початковий запит користувача (це межі звіту, а не привід перевіряти весь продукт):
-        <director-request>
-        \(cleanRequest)
-        </director-request>
+        \(marks[1])
 
         \(directive)
 

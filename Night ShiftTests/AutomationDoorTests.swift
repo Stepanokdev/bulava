@@ -14,6 +14,10 @@ nonisolated final class AutomationDoorTests: XCTestCase {
         state = FileManager.default.temporaryDirectory.appendingPathComponent("bulava-door-\(token)")
         project = state.appendingPathComponent("Ledger")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        // A folder of code: work on code is made only where git is (`AutomationDoor.isInsideGit`).
+        let git = await Shell.run("git init -q .", cwd: project)
+        let made = await MainActor.run { git.ok }
+        XCTAssertTrue(made, "git init in the project folder")
         let instance = state.appendingPathComponent("instances/\(Slug.forPath(project.path))")
         try FileManager.default.createDirectory(at: instance, withIntermediateDirectories: true)
         for (name, text) in ["project": project.path, "session": "ns-door-\(token.prefix(12))", "run-id": "RUN-DOOR", "started-at": ""] {
@@ -91,6 +95,40 @@ nonisolated final class AutomationDoorTests: XCTestCase {
         let nightly = try XCTUnwrap(model.automations.automations.first { $0.name == "Nightly check" })
         XCTAssertEqual(nightly.workMode, .checkOnly)
         XCTAssertEqual(nightly.trigger.schedule?.waitUntilAway, true)
+    }
+
+    /// A job that is not about code: made with its folders and services, in a folder with no git
+    /// too — and work on code in such a folder is refused with the way to make the job instead.
+    @MainActor
+    func testAJobIsMadeWithItsFoldersAndServicesAndCodeWorkNeedsGit() async throws {
+        let (model, door, _, _, _) = try await ready()
+        let notes = state.appendingPathComponent("Meetings records")
+        try FileManager.default.createDirectory(at: notes, withIntermediateDirectories: true)
+        let made = try ask(door, ["op": "create", "name": "Meetings to tasks", "when": "daily 20:00", "brief": brief,
+                                  "mode": "job", "reads": [notes.path], "tools": ["memex", "claude.ai Linear", "memex"]])
+        XCTAssertEqual(made["ok"] as? Bool, true, "\(made)")
+        XCTAssertEqual(made["mode"] as? String, "job")
+        let job = try XCTUnwrap(model.automations.automations.first { $0.name == "Meetings to tasks" })
+        XCTAssertEqual(job.workMode, .job)
+        XCTAssertEqual(job.readFolders, [notes.path])
+        XCTAssertEqual(job.allowedTools, ["claude_ai_Linear", "memex"], "each named once, as Claude Code names its tools")
+        XCTAssertNil(job.writesReport, "no word about a report: the job's own default, none")
+        XCTAssertFalse(job.reportsAfterRun)
+        let listed = try ask(door, ["op": "list"])
+        XCTAssertEqual((listed["automations"] as? [[String: Any]])?.first { $0["name"] as? String == "Meetings to tasks" }?["mode"] as? String, "job")
+
+        let nowhere = try ask(door, ["op": "create", "name": "Ghost", "when": "daily 20:00", "brief": brief,
+                                     "mode": "job", "reads": [state.appendingPathComponent("nope").path]])
+        XCTAssertEqual(nowhere["ok"] as? Bool, false, "a folder that is not there is not given to a job")
+
+        try FileManager.default.removeItem(at: project.appendingPathComponent(".git"))
+        let code = try ask(door, ["op": "create", "name": "Refactor", "when": "daily 03:00", "brief": brief, "mode": "branch"])
+        XCTAssertEqual(code["ok"] as? Bool, false, "work on code with no git would fail every night")
+        XCTAssertTrue((code["error"] as? String)?.contains("--job") == true, "and the refusal says how to make a job: \(code)")
+        let plain = try ask(door, ["op": "create", "name": "Notes summary", "when": "daily 21:00", "brief": brief, "mode": "job",
+                                   "report": true])
+        XCTAssertEqual(plain["ok"] as? Bool, true, "a job needs no git: \(plain)")
+        XCTAssertEqual(model.automations.automations.first { $0.name == "Notes summary" }?.writesReport, true)
     }
 
     @MainActor

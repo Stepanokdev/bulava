@@ -8,6 +8,9 @@ import Foundation
 /// and the only thing carried from one run to the next is what the runs themselves recorded as
 /// facts — and, in that folder, what git ignores: build output and local files. A run never
 /// inherits a conversation, and the brief changes only when he edits it.
+///
+/// A job that is not about code (`AutomationWorkMode.job`) has a plain folder of its own instead,
+/// with no git in it: nothing of it is reset, merged or reviewed.
 nonisolated struct Automation: Identifiable, Codable, Equatable, Sendable {
     var id: UUID
     var productID: UUID
@@ -42,8 +45,22 @@ nonisolated struct Automation: Identifiable, Codable, Equatable, Sendable {
     var carryFiles: [String]?
     /// The pipeline every run goes through. Nil is the one chats use by default.
     var pipelineID: String?
+    /// Folders a run reads besides the product's own — a folder of meeting notes, an export. Given
+    /// to the run to read, never to change, and asked about while he is here when macOS guards
+    /// them. Nil when there are none.
+    var readFolders: [String]?
+    /// MCP servers a run may use with nobody there to approve a call — a task list, a tracker — by
+    /// the names Claude Code knows them under. Without one named here a run is refused the service
+    /// at its first call. Nil when there are none.
+    var allowedTools: [String]?
+    /// Whether a run that did something ends with a written report. Nil is its mode's own way: work
+    /// on code is handed over with one, a job is not — its run says in a line what it did.
+    var writesReport: Bool?
 
     var checksOnly: Bool { workMode == .checkOnly }
+    /// A job outside the code, done in a plain folder of its own (`AutomationWorkMode.job`).
+    var doesJob: Bool { workMode == .job }
+    var reportsAfterRun: Bool { writesReport ?? !doesJob }
 
     init(id: UUID = UUID(), productID: UUID, projectID: UUID, name: String, brief: String,
          trigger: AutomationTrigger, baseBranch: String? = nil, confirmFirst: Bool = false,
@@ -87,6 +104,9 @@ nonisolated struct Automation: Identifiable, Codable, Equatable, Sendable {
         workMode = try? c.decodeIfPresent(AutomationWorkMode.self, forKey: .workMode)
         carryFiles = try? c.decodeIfPresent([String].self, forKey: .carryFiles)
         pipelineID = try? c.decodeIfPresent(String.self, forKey: .pipelineID)
+        readFolders = try? c.decodeIfPresent([String].self, forKey: .readFolders)
+        allowedTools = try? c.decodeIfPresent([String].self, forKey: .allowedTools)
+        writesReport = try? c.decodeIfPresent(Bool.self, forKey: .writesReport)
     }
 }
 
@@ -97,6 +117,14 @@ nonisolated enum AutomationWorkMode: String, Codable, Sendable {
     /// Read it, build it, check it, and write a report. Nothing is left to merge: whatever a run
     /// changed is thrown away with it.
     case checkOnly
+    /// Not the code at all: a job — read a folder, use a service, add the tasks it finds. Done in a
+    /// plain folder of the automation's own, with no git: git is what lets a change to code be
+    /// rolled back and reviewed, and a job has neither a change to roll back nor a diff to review.
+    /// What a run did is what it declares; nothing is left to merge.
+    ///
+    /// An older Bulava reads this as nothing at all, and so as `branch`: its run fails at once on a
+    /// folder with no git, with that reason — visibly, never by changing code.
+    case job
 }
 
 // MARK: - Triggers
@@ -290,6 +318,9 @@ nonisolated struct AutomationRun: Identifiable, Codable, Equatable, Sendable {
     nonisolated enum Result: String, Codable, Sendable {
         /// Changed something, and the change waits in its copy for him.
         case changes
+        /// Did the job it was set and has nothing to hand over: tasks added, a message sent. Only a
+        /// job ends this way — work on code that changed something has changes.
+        case done
         case noChange
         /// A written answer — research, a report.
         case report
@@ -354,6 +385,18 @@ nonisolated struct AutomationRun: Identifiable, Codable, Equatable, Sendable {
     /// Recorded to only check: what it changes is not work to hand over. Nil for a run that may
     /// change code, and on runs recorded before there was a choice.
     var checkOnly: Bool?
+    /// Recorded as a job in its automation's plain folder: no copy, no git, nothing to hand over
+    /// (`AutomationWorkMode.job`). Nil for a run on code, and on runs recorded before there was one.
+    var job: Bool?
+    /// Whether it ends with a written report, as the automation said when it was recorded. Nil on
+    /// runs recorded before this was a choice: they asked for one whenever they did something.
+    var writesReport: Bool?
+    /// The copy's branch tip (HEAD) at the moment the run settled with changes, saved while the
+    /// worktree was still on disk. A copy is a linked worktree, so this SHA lives in the source
+    /// repository's object database too; that lets Bulava later prove — from the source repo alone,
+    /// after the worktree is gone — that the branch reached its base, so a run merged outside Bulava
+    /// stops waiting on its own. Nil on runs that changed nothing, and on runs recorded before this.
+    var settledTip: String?
 
     init(id: UUID = UUID(), automationID: UUID, occurrence: String, reason: Reason,
          state: State, briefRevision: Int, items: [WatchItem] = [], createdAt: Date = Date()) {
@@ -396,7 +439,12 @@ nonisolated struct AutomationRun: Identifiable, Codable, Equatable, Sendable {
         baseBranch = try? c.decodeIfPresent(String.self, forKey: .baseBranch)
         reportAsked = try? c.decodeIfPresent(Bool.self, forKey: .reportAsked)
         checkOnly = try? c.decodeIfPresent(Bool.self, forKey: .checkOnly)
+        job = try? c.decodeIfPresent(Bool.self, forKey: .job)
+        writesReport = try? c.decodeIfPresent(Bool.self, forKey: .writesReport)
+        settledTip = try? c.decodeIfPresent(String.self, forKey: .settledTip)
     }
+
+    var isJob: Bool { job == true }
 
     /// Whether this run is still something to look at: changes waiting for him, a question, or a
     /// failure he has not seen through.

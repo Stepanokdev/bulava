@@ -101,6 +101,13 @@ internal data class DemoText(
     val landingSteps: List<String>,
     val landingAnswer: String,
     val landingTask: String,
+    // An automation's run: the weekly link check, a conversation of its own
+    val linksAutomation: String,
+    /** As the Mac names a run: the automation, then the day. */
+    val linksTitle: String,
+    val linksBrief: String,
+    val linksSteps: List<String>,
+    val linksAnswer: String,
     // Anything the person writes
     val genericSteps: List<String>,
     val genericWorkSteps: List<String>,
@@ -288,6 +295,11 @@ private val EN = DemoText(
     landingSteps = listOf("Reading index.html", "Counting words per section"),
     landingAnswer = "Done. The first screen went from 94 words to 31: what the place is, when it is open, and where. The rest moved below the menu. Codex checked that nothing a visitor looks for got lost.",
     landingTask = "Landing page, shorter",
+    linksAutomation = "Weekly link check",
+    linksTitle = "Weekly link check · Today",
+    linksBrief = "Check every link and picture on the site and tell me what is broken. Change nothing.",
+    linksSteps = listOf("Opening the site's pages", "Checking 23 links"),
+    linksAnswer = "All 23 links on the site's 5 pages work, and every picture loads. One thing to keep an eye on: the menu page now takes 4 seconds to open, against under a second last week. Nothing was changed.",
     genericSteps = listOf("Reading the project", "Looking for where this lives"),
     genericWorkSteps = listOf("Making the change", "Running the tests", "Codex is reviewing the change"),
     genericAnswer = { product, request ->
@@ -459,6 +471,11 @@ private val UK = EN.copy(
     landingSteps = listOf("Читає index.html", "Рахує слова в розділах"),
     landingAnswer = "Готово. Перший екран — 31 слово замість 94: що це за місце, коли відчинено і де. Решта переїхала під меню. Codex перевірив, що нічого, що шукає відвідувач, не загубилося.",
     landingTask = "Головна, коротше",
+    linksAutomation = "Щотижнева перевірка посилань",
+    linksTitle = "Щотижнева перевірка посилань · Сьогодні",
+    linksBrief = "Перевір усі посилання й картинки на сайті та скажи, що зламано. Нічого не змінюй.",
+    linksSteps = listOf("Відкриває сторінки сайту", "Перевіряє 23 посилання"),
+    linksAnswer = "Усі 23 посилання на 5 сторінках сайту працюють, і всі картинки завантажуються. Одне варто мати на увазі: сторінка меню тепер відкривається 4 секунди, а минулого тижня — менш ніж за секунду. Нічого не змінено.",
     genericSteps = listOf("Читає проєкт", "Шукає, де це живе"),
     genericWorkSteps = listOf("Вносить зміну", "Запускає тести", "Codex перевіряє зміну"),
     genericAnswer = { product, request ->
@@ -630,6 +647,11 @@ private val RU = EN.copy(
     landingSteps = listOf("Читает index.html", "Считает слова в разделах"),
     landingAnswer = "Готово. Первый экран — 31 слово вместо 94: что это за место, когда открыто и где. Остальное переехало под меню. Codex проверил, что ничего, что ищет посетитель, не потерялось.",
     landingTask = "Главная, короче",
+    linksAutomation = "Еженедельная проверка ссылок",
+    linksTitle = "Еженедельная проверка ссылок · Сегодня",
+    linksBrief = "Проверь все ссылки и картинки на сайте и скажи, что сломано. Ничего не меняй.",
+    linksSteps = listOf("Открывает страницы сайта", "Проверяет 23 ссылки"),
+    linksAnswer = "Все 23 ссылки на 5 страницах сайта работают, и все картинки загружаются. Одно стоит иметь в виду: страница меню теперь открывается 4 секунды, а на прошлой неделе — меньше чем за секунду. Ничего не изменено.",
     genericSteps = listOf("Читает проект", "Ищет, где это живёт"),
     genericWorkSteps = listOf("Вносит изменение", "Запускает тесты", "Codex проверяет изменение"),
     genericAnswer = { product, request ->

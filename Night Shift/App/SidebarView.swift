@@ -108,6 +108,8 @@ struct SidebarView: View {
             AutomationsDestination()
 
             PipelinesDestination()
+
+            BrowserDestination()
         }
         .padding(.horizontal, 8)
         .padding(.bottom, 10)
@@ -120,13 +122,15 @@ struct SidebarView: View {
             LazyVStack(spacing: 1) {
                 sectionHeader
                 if !productsCollapsed {
-                    ForEach(model.products.sorted) { product in
+                    ForEach(model.products.byRecentWork) { product in
                         ProductGroup(product: product)
                     }
                 }
             }
             .padding(.horizontal, 8)
             .padding(.bottom, 12)
+            // The product he has just written in moves to the top — seen moving, not found moved.
+            .animation(Motion.standard, value: model.products.byRecentWork.map(\.id))
         }
         .scrollIndicators(.hidden)
     }
@@ -462,13 +466,19 @@ private enum Rail {
 
 // MARK: - One product and its threads
 
-private struct ProductGroup: View {
+/// Not private: a test draws one product's group alone, which the sidebar's lazy list will not do
+/// off screen.
+struct ProductGroup: View {
     @Environment(AppModel.self) private var model
     let product: Product
     @State private var expanded = false
     @State private var archivesOpen = false
+    @State private var runsOpen = false
+    @State private var allRuns = false
 
     private static let visible = 5
+    /// Runs shown when the fold is open, before "Show all": an hourly watch makes a hundred a week.
+    private static let runsVisible = 8
 
     var body: some View {
         let chats = model.conversations.chats(for: product.id)
@@ -488,6 +498,24 @@ private struct ProductGroup: View {
             if !folded.isEmpty || (expanded && chats.count > Self.visible) {
                 more(folded: folded.count)
             }
+            // His automations' runs, each a conversation of its own: here with his chats, folded
+            // under them so a watch that runs every hour does not bury what he wrote himself.
+            let runs = automationRuns(open: open)
+            if !runs.isEmpty {
+                // Held open while one of them is on screen, as the archives are.
+                let unfolded = runsOpen || runs.contains { $0.chat.id == open }
+                runsHeader(count: runs.count, waiting: runs.contains(where: \.waiting), unfolded: unfolded)
+                if unfolded {
+                    let shown = allRuns ? runs : Array(runs.prefix(Self.runsVisible))
+                    ForEach(shown, id: \.chat.id) { run in
+                        AutomationChatRow(chat: run.chat, run: run.run, waiting: run.waiting,
+                                          selected: reading == nil && run.chat.id == open)
+                    }
+                    if runs.count > Self.runsVisible {
+                        moreRuns(total: runs.count)
+                    }
+                }
+            }
             let archived = model.conversations.archivedChats(for: product.id)
             if !archived.isEmpty {
                 // Held open while one of them is on screen — opened from search, say — so the
@@ -502,6 +530,60 @@ private struct ProductGroup: View {
         .padding(.bottom, 8)
 
         .task(id: product.id) { await model.adoptProductIconIfNeeded(product.id) }
+    }
+
+    /// The runs as the fold lists them: those waiting for him first, then the newest; the one on
+    /// screen always among the shown.
+    private func automationRuns(open: UUID?) -> [(chat: Chat, run: AutomationRun?, waiting: Bool)] {
+        let all = model.conversations.automationChats(for: product.id).map { chat in
+            let run = chat.automationRunID.flatMap { model.automations.run(id: $0) }
+            let waiting = run.map(model.runWantsHim) ?? model.directPhase(for: chat.id).wantsAttention
+            return (chat: chat, run: run, waiting: waiting)
+        }
+        var ordered = all.filter(\.waiting) + all.filter { !$0.waiting }
+        if !allRuns, let open, let i = ordered.firstIndex(where: { $0.chat.id == open }), i >= Self.runsVisible {
+            ordered.insert(ordered.remove(at: i), at: Self.runsVisible - 1)
+        }
+        return ordered
+    }
+
+    private func runsHeader(count: Int, waiting: Bool, unfolded: Bool) -> some View {
+        Button { withAnimation(Motion.standard) { runsOpen.toggle() } } label: {
+            HStack(spacing: 6) {
+                Text("Automations")
+                Text(verbatim: "\(count)")
+                    .monospacedDigit()
+                if waiting && !unfolded { StatusDot(color: Palette.orange) }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .rotationEffect(.degrees(unfolded ? 90 : 0))
+            }
+            .font(Typo.body)
+            .foregroundStyle(Palette.textFaint)
+            .padding(.leading, Rail.text)
+            .padding(.trailing, Rail.inset)
+            .frame(minHeight: 26)
+        }
+        .buttonStyle(.row())
+        .help(Text(unfolded
+                   ? String(localized: "Hide this product's automation runs")
+                   : String(localized: "Show this product's automation runs")))
+    }
+
+    private func moreRuns(total: Int) -> some View {
+        Button { withAnimation(Motion.standard) { allRuns.toggle() } } label: {
+            HStack(spacing: 0) {
+                Text(allRuns ? String(localized: "Show fewer") : Fmt.count("Show all %lld runs", total))
+                Spacer(minLength: 0)
+            }
+            .font(Typo.body)
+            .foregroundStyle(Palette.textFaint)
+            .padding(.leading, Rail.text + 12)
+            .padding(.trailing, Rail.inset)
+            .frame(minHeight: 26)
+        }
+        .buttonStyle(.row())
     }
 
     private func shownChats(_ chats: [Chat], current: UUID?) -> [Chat] {
@@ -635,7 +717,7 @@ private struct ProductRow: View {
         Button(product.pinned ? "Unpin" : "Pin to top") { model.products.togglePin(product.id) }
         Button("Rename…") { model.beginRenaming(product) }
         Divider()
-        Button("Remove product", role: .destructive) { model.removeProduct(product) }
+        Button("Remove product…", role: .destructive) { model.askToRemoveProduct(product) }
     }
 
     /// A mark only for what is going on or waits for the director. A chat that answered used to
@@ -751,6 +833,62 @@ private struct ChatRow: View {
     }
 }
 
+// MARK: - Automation chat row
+
+/// One automation run's conversation, in the product's fold: the automation's mark at the left, so
+/// it never reads as one of his own chats, and the run's state at the right — working, waiting for
+/// him, failed. A run that went well carries no mark.
+private struct AutomationChatRow: View {
+    @Environment(AppModel.self) private var model
+    let chat: Chat
+    let run: AutomationRun?
+    let waiting: Bool
+    let selected: Bool
+
+    var body: some View {
+        Button { open() } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "clock.arrow.2.circlepath")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(selected ? Palette.textSecondary : Palette.textFaint)
+                    .frame(width: 12)
+                Text(chat.title)
+                    .font(Typo.body)
+                    .foregroundStyle(selected ? Palette.text : Palette.textSecondary)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                indicator
+            }
+            .padding(.leading, Rail.text)
+            .padding(.trailing, Rail.inset)
+            .frame(minHeight: 28)
+        }
+        .buttonStyle(.row(selected: selected))
+        .contextMenu {
+            Button("Open conversation") { open() }
+            if let run {
+                Button("Open the automation") { model.navigate(to: .automation(run.automationID)) }
+            }
+        }
+        .help(Text(run.map { AutomationPresentation.look($0, phase: model.directPhase(for: chat.id)).word } ?? chat.title))
+    }
+
+    private func open() {
+        if let run { model.openRunChat(run) } else { model.openChat(chat) }
+    }
+
+    @ViewBuilder private var indicator: some View {
+        let phase = model.directPhase(for: chat.id)
+        if phase.isActive {
+            PulseDot(color: Palette.green, size: 6)
+        } else if let run, run.isRealFailure, !run.seen {
+            StatusDot(color: Palette.red)
+        } else if waiting {
+            StatusDot(color: Palette.orange)
+        }
+    }
+}
+
 // MARK: - Archived chat row
 
 /// A chat inside a product's Archives. Clicking it opens it to read — it stays archived, and the
@@ -856,5 +994,39 @@ private struct PipelinesDestination: View {
         }
         .buttonStyle(.row(selected: selected))
         .help(Text("What a message goes through: who prepares it, who does the work, what checks it"))
+    }
+}
+
+// MARK: - Browser
+
+/// The way into Bulava's own browser: its state, the sites he signed in to, and whether runs may
+/// use it while he is away. A dot shows when a run has it right now or one is waiting to sign in.
+private struct BrowserDestination: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let busy = model.browser.enabled && model.browser.mode == .working
+        Button { model.openBrowser() } label: {
+            HStack(spacing: Rail.gap) {
+                Image(systemName: "globe")
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(model.route == .browser ? Palette.text : Palette.textSecondary)
+                    .frame(width: Rail.glyph, height: Rail.glyph)
+                Text("Browser")
+                    .font(model.route == .browser ? Typo.rowLabel.weight(.semibold) : Typo.rowLabel)
+                    .foregroundStyle(Palette.text)
+                    .lineLimit(1)
+                Spacer(minLength: 6)
+                if busy {
+                    PulseDot(color: Palette.green, size: 6)
+                        .transition(.scale.combined(with: .opacity))
+                }
+            }
+            .padding(.horizontal, Rail.inset)
+            .frame(minHeight: 30)
+            .animation(Motion.standard, value: busy)
+        }
+        .buttonStyle(.row(selected: model.route == .browser))
+        .help(Text("Bulava's own Chrome: the sites you signed in to, and which runs may use them while you are away"))
     }
 }
