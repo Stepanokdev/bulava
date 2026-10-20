@@ -8,6 +8,8 @@ final class AppModel {
     /// True while the engine is being copied out of the app and installing itself, so the
     /// readiness screen can say so instead of looking like nothing happened.
     var installingEngine = false
+    /// Waits for the engine to be free and installs it; see `keepTryingEngineInstall`.
+    @ObservationIgnored var engineRetryTask: Task<Void, Never>?
     /// What holds the engine while it needs replacing, when the app can name it. The readiness
     /// screen turns this into a way out instead of a second wall.
     var engineBlocker: EngineBusy.Blocker?
@@ -472,7 +474,9 @@ final class AppModel {
                 await self.refreshReadiness(depth: .free)
                 switch EngineInstaller.state() {
                 case .ready, .development: break
-                case .notInstalled, .stale, .unavailable: self.openPreflight()
+                case .notInstalled, .stale, .unavailable:
+                    self.openPreflight()
+                    self.keepTryingEngineInstall()
                 }
             }
         case .ready:

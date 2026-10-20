@@ -119,6 +119,42 @@ extension AppModel {
         return await installEngineNow(quietly: quietly)
     }
 
+    /// After a launch whose install was refused, try again whenever the engine is free.
+    ///
+    /// The install at launch was the only attempt. On a Mac where a run was supervised at that
+    /// moment the engine stayed a version behind the app until the next launch, and the next
+    /// launch met the same runs: after 1.15 the role pipelines it shipped ran on 1.14's engine.
+    /// The rule about WHEN it may be replaced is unchanged — `installEngine` still asks the machine
+    /// and refuses while anything holds it — this only keeps asking. Waiting while held costs a
+    /// look at the instances; an install that was tried and failed waits longer each time, so a
+    /// broken one is not reported every minute.
+    func keepTryingEngineInstall() {
+        guard engineRetryTask == nil else { return }
+        engineRetryTask = Task { [weak self] in
+            var failedWait: Duration = .seconds(60)
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                guard let self else { return }
+                switch EngineInstaller.state() {
+                case .ready, .development, .unavailable:
+                    self.engineRetryTask = nil
+                    return
+                case .stale, .notInstalled:
+                    break
+                }
+                guard !self.installingEngine,
+                      EngineBusy.blocker(instances: await self.client.readInstances()) == nil else { continue }
+                if await self.installEngine(quietly: true) {
+                    await self.refreshReadiness(depth: .free)
+                    self.engineRetryTask = nil
+                    return
+                }
+                try? await Task.sleep(for: failedWait)
+                failedWait = min(failedWait * 2, .seconds(30 * 60))
+            }
+        }
+    }
+
     private func installEngineNow(quietly: Bool) async -> Bool {
 
         let outcome = await EngineInstaller.install()

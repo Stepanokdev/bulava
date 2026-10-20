@@ -32,10 +32,21 @@ nonisolated struct PipelinePatchPreview: Sendable, Equatable {
 
 extension SupervisorClient {
 
+    /// The editor speaks with THIS build's pipeline tool: the development checkout in Bulava Dev,
+    /// otherwise the copy inside the app. It used to be the installed engine's, and that copy is
+    /// replaced only once nothing is working — on a Mac with supervised chats open, never. After
+    /// 1.15 the editor went on judging role pipelines by 1.14's rules and called «Повний цикл»
+    /// broken in eight places (20 Oct). The tool finds its modules beside itself and the library
+    /// in the state folder, so which copy runs changes the rules and nothing else.
     fileprivate var pipelineTool: String? {
-        guard let home = OrchestratorHome.detect()?.path else { return nil }
-        let path = "\(home)/bin/pipeline-tool.py"
-        return FileManager.default.fileExists(atPath: path) ? path : nil
+        Self.pipelineTool(development: OrchestratorHome.development, bundled: OrchestratorHome.bundled,
+                          installed: OrchestratorHome.detect())
+    }
+
+    nonisolated static func pipelineTool(development: URL?, bundled: URL?, installed: URL?) -> String? {
+        [development, bundled, installed].compactMap { $0 }
+            .map { $0.appendingPathComponent("bin/pipeline-tool.py").path }
+            .first { FileManager.default.fileExists(atPath: $0) }
     }
 
     /// The tool reads stdin only when told to; everything bigger than an argument goes through a file,
@@ -53,7 +64,10 @@ extension SupervisorClient {
         }
         defer { if let temp { try? FileManager.default.removeItem(at: temp) } }
         let placeholders = (1...args.count).map { "\"$\($0)\"" }.joined(separator: " ")
-        let r = await Shell.run("/usr/bin/python3 \(placeholders)", args: args, timeout: timeout)
+        // No bytecode beside the tool: inside the signed app a written __pycache__ would change the
+        // bundle the signature covers.
+        let r = await Shell.run("/usr/bin/python3 \(placeholders)", args: args,
+                                extraEnv: ["PYTHONDONTWRITEBYTECODE": "1"], timeout: timeout)
         let line = r.stdout.split(separator: "\n").last { $0.first == "{" }
         return (r.launched ? r.exitCode : -1, line.flatMap { String($0).data(using: .utf8) },
                 r.stderr.trimmedTail.isEmpty ? r.stdout.trimmedTail : r.stderr.trimmedTail)
