@@ -21,7 +21,13 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-APP_STATE="${BULAVA_STATE_DIR:-$HOME/Library/Application Support/NightShift}"
+# The Mac app's own folder on a Mac; elsewhere there is no app, and the XDG state directory is
+# where a service of this machine keeps what it writes.
+case "${OSTYPE:-}" in
+  darwin*) _app_state_default="$HOME/Library/Application Support/NightShift" ;;
+  *)       _app_state_default="${XDG_STATE_HOME:-$HOME/.local/state}/bulava" ;;
+esac
+APP_STATE="${BULAVA_STATE_DIR:-$_app_state_default}"
 
 num="${SINCE%[a-zA-Z]}"; unit="${SINCE##*[0-9]}"
 case "$unit" in

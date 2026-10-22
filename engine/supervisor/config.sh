@@ -5,6 +5,25 @@
 # parent directory, which is whatever folder the engine was exported into.
 : "${SUPERVISOR_PRODUCT_NAME:=Night Shift}"
 
+# A server: the engine inside a VM that a bridge feeds from a tracker, with nobody at a terminal and
+# no Mac app beside it. One switch, set by whoever runs the service (the systemd unit), and nothing
+# else changes for a terminal or the app: every value below is chosen only under it.
+#   - nobody is there to answer a screen, a permission or a card  → SUPERVISOR_UNATTENDED=1
+#   - the CLI settings file is a file the agent can write         → it is not read at all
+#   - skills are not fetched from the internet on a start         → SKILL_AUTONOMOUS=0
+#   - Codex being away does not leave a task waiting for ever     → fail after a few hours
+if [ "${SUPERVISOR_PROFILE:-}" = server ]; then
+  export SUPERVISOR_UNATTENDED=1
+  export NIGHT_SHIFT_SETTINGS=off
+  SUPERVISOR_SKILL_AUTONOMOUS=0
+  : "${SUPERVISOR_CODEX_UNAVAILABLE:=fail}"
+  : "${SUPERVISOR_CODEX_UNAVAILABLE_AFTER_HOURS:=3}"
+  # A tmux server of the engine's own, started by the service, so a worker always inherits the
+  # service's environment (the sign-in token among it) rather than whatever an older server had.
+  : "${SUPERVISOR_TMUX_SOCKET:=bulava}"
+  export SUPERVISOR_TMUX_SOCKET
+fi
+
 : "${SUPERVISOR_MAX_ROUNDS:=3}"          # base patience: always allow at least this many FAIL rounds
 : "${SUPERVISOR_MAX_ROUNDS_HARD:=12}"    # absolute ceiling per session (runaway protection)
 : "${SUPERVISOR_STALL_LIMIT:=2}"         # consecutive no-progress FAIL rounds → park as genuinely stuck
@@ -123,6 +142,16 @@ fi
 
 : "${SUPERVISOR_RESUME_MAX_ATTEMPTS:=3}"
 : "${SUPERVISOR_LIMIT_RECHECK_COOLDOWN:=600}"
+
+# What a server may not be talked out of, whatever the environment says: the write fence stays on,
+# and a worker never runs with every permission granted. Applied after the defaults so that neither
+# an inherited variable nor a value written above can undo them.
+if [ "${SUPERVISOR_PROFILE:-}" = server ]; then
+  SUPERVISOR_SCOPE_GATE=1
+  SUPERVISOR_SKILL_AUTONOMOUS=0
+  [ "$SUPERVISOR_PERMISSION_MODE" = bypassPermissions ] && SUPERVISOR_PERMISSION_MODE=auto
+  export SUPERVISOR_PROFILE SUPERVISOR_CODEX_UNAVAILABLE SUPERVISOR_CODEX_UNAVAILABLE_AFTER_HOURS
+fi
 
 export SUPERVISOR_MAX_ROUNDS SUPERVISOR_MAX_ROUNDS_HARD SUPERVISOR_STALL_LIMIT \
        SUPERVISOR_MAX_RUN_SECONDS \

@@ -6,8 +6,11 @@ mkdir -p "$STATE_DIR"
 
 # macOS keeps Claude Code's sign-in in the Keychain; Linux and WSL2 keep the same JSON in a file of
 # the CLI's own (`~/.claude/.credentials.json`, mode 600). Neither present: nothing to ask with.
+# A server signs in with `claude setup-token` instead: a long-lived token in CLAUDE_CODE_OAUTH_TOKEN
+# and no credentials file at all. That token was issued for inference, so the usage endpoint may
+# refuse it; then nothing is written and the reading stays "unknown", which is the honest answer.
 CRED_FILE="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json"
-command -v security >/dev/null 2>&1 || [ -r "$CRED_FILE" ] || exit 0
+[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || command -v security >/dev/null 2>&1 || [ -r "$CRED_FILE" ] || exit 0
 
 python3 - "$OUT" "$CRED_FILE" <<'PY'
 import json, os, subprocess, sys, time, urllib.request, urllib.error
@@ -15,6 +18,9 @@ import json, os, subprocess, sys, time, urllib.request, urllib.error
 out = sys.argv[1]
 
 def keychain_token():
+    env_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "").strip()
+    if env_token:
+        return env_token, None
     raw = None
     try:
         r = subprocess.run(["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],

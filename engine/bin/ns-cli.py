@@ -21,6 +21,7 @@ import os
 import platform
 import plistlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -1035,7 +1036,9 @@ def _alive(pid):
 def _tmux_has(session):
     if not session or not shutil.which("tmux"):
         return False
-    return subprocess.run(["tmux", "has-session", "-t", session], stdout=subprocess.DEVNULL,
+    sock = os.environ.get("SUPERVISOR_TMUX_SOCKET", "")
+    base = ["tmux", "-L", sock] if sock else ["tmux"]
+    return subprocess.run(base + ["has-session", "-t", session], stdout=subprocess.DEVNULL,
                           stderr=subprocess.DEVNULL).returncode == 0
 
 
@@ -1119,6 +1122,221 @@ def platform_name():
             pass
         return name + (" (WSL2: %s)" % os.environ.get("WSL_DISTRO_NAME", "?") if wsl else "")
     return sys.platform
+
+
+# ── doctor for a server
+#
+# What a bridge asks before it hands the machine a task, and every few minutes after: a stable JSON
+# shape with names that never change language, a non-zero exit only when something would break a
+# run. It starts nothing and writes nothing — no probe file, no tmux server, no model call. Network
+# reachability is a separate, explicit question (`--network`): a doctor that phones out on every
+# poll is a doctor whose answer depends on the weather.
+
+def _run(cmd, timeout=20, env=None):
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
+        return r.returncode, (r.stdout or ""), (r.stderr or "")
+    except FileNotFoundError:
+        return 127, "", "not found"
+    except subprocess.TimeoutExpired:
+        return 124, "", "timed out"
+
+
+def _engine_bin():
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _lib_call(snippet, *argv, timeout=30):
+    """A function of supervisor-lib.sh, asked through bash, with its arguments passed as arguments.
+    Only when the state directory already exists: sourcing the library makes a folder or two inside
+    it, and on a state that is there that is a no-op — on one that is not, doctor has already said so
+    and asks nothing more."""
+    if not os.path.isdir(state_dir()):
+        return 1, ""
+    lib = os.path.join(_engine_bin(), "supervisor-lib.sh")
+    rc, out, _ = _run(["bash", "-c", '__lib="$1"; shift; . "$__lib" >/dev/null 2>&1; ' + snippet, "doctor", lib] + list(argv),
+                      timeout=timeout)
+    return rc, out
+
+
+def _usage_check(name, path, stale_after):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            u = json.load(f)
+    except (OSError, ValueError):
+        return {"name": name, "status": "warn", "detail": {"five_hour_used": None, "seven_day_used": None,
+                                                           "note": "no reading yet — the window is unknown"}}
+    ts = u.get("observed_at") or u.get("ts") or 0
+    age = int(time.time()) - int(ts or 0)
+    five = (u.get("five_hour") or {}).get("used_percentage")
+    week = (u.get("seven_day") or {}).get("used_percentage")
+    detail = {"age_seconds": age, "five_hour_used": five, "seven_day_used": week}
+    if age > stale_after:
+        detail.update({"five_hour_used": None, "seven_day_used": None, "note": "stale reading — the window is unknown"})
+        return {"name": name, "status": "warn", "detail": detail}
+    worst = max([v for v in (five, week) if isinstance(v, (int, float))] or [0])
+    return {"name": name, "status": "warn" if worst >= 100 else "ok", "detail": detail}
+
+
+def _trusted(d):
+    try:
+        cfg = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~"), ".claude.json")
+        with open(cfg, "r", encoding="utf-8") as f:
+            pr = (json.load(f).get("projects") or {})
+    except (OSError, ValueError):
+        return False
+    keys = {d, d[len("/private"):] if d.startswith("/private/") else d}
+    return any((pr.get(k) or {}).get("hasTrustDialogAccepted") for k in keys)
+
+
+def cmd_doctor_server(args):
+    checks = []
+
+    def add(name, status, detail=""):
+        checks.append({"name": name, "status": status, "detail": detail})
+
+    # programs
+    for tool in ("bash", "git", "jq", "tmux", "python3", "perl", "openssl", "curl", "claude", "codex"):
+        cmd = [tool, "-V"] if tool == "tmux" else ([tool, "version"] if tool == "openssl" else [tool, "--version"])
+        v = _version(cmd)
+        add("bin." + tool, "ok" if v else "fail", v or "not found")
+    major = _version(["bash", "-c", "echo ${BASH_VERSINFO[0]}"])
+    if major and major.isdigit() and int(major) < 4:
+        add("bin.bash.version", "warn", "bash %s — 4 or newer expected" % major)
+
+    # the profile, and the switches it implies
+    prof = os.environ.get("SUPERVISOR_PROFILE", "")
+    add("engine.profile", "ok" if prof == "server" else "warn",
+        prof or "not set — SUPERVISOR_PROFILE=server expected on a server")
+    policy = os.environ.get("SUPERVISOR_CODEX_UNAVAILABLE", "fail" if prof == "server" else "")
+    add("engine.codex_policy", "ok" if policy in ("wait", "fail") else "warn",
+        {"policy": policy or None, "after_hours": os.environ.get("SUPERVISOR_CODEX_UNAVAILABLE_AFTER_HOURS", "3")})
+
+    # sign-in
+    if shutil.which("claude"):
+        rc, out, err = _run(["claude", "auth", "status", "--json"], timeout=30)
+        try:
+            st = json.loads(out)
+            add("auth.claude", "ok" if st.get("loggedIn") else "fail",
+                {"logged_in": bool(st.get("loggedIn")), "method": st.get("authMethod"),
+                 "subscription": st.get("subscriptionType"),
+                 "token_env": bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"))})
+        except ValueError:
+            add("auth.claude", "warn", "claude auth status gave no JSON (rc %s): %s" % (rc, (err or out).strip()[:200]))
+        for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
+            if os.environ.get(var):
+                add("auth.claude.paid_env", "warn", "%s is set; workers strip it to stay on the subscription" % var)
+    if shutil.which("codex"):
+        rc, out, err = _run(["codex", "login", "status"], timeout=30)
+        add("auth.codex", "ok" if rc == 0 else "fail", ((out or err).strip().splitlines() or ["?"])[0][:200])
+
+    # limits, as last read — never refreshed from here
+    sd = state_dir()
+    stale = int(os.environ.get("SUPERVISOR_USAGE_STALE_SECS", "1800") or 1800)
+    checks.append(_usage_check("usage.claude", os.path.join(sd, "usage.json"), stale))
+    checks.append(_usage_check("usage.codex", os.path.join(sd, "codex-usage.json"), stale))
+
+    # the engine itself
+    if not os.path.isdir(sd):
+        add("engine.state", "fail", "%s does not exist — run install.sh" % sd)
+    else:
+        add("engine.state", "ok", sd)
+        ws = os.path.join(sd, "worker-settings.json")
+        try:
+            with open(ws, "r", encoding="utf-8") as f:
+                txt = f.read()
+            hooks = (json.loads(txt).get("hooks") or {})
+            cmds = [h.get("command", "") for groups in hooks.values() for g in (groups or [])
+                    for h in (g.get("hooks") or []) if isinstance(h, dict)]
+            paths = set()
+            for c in cmds:
+                try:
+                    first = shlex.split(c)[0] if c else ""
+                except ValueError:
+                    first = c
+                if "/hooks/" in first:
+                    paths.add(first)
+            missing = sorted(m for m in paths if not os.path.isfile(m))
+            add("engine.hooks", "fail" if missing else "ok", {"settings": ws, "missing": missing})
+        except (OSError, ValueError) as e:
+            add("engine.hooks", "fail", "%s: %s" % (ws, e))
+        rc, out = _lib_call("engine_protocol_gap")
+        add("engine.protocol", "fail" if rc == 0 and out.strip() else "ok",
+            out.strip() or "the installed gate matches this library")
+        deg = os.path.join(sd, "degraded.md")
+        add("engine.degraded", "warn" if os.path.exists(deg) else "ok", deg if os.path.exists(deg) else "")
+        # Waiting is not breakage: a run on a question or a parked pause is reported, as a warning.
+        waiting = {}
+        inst = os.path.join(sd, "instances")
+        for slug in (sorted(os.listdir(inst)) if os.path.isdir(inst) else []):
+            for marker in ("codex-decision", "ask-user", "paused-for-limit", "stalled"):
+                if os.path.exists(os.path.join(inst, slug, marker + ".json")):
+                    waiting.setdefault(marker, []).append(slug)
+        add("runs.waiting", "warn" if waiting else "ok", waiting)
+        try:
+            fs = os.statvfs(sd)
+            free = fs.f_bavail * fs.f_frsize
+            add("disk.state", "fail" if free < 512 * 2**20 else ("warn" if free < 4 * 2**30 else "ok"),
+                {"path": sd, "free_bytes": free})
+        except OSError as e:
+            add("disk.state", "warn", str(e))
+
+    # the headless browser
+    mcp_cfg = os.environ.get("SUPERVISOR_AUTOMATION_MCP_CONFIG") \
+        or os.path.join(_engine_bin(), "..", "supervisor", "automation-mcp.json")
+    try:
+        with open(mcp_cfg, "r", encoding="utf-8") as f:
+            b = (json.load(f).get("mcpServers") or {}).get("browser") or {}
+        cmd = b.get("command") or ""
+        found = bool(cmd) and (shutil.which(cmd) or os.path.isfile(cmd))
+        add("browser.mcp", "warn" if cmd == "npx" else ("ok" if found else "fail"),
+            {"config": os.path.abspath(mcp_cfg), "command": cmd,
+             "note": "npx fetches the server on every start" if cmd == "npx" else ""})
+    except (OSError, ValueError) as e:
+        add("browser.mcp", "warn", str(e))
+    if sys.platform != "darwin":
+        chrome = "/opt/google/chrome/chrome" if os.path.isfile("/opt/google/chrome/chrome") else next(
+            (shutil.which(c) for c in ("google-chrome-stable", "google-chrome", "chromium", "chromium-browser")
+             if shutil.which(c)), None)
+        add("browser.chrome", "ok" if chrome else "warn", chrome or "no Chrome or Chromium — runs go without a browser")
+
+    # one project, and the extra repositories it is given
+    if getattr(args, "dir", None):
+        dirs = [canon(args.dir)]
+        extra = os.environ.get("SUPERVISOR_EXTRA_DIRS_FILE")
+        if extra and os.path.isfile(extra):
+            with open(extra, "r", encoding="utf-8") as f:
+                dirs += [canon(l.strip()) for l in f if l.strip()]
+        for i, d in enumerate(dirs):
+            tag = "project" if i == 0 else "project.extra[%d]" % (i - 1)
+            if not os.path.isdir(d):
+                add(tag, "fail", "%s does not exist" % d)
+                continue
+            rc, top, _ = _run(["git", "-C", d, "rev-parse", "--show-toplevel"], timeout=15)
+            add(tag + ".git", "ok" if rc == 0 and canon(top.strip()) == d else "fail",
+                d if rc == 0 else "not a git repository (a start would stop with 76)")
+            rc, out, _ = _run(["git", "-C", d, "status", "--porcelain"], timeout=30)
+            add(tag + ".clean", "ok" if rc == 0 and not out.strip() else "fail",
+                "clean" if not out.strip() else "uncommitted work (a start would stop with 77): " + " ".join(out.split()[:8]))
+            t = _trusted(d)
+            add(tag + ".trusted", "ok" if t else "fail", "trusted" if t else "Claude would ask — run: night-shift trust " + d)
+            if i == 0:
+                rc, out = _lib_call('project_mcp_pending "$(canon_path "$1")"', d)
+                pend = [x for x in out.split("\n") if x.strip()]
+                add(tag + ".mcp", "fail" if pend else "ok",
+                    {"pending": pend, "fix": "night-shift mcp-decide %s enable|skip" % d} if pend else "decided")
+                rc, out = _lib_call('workspace_container_reason "$1"', d)
+                add(tag + ".folder", "fail" if rc == 0 else "ok",
+                    out.strip()[:300] if rc == 0 else "a project, not a folder of projects")
+
+    if getattr(args, "network", False):
+        for name, url in (("network.anthropic", "https://api.anthropic.com"), ("network.openai", "https://api.openai.com")):
+            rc, out, err = _run(["curl", "-sS", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "8", url], timeout=12)
+            add(name, "ok" if rc == 0 and out.strip() not in ("", "000") else "fail", out.strip() or err.strip()[:200])
+
+    ok = not any(c["status"] == "fail" for c in checks)
+    print(json.dumps({"ok": ok, "schema": 1, "checks": checks}, ensure_ascii=False, indent=None if args.json else 2))
+    return 0 if ok else 1
 
 
 def cmd_doctor(args):
@@ -1253,6 +1471,8 @@ COMMANDS = [
     ("revive", "[DIR]", "підняти впалу сесію на місці", "bring a dead session back in place"),
     ("dirty-state", "[DIR]", "чи є незакомічені зміни", "whether there are uncommitted changes"),
     ("mcp-decide", "DIR enable|skip", "увімкнути чи пропустити MCP-сервери проєкту", "enable or skip a project's MCP servers"),
+    ("task", "show|events|list --task-id ID", "задача, яку назвав міст: стан, спроби, події", "a bridge's task: state, attempts, events"),
+    ("trust", "DIR [DIR…]", "заздалегідь позначити теки довіреними для Claude (сервер)", "mark folders trusted for Claude beforehand (server)"),
     ("version", "", "версія й шляхи", "version and paths"),
     ("uninstall", "[--force]", "прибрати CLI з машини (стан лишається)", "remove the CLI (state is kept)"),
     ("help", "[COMMAND]", "ця довідка", "this help"),
@@ -1528,6 +1748,9 @@ def main(argv):
 
     d = sub.add_parser("doctor", add_help=False)
     d.add_argument("--json", action="store_true")
+    d.add_argument("--server", action="store_true")
+    d.add_argument("--network", action="store_true")
+    d.add_argument("dir", nargs="?")
 
     h = sub.add_parser("help", add_help=False)
     h.add_argument("topic", nargs="?")
@@ -1552,6 +1775,8 @@ def main(argv):
     if args.cmd == "status-json":
         return cmd_status_json(args)
     if args.cmd == "doctor":
+        if args.server:
+            return cmd_doctor_server(args)
         return cmd_doctor(args)
     if args.cmd == "completion":
         return cmd_completion(args)

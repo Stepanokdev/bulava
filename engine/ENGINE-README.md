@@ -220,6 +220,13 @@ three rounds is `review-debt.md`, what stopped the run is `blocked.md`, and the 
 you are in the run's `decisions.md` — all beside the report, never committed into the project —
 plus `~/.claude/supervisor/supervisor.log`.
 
+## On a server
+
+Unattended on a Linux VM, fed by a bridge from a tracker: `SUPERVISOR_PROFILE=server`. Tasks named by
+the bridge outlive their sessions, follow-ups are explicit, Codex stays required, and nothing waits
+for a person who is not there. The whole contract — flags, exit codes, the task record, the receipt,
+`doctor --server` and a systemd unit — is in [SERVER.md](SERVER.md).
+
 ## The project queue (the night pipeline)
 
 You load several projects and go to sleep; they run **one at a time** (each gets the full 5-hour

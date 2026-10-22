@@ -18,7 +18,7 @@ export SUPERVISOR_STATE_DIR="$TMP/state"; mkdir -p "$SUPERVISOR_STATE_DIR"
 case "${OSTYPE:-}" in
   darwin*)
     echo "===== macOS: nothing is redefined ====="
-    for f in stat date mktemp ps; do
+    for f in stat date mktemp ps cut; do
       [ "$(type -t "$f")" = file ] && ok "$f is the system's own" || bad "$f is shadowed by a $(type -t "$f")"
     done
     printf '\n%s\n' "failures: $fails"; [ "$fails" -eq 0 ]; exit
@@ -51,6 +51,14 @@ t="$(mktemp -d "$TMP/x.XXXXXX")" && [ -d "$t" ] && ok "mktemp with a template" |
 ps -ax -ww -o pid=,command= 2>&1 | grep -q "$$" && ok "ps -ax lists this shell" || bad "ps -ax"
 [ "$(printf abc | shasum | cut -c1-8)" = a9993e36 ] && ok "shasum (sha1)" || bad "shasum"
 [ "$(printf abc | shasum -a 256 | cut -c1-8)" = ba7816bf ] && ok "shasum -a 256" || bad "shasum -a 256"
+
+echo "===== cut -c counts characters ====="
+[ "$(printf 'абвгд' | cut -c1-3)" = "абв" ] && ok "cut -c1-N on Cyrillic is N letters" || bad "cut -c1-3 → $(printf 'абвгд' | cut -c1-3 | od -An -tx1)"
+[ "$(printf 'Сесію Claude Code перезапущено: попередній хід завис' | LC_ALL=en_US.UTF-8 cut -c1-38 | iconv -f UTF-8 -t UTF-8 2>/dev/null)" = "Сесію Claude Code перезапущено: попере" ] \
+  && ok "a needle cut from a Ukrainian prompt is whole letters" || bad "the needle was cut inside a letter"
+[ "$(printf 'один\nдва\n' | cut -c1-2)" = "$(printf 'од\nдв')" ] && ok "line by line, like cut" || bad "lines were not cut one by one"
+[ "$(printf 'abcdef' | cut -c1-4)" = abcd ] && ok "ASCII is unchanged" || bad "ASCII cut broken"
+[ "$(printf 'a:b:c' | cut -d: -f2)" = b ] && ok "other spellings go to the real cut" || bad "cut -d -f broken"
 
 echo "===== find -depth N ====="
 mkdir -p "$TMP/w/a/b/c" "$TMP/w/x"

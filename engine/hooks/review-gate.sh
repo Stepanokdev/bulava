@@ -317,6 +317,8 @@ mark_done() {  # $1 = disposition, [$2] = why, in a sentence the person reads
     gate_event run "$disposition" "$why" "$(jq -nc --arg d "$disposition" '{disposition:$d}')"
   fi
   [ -n "${DONE_FILE:-}" ] && printf '%s\n' "$disposition" > "$DONE_FILE"
+  # A verdict means Codex answered, so whatever count of its absence was running is over.
+  case "$disposition" in passed|debt) [ -n "${IDIR_SCOPE:-}" ] && rm -f "$(codex_away_file "$IDIR_SCOPE")" 2>/dev/null ;; esac
   # A verdict settles whatever review was owed for this state of the work. Left in place, the
   # marker outlived the verdict: the watchdog woke the worker every cooldown to "finish" a review,
   # the worker stopped, the stop met this very verdict and an unchanged tree, and nothing ever took
@@ -359,6 +361,9 @@ mark_done() {  # $1 = disposition, [$2] = why, in a sentence the person reads
   # behind, it would be the one thing in here capable of waving the next run past the reviewer.
   codex_decision_clear "${IDIR_SCOPE:-}"
   rm -f "$STATE_DIR/unreachable-$RUN_KEY" 2>/dev/null || true
+  # A task a bridge named outlives this run: its record learns how the attempt ended (and, on a
+  # server, the session is let go). Nothing happens for a run that was given no task id.
+  [ -n "${IDIR_SCOPE:-}" ] && task_on_terminal "$IDIR_SCOPE" "$disposition"
   return 0
 }
 
@@ -383,8 +388,15 @@ restamp_receipt() {  # $1 = passed | debt | needs-user | scope_violation
   local rid findings
   rid="$(cat "$idir/run-id" 2>/dev/null || true)"
   findings="$(findings_json "$idir" "$rid")"
-  jq -c --arg rv "$review" --arg why "$why" --argjson f "${findings:-[]}" \
-     '.review = $rv | .review_why = $why | .findings = $f' "$src" > "$src.tmp" 2>/dev/null \
+  # The repositories as they stand at the verdict: `reviewed_sha` is the commit this review saw,
+  # which is the only commit a bridge may publish for it.
+  local repos
+  repos="$(repos_state_json "$idir" "$(run_project_dir "$idir" "${cwd:-$PWD}")" 2>/dev/null)"
+  case "$repos" in '['*) ;; *) repos='[]' ;; esac
+  jq -c --arg rv "$review" --arg why "$why" --argjson f "${findings:-[]}" --argjson repos "$repos" \
+        --arg at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+     '.review = $rv | .review_why = $why | .findings = $f | .repos = $repos | .reviewed_at = $at' \
+     "$src" > "$src.tmp" 2>/dev/null \
     && mv -f "$src.tmp" "$src" 2>/dev/null || { rm -f "$src.tmp" 2>/dev/null; return 0; }
   python3 "$BIN_DIR/receipt-render.py" "$idir/report/report.html" < "$src" >/dev/null 2>&1 || true
 }
@@ -461,6 +473,27 @@ if [ "${SUPERVISOR_OUTCOME_PROTOCOL:-1}" = 1 ] && [ -n "${IDIR_SCOPE:-}" ] && [ 
         fi ;;
     esac
   fi
+fi
+
+# A server publishes commits, so a run that says it changed code is reviewed only once everything
+# it changed is committed — in the main repository and in every extra one. Sent back before Codex is
+# spent on it, and parked for a person if the worker keeps stopping with the same tree.
+if [ "${SUPERVISOR_PROFILE:-}" = server ] && [ -n "${IDIR_SCOPE:-}" ] && [ "${PLAIN_RUN:-0}" = 0 ] \
+   && [ "$(jq -r '.result // empty' "$IDIR_SCOPE/outcome.json" 2>/dev/null)" = succeeded_changes ]; then
+  _uncommitted="$(repos_uncommitted "$IDIR_SCOPE" "$cwd")"
+  if [ -n "$_uncommitted" ]; then
+    _dn="$(cat "$STATE_DIR/uncommitted-$RUN_KEY" 2>/dev/null || echo 0)"; case "$_dn" in ''|*[!0-9]*) _dn=0 ;; esac
+    _dn=$((_dn + 1)); printf '%s\n' "$_dn" > "$STATE_DIR/uncommitted-$RUN_KEY"
+    if [ "$_dn" -ge "${SUPERVISOR_UNCOMMITTED_PARK:-3}" ]; then
+      emit_review_json COMPLETE FAIL needs-user "uncommitted work after $_dn requests to commit it: $(printf '%s' "$_uncommitted" | tr '\n' ' ')"
+      mark_done needs-user; log "server: still uncommitted after $_dn asks — parked"; exit 0
+    fi
+    log "server: succeeded_changes with uncommitted work in: $(printf '%s' "$_uncommitted" | tr '\n' ' ') — sent back to commit"
+    jq -n --arg r "🌙 На сервері публікуються лише коміти: перед ревʼю закоміть усю роботу в гілку задачі в кожному з цих репозиторіїв і оголоси результат ще раз ($IDIR_SCOPE/report-outcome succeeded_changes \"підсумок\"). Незакомічене зараз у:
+$_uncommitted" '{decision: "block", reason: $r}'
+    exit 0
+  fi
+  rm -f "$STATE_DIR/uncommitted-$RUN_KEY" 2>/dev/null
 fi
 
 if [ -n "${IDIR_SCOPE:-}" ] && [ -s "$IDIR_SCOPE/findings.jsonl" ]; then
