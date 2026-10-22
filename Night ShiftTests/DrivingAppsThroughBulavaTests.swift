@@ -11,6 +11,20 @@ import AppKit
 /// can be tested without a second app on screen: the refusals, the key names, and the refs.
 nonisolated final class DrivingAppsThroughBulavaTests: XCTestCase {
 
+    // MARK: - A frame that is not a place on the screen
+
+    /// The Settings window reported an element with an infinite size, `Int(...)` trapped on it, and
+    /// every `ui tree` read with Settings open brought Bulava down (four crash reports, 22.10).
+    func testANonFiniteFrameIsPrintedNotFatal() {
+        let frame = CGRect(x: 10, y: CGFloat.infinity, width: 30, height: 20)
+        XCTAssertEqual(UIControl.placeText(frame), "  @10,? 30x20")
+    }
+
+    func testAnOrdinaryFrameKeepsItsNumbers() {
+        XCTAssertEqual(UIControl.placeText(CGRect(x: 12.4, y: 33.6, width: 100, height: 24.5)),
+                       "  @12,34 100x25")
+    }
+
     // MARK: - What Bulava will not drive
 
     /// Not security theatre and not a complete defence — macOS itself ignores synthetic events on

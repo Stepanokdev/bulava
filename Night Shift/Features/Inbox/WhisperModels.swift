@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 /// Which Whisper model dictation uses, and whether it is already on this machine.
 ///
@@ -17,10 +18,27 @@ import Foundation
 ///    option can undo it — it has to be a model that speaks the language at all.
 nonisolated enum WhisperModels {
 
-    /// Where WhisperKit keeps its models. Matches its own default download base.
+    /// The download base handed to WhisperKit: models land in `models/argmaxinc/whisperkit-coreml`
+    /// under it, the tokenizer in `models/openai/…`.
+    ///
+    /// Not WhisperKit's default, `~/Documents/huggingface`. On a Mac with iCloud "Desktop &
+    /// Documents" that folder is synced, macOS offloads the 600 MB of weights to iCloud, and every
+    /// later load waited for them to come back down — or, with the file only a placeholder, decided
+    /// the model was missing and downloaded it again. That was "it thinks for ages and keeps
+    /// fetching the model" on the Mac, and the phone's endless "taking too long" (22.10).
+    /// Application Support is neither synced nor purged.
+    static var downloadBase: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Bulava/whisper", isDirectory: true)
+    }
+
     static var installRoot: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Documents/huggingface/models/argmaxinc/whisperkit-coreml")
+        downloadBase.appendingPathComponent("models/argmaxinc/whisperkit-coreml", isDirectory: true)
+    }
+
+    /// Where models used to go, and where one may still be waiting to be moved.
+    static var legacyBase: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents/huggingface")
     }
 
     /// Multilingual variants, best first for dictation.
@@ -59,12 +77,58 @@ nonisolated enum WhisperModels {
     /// A variant is usable only if all three model bundles are actually there. A download that
     /// died half-way leaves the folder present and the model unloadable, and the failure surfaces
     /// as "could not make out the dictation" with no hint that a file is missing.
+    ///
+    /// "There" means its bytes are on this disk. A file iCloud has offloaded still exists — it is a
+    /// placeholder flagged dataless — and loading it starts a download of hundreds of megabytes in
+    /// the middle of a sentence; counted as present, that is exactly the wait it was meant to avoid.
     static func isComplete(_ folder: URL) -> Bool {
-        let fm = FileManager.default
         for part in ["AudioEncoder.mlmodelc", "MelSpectrogram.mlmodelc", "TextDecoder.mlmodelc"] {
             let weights = folder.appendingPathComponent(part)
                 .appendingPathComponent("weights/weight.bin")
-            guard fm.fileExists(atPath: weights.path) else { return false }
+            guard isLocal(weights) else { return false }
+        }
+        return true
+    }
+
+    /// A regular file with bytes, and those bytes here rather than in iCloud.
+    static func isLocal(_ file: URL) -> Bool {
+        var info = stat()
+        guard lstat(file.path, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG, info.st_size > 0 else {
+            return false
+        }
+        return info.st_flags & UInt32(SF_DATALESS) == 0
+    }
+
+    /// Moves a model from the old place in `~/Documents` to `downloadBase`, once, so a model that
+    /// is already on this Mac is not downloaded a second time. Only one whose bytes are all local:
+    /// moving an offloaded one would only download it in another way. The tokenizer goes with it.
+    /// Returns whether anything was moved.
+    @discardableResult
+    static func adoptLegacy(legacy: URL? = nil, base: URL? = nil) -> Bool {
+        let fm = FileManager.default
+        let oldBase = legacy ?? legacyBase, newBase = base ?? downloadBase
+        let oldRoot = oldBase.appendingPathComponent("models/argmaxinc/whisperkit-coreml")
+        let newRoot = newBase.appendingPathComponent("models/argmaxinc/whisperkit-coreml")
+        guard installed(root: newRoot).isEmpty else { return false }
+        let candidates = installed(root: oldRoot)
+        guard let variant = preferred.first(where: candidates.contains) ?? candidates.sorted().first else {
+            return false
+        }
+        do {
+            try fm.createDirectory(at: newRoot, withIntermediateDirectories: true)
+            try fm.moveItem(at: oldRoot.appendingPathComponent(variant), to: newRoot.appendingPathComponent(variant))
+        } catch { return false }
+        let oldTokenizers = oldBase.appendingPathComponent("models/openai")
+        let newTokenizers = newBase.appendingPathComponent("models/openai")
+        if let names = try? fm.contentsOfDirectory(atPath: oldTokenizers.path) {
+            try? fm.createDirectory(at: newTokenizers, withIntermediateDirectories: true)
+            for name in names where !name.hasPrefix(".") {
+                let from = oldTokenizers.appendingPathComponent(name)
+                let files = (try? fm.contentsOfDirectory(at: from, includingPropertiesForKeys: nil)) ?? []
+                // A tokenizer is a few small files: worth taking only if all of them are here.
+                guard !files.isEmpty, files.allSatisfy({ $0.hasDirectoryPath || isLocal($0) }) else { continue }
+                try? fm.moveItem(at: from, to: newTokenizers.appendingPathComponent(name))
+            }
         }
         return true
     }

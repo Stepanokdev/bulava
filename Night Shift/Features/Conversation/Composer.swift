@@ -80,7 +80,18 @@ struct Composer: View {
 
     // MARK: - Field
 
-    private var field: some View {
+    /// The chat is over: there is nowhere for a message to go, so the field is not offered.
+    private var closure: ChatClosure? { model.chatClosure(chatID) }
+
+    @ViewBuilder private var field: some View {
+        if let closure {
+            ClosedComposer(closure: closure)
+        } else {
+            openField
+        }
+    }
+
+    private var openField: some View {
         composerSurface
             .overlay(alignment: .top) {
                 if autocompleteVisible {
@@ -747,5 +758,46 @@ struct AttachmentStrip: View {
                 AttachmentThumb(attachment: attachment)
             }
         }
+    }
+}
+
+/// In place of the field, for a chat that can take no message: why, and the one thing that helps.
+///
+/// Not a disabled field. A greyed box with a cursor invites typing and then explains; this says it
+/// first, in the same place and shape the field takes, so the conversation does not jump (22.10).
+struct ClosedComposer: View {
+    @Environment(AppModel.self) private var model
+    let closure: ChatClosure
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: closure.passing ? "hourglass" : "checkmark.circle")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(Palette.textSecondary)
+            // No fixedSize: the window works out its minimum size by proposing a zero width, and
+            // text fixed to its full height at zero width is one letter per line, thousands of
+            // points tall. The window grew to that, and the whole chat and sidebar went off its
+            // top: 1.16 opened such a run as a blank page (22.10). Unfixed, text still wraps here,
+            // because the inset gives it the height it asks for.
+            Text(closure.message)
+                .font(Typo.body)
+                .foregroundStyle(Palette.textSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let automationID = closure.startAgain {
+                Button(String(localized: "Run now")) { model.runAutomationNow(automationID) }
+                    .buttonStyle(.bulava(.primary))
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(
+            RoundedRectangle(cornerRadius: Metrics.radiusModal, style: .continuous)
+                .fill(Palette.panel.opacity(0.92))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Metrics.radiusModal, style: .continuous)
+                .strokeBorder(Palette.lineStrong, lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
     }
 }

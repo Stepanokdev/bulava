@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# GNU systems (Linux, WSL2) get the BSD spellings this engine uses translated; on macOS this is a no-op.
+case "${OSTYPE:-}" in darwin*) ;; *) _P="$(dirname "${BASH_SOURCE[0]}")/lib/portable.sh"; [ -f "$_P" ] && . "$_P"; unset _P ;; esac
+
 _SUP_CFG="$(cd "$(dirname "${BASH_SOURCE[0]}")/../supervisor" 2>/dev/null && pwd)/config.sh"
 [ -f "$_SUP_CFG" ] && . "$_SUP_CFG"
 
@@ -29,7 +32,7 @@ _codex_is_install() {   # $1=path of a `codex` on PATH → 0 for the CLI itself
   local c="${1:-}" target
   target="$(readlink "$c" 2>/dev/null || true)"
   case "$target" in *@openai/codex/*) return 0 ;; esac
-  file -bL "$c" 2>/dev/null | grep -q 'Mach-O'
+  file -bL "$c" 2>/dev/null | grep -q 'Mach-O\|ELF'
 }
 
 _codex_version_key() {   # $1="codex-cli 0.156.0" → a sortable 000000015600000, or nothing
@@ -1794,9 +1797,23 @@ handshake_blocker() {
     if [ -z "$hook" ] || [ ! -f "$hook" ]; then echo hooks; return; fi
   fi
   if [ -n "$slug" ] && ! tmux has-session -t "$(session_name "$slug")" 2>/dev/null; then
-    echo exited; return
+    # Gone with its pane, so the sign-in screen it may have shown cannot be read any more. That is
+    # how a resume of a signed-out Claude was told "could not resume this conversation" and sent to
+    # a repair, twice in 1.15.3 (21.10): Claude asked for a sign-in and exited before anything could
+    # look. Claude Code can say so itself, without a screen.
+    if claude_signed_out; then echo login; else echo exited; fi
+    return
   fi
   echo unknown
+}
+
+# Whether Claude Code says it is not signed in. Asked only once Claude is gone (see above); `claude
+# auth status --json` answers from its own credentials, needs no terminal, and is given a few
+# seconds — a stuck answer is no answer, and "not known" never reads as signed out.
+claude_signed_out() {
+  local out
+  out="$(perl -e 'alarm 15; exec @ARGV' "${SUPERVISOR_CLAUDE_BIN:-claude}" auth status --json 2>/dev/null)" || return 1
+  [ "$(printf '%s' "$out" | jq -r 'if has("loggedIn") then (.loggedIn | tostring) else "unknown" end' 2>/dev/null)" = false ]
 }
 
 # Whether the bottom of the pane is a screen waiting for somebody's key: a menu, a confirmation, a
@@ -4688,7 +4705,8 @@ checkpoint_overrun() {   # $1=dir → reason on stdout; 0 = over budget, 1 = fin
     return 0
   fi
 
-  if stat -f %z /dev/null >/dev/null 2>&1; then statfmt=(-f %z); else statfmt=(-c %s); fi
+  # `command`: the sizes are read by the stat BINARY through xargs, so ask the binary, not a shell shim.
+  if command stat -f %z /dev/null >/dev/null 2>&1; then statfmt=(-f %z); else statfmt=(-c %s); fi
   sizes="$(mktemp 2>/dev/null)" || { rm -f "$out"; return 1; }
   ( cd "$d" && xargs -0 -n 256 stat "${statfmt[@]}" < "$out" 2>/dev/null ) > "$sizes"
   rm -f "$out" 2>/dev/null

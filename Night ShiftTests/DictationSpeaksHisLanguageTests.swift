@@ -73,7 +73,7 @@ nonisolated final class DictationSpeaksHisLanguageTests: XCTestCase {
                 let weights = root.appendingPathComponent(variant)
                     .appendingPathComponent(part).appendingPathComponent("weights")
                 try FileManager.default.createDirectory(at: weights, withIntermediateDirectories: true)
-                try Data().write(to: weights.appendingPathComponent("weight.bin"))
+                try Data([1]).write(to: weights.appendingPathComponent("weight.bin"))
             }
         }
         return root
@@ -145,6 +145,43 @@ nonisolated final class DictationSpeaksHisLanguageTests: XCTestCase {
             XCTAssertTrue(variant.hasPrefix("openai_whisper-"),
                           "\(variant) is not a full catalogue folder name")
         }
+    }
+
+    // MARK: - Where the model lives
+
+    /// Not in `~/Documents`: iCloud "Desktop & Documents" offloads the weights there, and every load
+    /// then waited for them to come back, or decided the model was gone and fetched it again (22.10).
+    func testTheModelIsKeptWhereICloudDoesNotSyncIt() {
+        let root = WhisperModels.installRoot.path
+        XCTAssertFalse(root.contains("/Documents/"), root)
+        XCTAssertTrue(root.contains("/Library/Application Support/"), root)
+    }
+
+    /// A weights file with nothing in it is a download that died, not a model.
+    func testAnEmptyWeightsFileIsNotAModel() throws {
+        let root = try fixture(["openai_whisper-large-v3-v20240930_626MB"])
+        let weights = root.appendingPathComponent("openai_whisper-large-v3-v20240930_626MB/TextDecoder.mlmodelc/weights/weight.bin")
+        try Data().write(to: weights)
+        XCTAssertTrue(WhisperModels.installed(root: root).isEmpty)
+    }
+
+    /// A model already downloaded to the old place is moved, not downloaded again.
+    func testAModelInTheOldPlaceIsMovedNotDownloadedAgain() throws {
+        let legacy = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-old-\(UUID().uuidString)")
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-new-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: legacy); try? FileManager.default.removeItem(at: base) }
+        let oldRoot = legacy.appendingPathComponent("models/argmaxinc/whisperkit-coreml")
+        try FileManager.default.createDirectory(at: oldRoot.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: try fixture(["openai_whisper-large-v3-v20240930_626MB"]), to: oldRoot)
+        let tokenizer = legacy.appendingPathComponent("models/openai/whisper-large-v3")
+        try FileManager.default.createDirectory(at: tokenizer, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: tokenizer.appendingPathComponent("tokenizer.json"))
+
+        XCTAssertTrue(WhisperModels.adoptLegacy(legacy: legacy, base: base))
+        let newRoot = base.appendingPathComponent("models/argmaxinc/whisperkit-coreml")
+        XCTAssertEqual(WhisperModels.installed(root: newRoot), ["openai_whisper-large-v3-v20240930_626MB"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: base.appendingPathComponent("models/openai/whisper-large-v3/tokenizer.json").path))
+        XCTAssertFalse(WhisperModels.adoptLegacy(legacy: legacy, base: base), "once is enough")
     }
 
     // MARK: - Saying what it is doing

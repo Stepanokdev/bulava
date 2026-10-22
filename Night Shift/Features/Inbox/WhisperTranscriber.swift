@@ -74,17 +74,50 @@ actor WhisperTranscriber {
         await ready(WhisperModels.choose(language: language), stage: stage) != nil
     }
 
+    /// Right after Bulava starts: a model left in `~/Documents` moves to where iCloud cannot take
+    /// it away, and with no model on this Mac one is downloaded now, in the background, rather
+    /// than inside the first sentence he dictates — at the desk or from the phone. A model already
+    /// here is not loaded yet: that takes memory, and from a local disk the first dictation loads
+    /// it in seconds.
+    func prepareAtLaunch(language: String) async {
+        WhisperModels.adoptLegacy()
+        guard WhisperModels.choose(language: language).needsDownload else { return }
+        Log.lifecycle.info("dictation: no model on this Mac, downloading it now")
+        _ = await install(language: language)
+    }
+
+    /// The load under way, if one is. The actor gives up its lock at every `await`, so without
+    /// this a launch prefetch, a phone and the composer asking at once each started their own
+    /// download of the same 600 MB into the same folder.
+    private var pending: (variant: String, task: Task<Bool, Never>)?
+
     private func ready(_ choice: WhisperModels.Choice,
                        stage: (@Sendable (Stage) -> Void)?) async -> WhisperKit? {
         if let pipe, loaded == choice.variant { return pipe }
+        if let pending, pending.variant == choice.variant {
+            stage?(choice.needsDownload ? .downloading(choice.variant) : .loading(choice.variant))
+            _ = await pending.task.value
+        } else {
+            let task = Task { await self.load(choice, stage: stage) }
+            pending = (choice.variant, task)
+            _ = await task.value
+            if pending?.variant == choice.variant { pending = nil }
+        }
+        return loaded == choice.variant ? pipe : nil
+    }
 
+    /// Loads (and, when it is not here, downloads) `choice` into `pipe`.
+    private func load(_ choice: WhisperModels.Choice,
+                      stage: (@Sendable (Stage) -> Void)?) async -> Bool {
         stage?(choice.needsDownload ? .downloading(choice.variant) : .loading(choice.variant))
         do {
             // `modelFolder` when it is already here: that skips the catalogue lookup entirely, so
             // an ambiguous name cannot send it to the network for a model sitting on disk.
             let kit = try await WhisperKit(
                 model: choice.variant,
+                downloadBase: WhisperModels.downloadBase,
                 modelFolder: choice.folder?.path,
+                tokenizerFolder: WhisperModels.downloadBase,
                 verbose: false,
                 logLevel: .error,
                 prewarm: false,
@@ -92,12 +125,12 @@ actor WhisperTranscriber {
                 download: choice.needsDownload)
             pipe = kit
             loaded = choice.variant
-            return kit
+            return true
         } catch {
             stage?(.idle)
             pipe = nil
             loaded = nil
-            return nil
+            return false
         }
     }
 }

@@ -168,6 +168,10 @@ nonisolated struct ConversationEntry: Identifiable, Codable, Equatable, Sendable
     /// settles those once, at launch, when by definition nothing is streaming.
     var turnFinished: Bool?
 
+    /// When the turn ended, from the transcript's own clock. With `at` (its start) it says how long
+    /// the agent worked: "Worked for 21m 40s" over the steps, the way ChatGPT shows it (22.10).
+    var turnEndedAt: Date?
+
     init(id: UUID = UUID(),
          productID: UUID,
          chatID: UUID? = nil,
@@ -220,6 +224,14 @@ nonisolated struct ConversationEntry: Identifiable, Codable, Equatable, Sendable
         hiddenNotice = try? c.decodeIfPresent(Bool.self, forKey: .hiddenNotice)
         codexWall = try? c.decodeIfPresent(String.self, forKey: .codexWall)
         turnFinished = try? c.decodeIfPresent(Bool.self, forKey: .turnFinished)
+        turnEndedAt = try? c.decodeIfPresent(Date.self, forKey: .turnEndedAt)
+    }
+
+    /// How long the agent worked on this answer, once it has finished.
+    var workedFor: TimeInterval? {
+        guard turnFinished == true, let end = turnEndedAt else { return nil }
+        let span = end.timeIntervalSince(at)
+        return span > 0 ? span : nil
     }
 
     var isSpoken: Bool { kind == .user || kind == .foreman || kind == .codex }

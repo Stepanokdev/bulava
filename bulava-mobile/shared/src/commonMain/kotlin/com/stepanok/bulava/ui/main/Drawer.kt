@@ -209,7 +209,7 @@ fun Drawer(
         }
         Hairline()
         // As at the foot of the Mac's sidebar, above the way to the settings.
-        home?.limits?.takeIf { it.engines.isNotEmpty() }?.let { LimitsSection(it, controller) }
+        home?.limits?.takeIf { it.engines.isNotEmpty() }?.let { LimitsSection(it, controller, stale = link !is LinkState.Connected) }
         ListRow(
             stringResource(Res.string.drawer_settings), modifier = Modifier.padding(8.dp),
             leading = { Icon(Icons.Settings, null, tint = c.textSecondary, modifier = Modifier.size(20.dp)) },

@@ -322,7 +322,8 @@ nonisolated enum UIControl {
 
     /// `  @x,y wxh` — a frame as the tree prints it, in screen points with the origin at the top left.
     static func placeText(_ frame: CGRect) -> String {
-        "  @\(Int(frame.minX.rounded())),\(Int(frame.minY.rounded())) \(Int(frame.width.rounded()))x\(Int(frame.height.rounded()))"
+        func n(_ value: CGFloat) -> String { Int(exactly: value.rounded()).map(String.init) ?? "?" }
+        return "  @\(n(frame.minX)),\(n(frame.minY)) \(n(frame.width))x\(n(frame.height))"
     }
 
     /// A press at one point, the pointer carried to another in small steps, and a release — what a
@@ -532,6 +533,10 @@ nonisolated enum UIControl {
         guard AXValueGetValue(unsafeDowncast(positionValue, to: AXValue.self), .cgPoint, &origin),
               AXValueGetValue(unsafeDowncast(sizeValue, to: AXValue.self), .cgSize, &size)
         else { return nil }
+        // A SwiftUI window can report an element with an infinite or NaN position or size. Such
+        // a frame is not a place on the screen, and converting it to Int would bring Bulava down.
+        let parts = [origin.x, origin.y, size.width, size.height]
+        guard parts.allSatisfy({ $0.isFinite && abs($0) < 1e9 }) else { return nil }
         return CGRect(origin: origin, size: size)
     }
 }

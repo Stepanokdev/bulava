@@ -51,6 +51,21 @@ import com.stepanok.bulava.link.Entry
 import com.stepanok.bulava.link.FileRef
 import com.stepanok.bulava.link.Question
 import com.stepanok.bulava.resources.Res
+import com.stepanok.bulava.resources.steps_deployed
+import com.stepanok.bulava.resources.steps_tools
+import com.stepanok.bulava.resources.steps_device
+import com.stepanok.bulava.resources.steps_browser
+import com.stepanok.bulava.resources.chat_worked_for
+import com.stepanok.bulava.resources.elapsed_hm
+import com.stepanok.bulava.resources.elapsed_ms
+import com.stepanok.bulava.resources.elapsed_s
+import com.stepanok.bulava.resources.steps_read
+import com.stepanok.bulava.resources.steps_edited
+import com.stepanok.bulava.resources.steps_searched
+import com.stepanok.bulava.resources.steps_ran
+import com.stepanok.bulava.resources.steps_helpers
+import com.stepanok.bulava.resources.steps_pages
+import com.stepanok.bulava.resources.steps_other
 import com.stepanok.bulava.resources.action_copy
 import com.stepanok.bulava.resources.action_edit
 import com.stepanok.bulava.resources.action_send_again
@@ -81,6 +96,7 @@ import com.stepanok.bulava.ui.theme.Icons
 import com.stepanok.bulava.ui.theme.Metrics
 import com.stepanok.bulava.ui.theme.toneColor
 import com.stepanok.bulava.ui.theme.toneWash
+import org.jetbrains.compose.resources.pluralStringResource
 import org.jetbrains.compose.resources.stringResource
 
 /** What every entry in one chat needs to know about where it is drawn. */
@@ -190,6 +206,12 @@ private fun AgentMessage(entry: Entry, ctx: ChatContext) {
         if (entry.kind == "codex") {
             Eyebrow("Codex", color = c.textFaint)
             Spacer(Modifier.height(6.dp))
+        }
+        // "Worked for 21m 40s" over a finished answer, the way ChatGPT shows an agent (22.10).
+        val worked = entry.workedMs
+        if (entry.finished == true && worked != null && worked >= 5_000) {
+            Text(stringResource(Res.string.chat_worked_for, elapsed(worked)), style = Bulava.type.meta, color = c.textFaint)
+            Spacer(Modifier.height(4.dp))
         }
         val blocks = entry.blocks
         if (blocks.isEmpty()) {
@@ -335,6 +357,48 @@ private fun BlockView(block: Block, ctx: ChatContext) {
     }
 }
 
+/** What a finished run of steps did, by kind: "Read 3 files, ran 4 commands" — what the Mac shows too. */
+@Composable
+private fun summary(steps: List<Activity>): String {
+    val done = steps.filter { it.status != "running" }
+    if (done.none { it.kind != null }) return ""
+    val order = listOf("read", "edit", "search", "run", "browser", "device", "tool", "deploy", "agent", "web", "other")
+    val tally = done.groupingBy { it.kind ?: "other" }.eachCount()
+    val parts = order.mapNotNull { kind ->
+        val n = tally[kind] ?: return@mapNotNull null
+        val res = when (kind) {
+            "read" -> Res.plurals.steps_read
+            "edit" -> Res.plurals.steps_edited
+            "search" -> Res.plurals.steps_searched
+            "run" -> Res.plurals.steps_ran
+            "browser" -> Res.plurals.steps_browser
+            "device" -> Res.plurals.steps_device
+            "tool" -> Res.plurals.steps_tools
+            "deploy" -> Res.plurals.steps_deployed
+            "agent" -> Res.plurals.steps_helpers
+            "web" -> Res.plurals.steps_pages
+            else -> Res.plurals.steps_other
+        }
+        pluralStringResource(res, n, n)
+    }
+    val first = parts.firstOrNull() ?: return ""
+    return (listOf(first.replaceFirstChar { it.uppercase() }) + parts.drop(1)).joinToString(", ")
+}
+
+/** 21 m 40 s, 1 h 5 m, 45 s. */
+@Composable
+private fun elapsed(ms: Long): String {
+    val s = ms / 1000
+    val h = s / 3600
+    val m = (s % 3600) / 60
+    val sec = s % 60
+    return when {
+        h > 0 -> stringResource(Res.string.elapsed_hm, h, m)
+        m > 0 -> stringResource(Res.string.elapsed_ms, m, sec)
+        else -> stringResource(Res.string.elapsed_s, sec)
+    }
+}
+
 @Composable
 private fun Steps(steps: List<Activity>) {
     val c = Bulava.colors
@@ -354,7 +418,7 @@ private fun Steps(steps: List<Activity>) {
             }
             Spacer(Modifier.width(8.dp))
             Text(
-                running?.sentence ?: (steps.lastOrNull()?.sentence ?: ""),
+                running?.sentence ?: summary(steps).ifBlank { steps.lastOrNull()?.sentence ?: "" },
                 style = Bulava.type.caption, color = c.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),
             )

@@ -101,11 +101,18 @@ final class LinkTranscriptions {
     /// is sitting in front of answers nothing; the phone would wait for a prompt in another room.
     /// Without a model the phone is told so, and the model is fetched now, once, so asking again in
     /// a few minutes works. He asked for this from the phone; that is what the download is for.
+    ///
+    /// With no model yet, the recording waits for it here rather than being refused. Refusing
+    /// deleted the recording, so every "try again" uploaded it anew and got the same refusal until
+    /// the download happened to be over — the endless retry he saw on the phone (22.10). Waiting,
+    /// the phone's repeat after its own timeout joins this same request (`running`) and gets the
+    /// words the moment the model is here. Since 1.15.4 the model is fetched when Bulava starts,
+    /// so this is the rare case.
     nonisolated static let whisper: Engine = { audio, language in
         #if canImport(WhisperKit)
-        guard await WhisperTranscriber.shared.isReadyOffline(language: language) else {
-            await LinkTranscriptions.fetchModel(language: language)
-            return .unavailable(String(localized: "Your Mac is fetching its dictation model, once only. Try again in a few minutes."))
+        if !(await WhisperTranscriber.shared.isReadyOffline(language: language)),
+           !(await WhisperTranscriber.shared.install(language: language)) {
+            return .unavailable(String(localized: "Your Mac could not download its dictation model. Check its internet connection and try again."))
         }
         guard let text = await WhisperTranscriber.shared.transcribe(url: audio, language: language) else {
             return .notTranscribed
@@ -116,19 +123,6 @@ final class LinkTranscriptions {
         #endif
     }
 
-    #if canImport(WhisperKit)
-    /// One download at a time, started and not waited for: the phone hears "try again in a few
-    /// minutes" now rather than after six hundred megabytes.
-    private static var fetching: Task<Void, Never>?
-
-    private static func fetchModel(language: String) {
-        guard fetching == nil else { return }
-        fetching = Task {
-            _ = await WhisperTranscriber.shared.install(language: language)
-            fetching = nil
-        }
-    }
-    #endif
 }
 
 /// The words of a recording, for the phone's composer.

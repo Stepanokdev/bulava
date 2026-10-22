@@ -19,7 +19,7 @@ bad() { printf '  \xe2\x9d\x8c %s\n' "$1"; fails=$((fails + 1)); }
 
 command -v tmux >/dev/null 2>&1 || { echo "⚠️  нема tmux — пропускаю"; exit 0; }
 
-TMP="$(mktemp -d -t chat-pipeline)" || exit 1
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/chat-pipeline.XXXXXXXX")" || exit 1
 KEEP_TMP="${KEEP_TMP:-0}"
 SESSION_PID=""
 cleanup() {

@@ -84,7 +84,13 @@ nonisolated enum WorkerActivity {
         case "Grep", "Glob":
             return ("searches the code", input["pattern"] as? String)
         case "Bash", "BashOutput":
-
+            // What the step is for, in the agent's own words, when it gave them: Claude Code asks
+            // for a `description` with every command. The command itself — a path-laden line like
+            // "D=/Users/…/instances/… ; …" — is not something to show a person (22.10).
+            if let said = (input["description"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines), !said.isEmpty {
+                return ("described %@", said)
+            }
             let cmd = (input["command"] as? String) ?? ""
             return ("runs %@", shorten(command: cmd))
         case "Task", "Agent":

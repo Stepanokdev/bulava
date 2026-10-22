@@ -23,6 +23,8 @@ nonisolated struct RelayResult: Sendable {
     /// itself. Everything else that ends in `.error` (cut off by the timeout, killed, a crash
     /// halfway through typing) may have landed, and sending it again could run the work twice.
     var undelivered = false
+    /// Claude Code was not signed in, so nothing was resumed: his to clear, not ours to repair.
+    var needsSignIn = false
 
     /// What `worker-send.sh` said, read into a result.
     ///
@@ -55,6 +57,9 @@ nonisolated struct RelayResult: Sendable {
         let humanLine = out.split(separator: "\n").map(String.init)
             .last { !$0.trimmingCharacters(in: .whitespaces).isEmpty && !$0.hasPrefix("TIER=") } ?? out
         var result = RelayResult(tier: tier, confirmed: confirmed, uncertain: uncertain, message: humanLine)
+        // A resume that stopped on Claude's sign-in: the engine says so in its marker line (see
+        // `handshake_blocker`), which the last human line alone would lose.
+        result.needsSignIn = StartRefusal.needsSignIn(out)
         if tier == .error {
             result.undelivered = !launched || endedBy == .neverStarted
                 || (endedBy == .exited && marker == .error && exitCode == 1

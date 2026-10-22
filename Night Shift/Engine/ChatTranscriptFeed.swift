@@ -322,7 +322,7 @@ final class ChatTranscriptFeed {
             // The reducer's own answer, written down while it is still in hand. Nothing outside
             // this fold can work it out afterwards, and the action that explains a finished result
             // needs it — see `ConversationEntry.turnFinished`.
-            store.setTurnFinished(entryID: id, turn.reducer.isFinished)
+            store.setTurnFinished(entryID: id, turn.reducer.isFinished, endedAt: turn.finishedAt)
         }
         retireStaleSegments()
         adoptLegacyReportKey()

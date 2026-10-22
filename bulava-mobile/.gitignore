@@ -26,3 +26,7 @@ secrets/
 *.p8
 *.p12
 *.mobileprovision
+
+# The App Store pictures: the captures are their source and stay; the contact sheets are made each run.
+!store/ios/screenshots-src/captures/
+store/ios/screenshots-src/out/

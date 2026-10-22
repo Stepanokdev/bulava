@@ -1,5 +1,6 @@
 #!/bin/bash
 set -u
+case "${OSTYPE:-}" in darwin*) ;; *) _P="$(dirname "${BASH_SOURCE[0]}")/lib/portable.sh"; [ -f "$_P" ] && . "$_P"; unset _P ;; esac
 STATE_DIR="$HOME/.claude/supervisor"
 mkdir -p "$STATE_DIR"
 

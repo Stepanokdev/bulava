@@ -36,6 +36,7 @@ import com.stepanok.bulava.link.EngineLimits
 import com.stepanok.bulava.link.LimitWindow
 import com.stepanok.bulava.link.Limits
 import com.stepanok.bulava.resources.Res
+import com.stepanok.bulava.resources.limits_as_of_last
 import com.stepanok.bulava.resources.limits_fold
 import com.stepanok.bulava.resources.limits_show
 import com.stepanok.bulava.state.AppController
@@ -49,7 +50,7 @@ import org.jetbrains.compose.resources.stringResource
  * window — as the Mac folds it; the fold is this phone's own and is kept.
  */
 @Composable
-fun LimitsSection(limits: Limits, controller: AppController) {
+fun LimitsSection(limits: Limits, controller: AppController, stale: Boolean = false) {
     val prefs = controller.platform.prefs
     var folded by remember { mutableStateOf(prefs.get(AppController.LIMITS_FOLDED) == "on") }
     fun toggle() {
@@ -85,7 +86,10 @@ fun LimitsSection(limits: Limits, controller: AppController) {
                 .padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(limits.title, style = Bulava.type.meta, color = c.textFaint, modifier = Modifier.weight(1f))
+            // Kept from the last time the Mac answered. Without saying so, a week-old "99 %" read as
+            // the state of things now (22.10).
+            Text(if (stale) limits.title + " · " + stringResource(Res.string.limits_as_of_last) else limits.title,
+                style = Bulava.type.meta, color = c.textFaint, modifier = Modifier.weight(1f))
             Icon(Icons.ChevronDown, null, tint = c.textFaint, modifier = Modifier.size(14.dp).rotate(180f))
         }
         Column(verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.padding(top = 4.dp)) {

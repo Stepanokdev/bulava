@@ -204,6 +204,7 @@
     <string name="dictation_note">Voice note, %1$s</string>
     <string name="dictation_sending">Sending it to your Mac…</string>
     <string name="dictation_transcribing">Transcribing on your Mac…</string>
+    <string name="dictation_transcribing_slow">Your Mac is getting its voice model ready. This happens once; the words will come by themselves.</string>
     <string name="dictation_retry">Try again</string>
     <string name="dictation_discard">Discard</string>
     <string name="dictation_failed_offline">Your Mac is out of reach. The recording is kept here.</string>
@@ -254,4 +255,53 @@
     <string name="decisions_as_sent">This is what you sent. Change anything to send a correction.</string>
     <string name="report_tab_document">Document</string>
     <string name="report_tab_questions">Questions · %1$d/%2$d</string>
+    <string name="chat_worked_for">Worked for %1$s</string>
+    <string name="elapsed_hm">%1$d h %2$d m</string>
+    <string name="elapsed_ms">%1$d m %2$d s</string>
+    <string name="elapsed_s">%1$d s</string>
+    <plurals name="steps_read">
+        <item quantity="one">read %1$d file</item>
+        <item quantity="other">read %1$d files</item>
+    </plurals>
+    <plurals name="steps_edited">
+        <item quantity="one">edited %1$d file</item>
+        <item quantity="other">edited %1$d files</item>
+    </plurals>
+    <plurals name="steps_searched">
+        <item quantity="one">searched the code once</item>
+        <item quantity="other">searched the code %1$d times</item>
+    </plurals>
+    <plurals name="steps_ran">
+        <item quantity="one">ran %1$d command</item>
+        <item quantity="other">ran %1$d commands</item>
+    </plurals>
+    <plurals name="steps_helpers">
+        <item quantity="one">started %1$d helper</item>
+        <item quantity="other">started %1$d helpers</item>
+    </plurals>
+    <plurals name="steps_pages">
+        <item quantity="one">read %1$d page</item>
+        <item quantity="other">read %1$d pages</item>
+    </plurals>
+    <plurals name="steps_other">
+        <item quantity="one">%1$d other step</item>
+        <item quantity="other">%1$d other steps</item>
+    </plurals>
+    <string name="limits_as_of_last">as of the last connection</string>
+    <plurals name="steps_browser">
+        <item quantity="one">worked in the browser once</item>
+        <item quantity="other">worked in the browser %1$d times</item>
+    </plurals>
+    <plurals name="steps_device">
+        <item quantity="one">worked on the device once</item>
+        <item quantity="other">worked on the device %1$d times</item>
+    </plurals>
+    <plurals name="steps_tools">
+        <item quantity="one">used a tool once</item>
+        <item quantity="other">used tools %1$d times</item>
+    </plurals>
+    <plurals name="steps_deployed">
+        <item quantity="one">deployed once</item>
+        <item quantity="other">deployed %1$d times</item>
+    </plurals>
 </resources>

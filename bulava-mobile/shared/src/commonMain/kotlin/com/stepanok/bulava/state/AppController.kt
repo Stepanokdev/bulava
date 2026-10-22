@@ -27,6 +27,7 @@ import com.stepanok.bulava.platform.PhoneNotification
 import com.stepanok.bulava.platform.PickedFile
 import com.stepanok.bulava.platform.PlatformServices
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -177,6 +178,18 @@ class AppController(
         data object Settings : Destination
     }
 
+    /**
+     * Asks to start the demo: the code [DEMO_LINK], scanned in the app or opened from the Camera.
+     * It is the code App Review is given, so that "Scan the code" leads somewhere without a Mac on
+     * the reviewer's network — a real pairing code lasts five minutes and needs that Mac.
+     */
+    private val _demoRequests = MutableSharedFlow<Unit>(replay = 1, extraBufferCapacity = 1)
+    val demoRequests: SharedFlow<Unit> = _demoRequests
+
+    /** The demo asked for has started; a screen that comes back later does not start it again. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun demoStarted() = _demoRequests.resetReplayCache()
+
     private val _openRequests = MutableSharedFlow<OpenRequest>(replay = 1, extraBufferCapacity = 4)
     val openRequests: SharedFlow<OpenRequest> = _openRequests
 
@@ -221,6 +234,10 @@ class AppController(
      * on the Lock Screen's activity — `bulava://open?product=…&chat=…` — which opens that chat.
      */
     fun handleLink(url: String): Boolean {
+        if (url.trim() == DEMO_LINK) {
+            _demoRequests.tryEmit(Unit)
+            return true
+        }
         if (url.startsWith("bulava://open")) {
             val query = url.substringAfter('?', "").split('&').mapNotNull { part ->
                 part.split('=', limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] }
@@ -1003,6 +1020,9 @@ class AppController(
         /** The kind of a request about the Mac's setup, and the `about` of a notification about it. */
         const val READINESS = "readiness"
 
+        /** The demo's code: the same every time, needs no Mac, and pairs with nothing. */
+        const val DEMO_LINK = "bulava://demo"
+
         private const val DRAFTS = "bulava.drafts"
         private const val OUTBOX = "bulava.outbox"
         private const val DECISIONS = "bulava.decisions"
@@ -1084,7 +1104,7 @@ object ChatMerge {
         val state = view.state.copy(
             title = h.title, archived = h.archived, status = h.status, activity = h.activity,
             degradation = h.degradation, queueCount = h.queueCount, busy = h.busy,
-            hasEarlier = h.hasEarlier, actions = h.actions, composer = h.composer,
+            hasEarlier = h.hasEarlier, actions = h.actions, composer = h.composer, closed = h.closed,
         )
         return view.copy(state = state, entries = merged)
     }

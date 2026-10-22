@@ -1,5 +1,6 @@
 package com.stepanok.bulava.ui.chat
 
+import com.stepanok.bulava.ui.components.MacActions
 import com.stepanok.bulava.ui.system.systemClickable
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -99,6 +100,12 @@ fun Composer(
     val busy = chats[chatID]?.state?.busy == true
     // The chat's own run control from a Mac that keeps one per chat; the Mac's default from an older one.
     val chatComposer = chats[chatID]?.state?.composer
+    // The run is over: there is nowhere for a message to go, so the field is not offered (22.10).
+    val closed = chats[chatID]?.state?.closed
+    if (closed != null && !archived) {
+        ClosedComposer(controller, closed, connected, modifier)
+        return
+    }
     val composer = chatComposer ?: home?.composer
     val recordingHere = recording?.chatID == chatID
     val transcribing = notes.any { it.chatID == chatID && it.stage != com.stepanok.bulava.state.VoiceNote.Stage.Failed }
@@ -339,6 +346,28 @@ private fun OptionsSheet(controller: AppController, groups: List<OptionGroup>, c
                         if (selected) Icon(Icons.Check, null, tint = c.accent, modifier = Modifier.size(18.dp))
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * In place of the field, for a chat that takes no more messages: why, in the Mac's words, and the
+ * one thing that helps. Not a greyed field — that invites typing and then explains.
+ */
+@Composable
+private fun ClosedComposer(controller: AppController, closed: com.stepanok.bulava.link.Closed, connected: Boolean, modifier: Modifier) {
+    val c = Bulava.colors
+    Column(modifier.fillMaxWidth().background(c.background).padding(horizontal = 12.dp, vertical = 8.dp)) {
+        Column(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(c.surface)
+                .border(1.dp, c.line, RoundedCornerShape(22.dp)).padding(horizontal = 16.dp, vertical = 14.dp)
+                .semantics(mergeDescendants = true) {},
+        ) {
+            Text(closed.message, style = Bulava.type.callout, color = c.textSecondary)
+            closed.action?.let { action ->
+                Spacer(Modifier.height(10.dp))
+                MacActions(listOf(action), onInvoke = { a, input -> controller.invokeNow(a, input) }, enabled = connected)
             }
         }
     }

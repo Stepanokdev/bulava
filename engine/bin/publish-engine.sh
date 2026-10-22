@@ -41,7 +41,7 @@ trap 'rm -rf "$STAGE"' EXIT INT TERM
 # What ships: the engine's code, its prompts, its hooks. The engine keeps nothing it learned
 # about anybody, so there is nothing personal here to leave behind — the audit below proves it
 # rather than trusting it.
-for item in bin hooks tests supervisor claude-commands assets install.sh ENGINE-README.md; do
+for item in bin hooks tests supervisor claude-commands assets windows install.sh ENGINE-README.md; do
   [ -e "$ROOT/$item" ] || continue
   cp -R "$ROOT/$item" "$STAGE/$item"
 done

@@ -258,7 +258,7 @@ class DictationTest {
     }
 
     @Test
-    fun aMacThatTakesTooLongIsAskedAgainUnderTheSameRequestAndTheWordsGoInOnce() = runTest {
+    fun aMacThatTakesTooLongIsAskedAgainByItselfUnderTheSameRequestAndTheWordsGoInOnce() = runTest {
         val mac = Mac()
         val (_, c, scope) = setup(mac)
         advanceUntilIdle()
@@ -268,19 +268,37 @@ class DictationTest {
         c.dictation.finish()
         advanceTimeBy(Dictation.TRANSCRIBE_TIMEOUT + 1_000)
 
+        // Not failed and not "try again": the phone keeps waiting and says the Mac is preparing.
         val note = c.dictation.notes.value.single()
-        assertEquals(ErrorCodes.TIMEOUT, note.failure)
+        assertEquals(VoiceNote.Stage.Transcribing, note.stage)
+        assertTrue(note.slow, "past the first wait the note says the Mac is getting its model ready")
         assertNotNull(note.ref, "nothing says the Mac is done with it: the same file is named again")
 
-        // The Mac finished meanwhile and remembers the words under this request.
+        // The Mac finishes meanwhile and remembers the words under this request.
         mac.answer = { "said once" to null }
-        c.dictation.retry(note.requestID)
-        advanceUntilIdle()
-        c.dictation.retry(note.requestID) // a second press after the words are in does nothing
         advanceUntilIdle()
         assertEquals("said once", c.draft("C1").text)
         assertEquals(1, mac.uploads.size, "the recording went up once")
-        assertEquals(2, mac.transcribeCalls.size)
+        // This stand-in leaves a call it got before it had the words unanswered, so the second
+        // wait runs out too and a third ask fetches them; the real Mac answers the waiting ask.
+        assertEquals(3, mac.transcribeCalls.size)
+        assertTrue(mac.transcribeCalls.map { it["requestID"] }.distinct().size == 1, "always the same request")
+        scope.cancel()
+    }
+
+    @Test
+    fun aMacThatNeverAnswersIsGivenUpOnAfterThePatienceRunsOut() = runTest {
+        val mac = Mac()
+        val (_, c, scope) = setup(mac)
+        advanceUntilIdle()
+        mac.answer = { null }
+        assertEquals(Dictation.Start.Started, c.dictation.start("P1", "C1"))
+        time += 3_000
+        c.dictation.finish()
+        advanceTimeBy((Dictation.PATIENCE + 2) * (Dictation.TRANSCRIBE_TIMEOUT + 1_000))
+        val note = c.dictation.notes.value.single()
+        assertEquals(ErrorCodes.TIMEOUT, note.failure, "not forever: then the person decides")
+        assertEquals(Dictation.PATIENCE + 1, mac.transcribeCalls.size)
         scope.cancel()
     }
 

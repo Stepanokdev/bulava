@@ -205,7 +205,9 @@ night-shift status              # both are visible
 night-shift stop --all          # stop all of them
 ```
 
-Commands: `start [dir]` · `stop [dir|--all]` · `status` · `attach [dir]` · `list`.
+Commands: `start [dir]` · `stop [dir|--all]` · `status [--json]` · `attach [dir]` · `list` ·
+`config …` · `models` · `doctor` · `completion <shell>` · `help [command]`. Every command takes
+`--help`.
 Attaching is always `night-shift attach "<project>"` (it finds the `night-<slug>` session itself;
 do not rely on a fixed name `night`).
 
@@ -357,6 +359,26 @@ architectural fork, a lifecycle/concurrency/reachability risk or ambiguous behav
 numeric ceiling: every consultation stores its question, answer, time and tokens separately, and
 the real limit is the available Codex quota. Mechanical work should not create consultations for
 ritual's sake. After implementation, the independent review gate works as before.
+
+## Settings from the terminal (`night-shift config`)
+
+A terminal user does not have to export variables. `night-shift config set <key> <value>` writes
+`~/.config/night-shift/config.json` (`NIGHT_SHIFT_CONFIG` moves it), globally or with
+`--project <dir>` for one folder; `night-shift config keys` lists every key with its values, and each
+maps onto one of the variables below (`claude.model` → `SUPERVISOR_CLAUDE_MODEL`, `codex.effort` →
+`SUPERVISOR_CODEX_EFFORT`, …). `start` takes the common ones as flags: `--model`, `--effort`,
+`--codex-model`, `--codex-effort`, `--lang`, `--permission-mode`, `--no-web`, `--set key=value`.
+
+Precedence on a start, highest first: a flag, an exported variable whose value differs from the
+default, the project's setting, the global one, `supervisor/config.sh`. The result is written to the
+run's `run-env` as before, and `config set <key> <value> --run [dir]` rewrites the keys that a running
+run re-reads (Codex model and depth, language, report writer, collaboration, web).
+
+The file is never read for a start that comes from the Bulava app (`SUPERVISOR_APP_ANSWERS`,
+`SUPERVISOR_RUN_ENV_FROM_APP`, `SUPERVISOR_CHAT_CONTEXT_FILE`, or a process carrying the app's bundle
+id): the app sends its own choices with every call. `NIGHT_SHIFT_SETTINGS=off|on` forces either way.
+Each instance records who started it in `origin` (`app` or `cli`), and one start per project runs at
+a time (`locks/start-<slug>`).
 
 ## Settings (environment variables)
 

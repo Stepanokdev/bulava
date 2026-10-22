@@ -52,6 +52,11 @@ case "$out" in *"робоча тека, а не репозиторій"*) ok "th
   *) bad "no refusal — got: $(printf '%s' "$out" | head -2)" ;; esac
 case "$out" in *"frontend-app-home"*|*"src/edx-platform"*) ok "it names the repositories it found" ;;
   *) bad "the refusal does not say which repositories are in there" ;; esac
+# 20 Oct, 1.14: this very refusal reached us as an anonymous error report, because the app could not
+# tell it from a broken start and offered to repair it. The marker is what the app reads.
+printf '%s\n' "$out" | grep -qx "start-refused=folder" \
+  && ok "the refusal carries the marker the app reads as 'yours to change'" \
+  || bad "no start-refused=folder line — the app reports this refusal as a bug"
 [ -e "$WS/.git" ] && bad "it created a repository over the workspace anyway" \
                   || ok "no .git was created in the workspace"
 if ( cd "$WS/src/edx-platform" && git status --porcelain | grep -q .; ) then

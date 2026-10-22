@@ -43,6 +43,8 @@ data class VoiceNote(
     val failure: String? = null,
     /** The Mac's own words for it, when it said any. */
     val message: String? = null,
+    /** The first wait ran out and the phone is waiting again: the Mac is preparing its model. */
+    val slow: Boolean = false,
 ) {
     enum class Stage { Sending, Transcribing, Failed }
 
@@ -207,6 +209,17 @@ class Dictation internal constructor(
             uploadedNow = true
         }
         var result = transcribe(note)
+        // Past the wait, the Mac is usually still getting its model ready (a download or the first
+        // load after a restart). Asking again joins that same request on the Mac, so the phone
+        // keeps asking by itself instead of offering "try again" over and over until it happens
+        // to work — what he kept seeing (22.10). Only while the Mac is reachable, and not forever.
+        var waits = 0
+        while (result is CallResult.Failed && result.error.code == ErrorCodes.TIMEOUT
+            && controller.link.isConnected && waits < PATIENCE && note(requestID) != null) {
+            waits++
+            note(requestID)?.let { replace(it.copy(stage = VoiceNote.Stage.Transcribing, slow = true)) }
+            result = transcribe(note(requestID) ?: return)
+        }
         // The Mac no longer has the file — it was restarted, or it heard an earlier copy and that
         // attempt failed. Once more, with the recording sent again; never more than once.
         if (!uploadedNow && result is CallResult.Failed && result.error.code == ErrorCodes.NOT_FOUND) {
@@ -245,7 +258,7 @@ class Dictation internal constructor(
     }
 
     private suspend fun transcribe(note: VoiceNote): CallResult {
-        replace(note.copy(stage = VoiceNote.Stage.Transcribing))
+        replace(note.copy(stage = VoiceNote.Stage.Transcribing, slow = note.slow))
         return controller.link.call("audio.transcribe", AppController.args(
             "requestID" to note.requestID, "ref" to note.ref, "chatID" to note.chatID,
         ), TRANSCRIBE_TIMEOUT)
@@ -318,6 +331,9 @@ class Dictation internal constructor(
          * again joins the transcription already under way on the Mac rather than starting another.
          */
         const val TRANSCRIBE_TIMEOUT = 150_000L
+        /** How many more waits of [TRANSCRIBE_TIMEOUT] before giving up: about 20 minutes, enough
+         * for the Mac to download its dictation model on a slow connection. */
+        const val PATIENCE = 8
         /**
          * A recording that has run this long was forgotten rather than meant: it stops by itself
          * and is kept, well under what the link takes (AAC at 64 kbps is about half a megabyte a

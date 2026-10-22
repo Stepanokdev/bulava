@@ -58,7 +58,9 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
 
     func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput objects: [AVMetadataObject], from connection: AVCaptureConnection) {
         guard !delivered, let code = objects.compactMap({ ($0 as? AVMetadataMachineReadableCodeObject)?.stringValue })
-            .first(where: { $0.contains("#") }) else { return }
+            // A pairing code carries its key after "#"; "bulava://demo" is the demo's code
+            // (AppController.DEMO_LINK), the one App Review is given.
+            .first(where: { $0.contains("#") || $0.trimmingCharacters(in: .whitespaces) == "bulava://demo" }) else { return }
         delivered = true
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         session.stopRunning()

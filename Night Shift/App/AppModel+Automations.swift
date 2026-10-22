@@ -1289,6 +1289,40 @@ extension AppModel {
         return await WorkCopies.status(of: copy)
     }
 
+    // MARK: - A run that is over
+
+    /// Why nothing can be sent in this chat any more, or nil while it can go on.
+    ///
+    /// A run whose copy has been cleaned up, or a job whose folder is gone, has nowhere to work.
+    /// Sending into it was refused only after the message left — a failed bubble, a toast, and in
+    /// 1.15.3 a repair and an anonymous report for a run that was simply over (21.10). He asked
+    /// for the field to say so before anything is typed (22.10): this is what the Mac's composer
+    /// and the phone's show in its place. The same answers as `executionProject`, read without
+    /// waiting; that one still has the last word for a send that slips past.
+    func chatClosure(_ chatID: UUID?) -> ChatClosure? {
+        guard let chatID, let chat = conversations.chat(id: chatID) else { return nil }
+        let automationID = chat.automationRunID.flatMap { automations.run(id: $0)?.automationID }
+        if let copyID = chat.workCopyID {
+            if copyOperations.contains(copyID) {
+                return ChatClosure(message: String(localized: "Its copy is being merged or cleaned up right now. Send again in a moment."),
+                                   startAgain: nil, passing: true)
+            }
+            if automations.copy(id: copyID)?.isLive == true { return nil }
+            guard chat.isAutomationRun else { return nil } // an ordinary chat gets a new copy
+            return ChatClosure(message: String(localized: "This run's copy has already been cleaned up, so there is nowhere to continue it. Start the automation again for a fresh run."),
+                               startAgain: automationID)
+        }
+        if let runID = chat.automationRunID, let run = automations.run(id: runID), run.isJob {
+            guard JobFolders.existing(for: run.automationID) == nil else { return nil }
+            return ChatClosure(message: String(localized: "This run's folder is gone, so there is nowhere to continue it. Start the automation again for a fresh run."),
+                               startAgain: run.automationID)
+        }
+        if chat.isAutomationRun {
+            return ChatClosure(message: String(localized: "This run has no copy to work in."), startAgain: automationID)
+        }
+        return nil
+    }
+
     // MARK: - A copy for an ordinary chat
 
     /// The folder this conversation's worker actually runs in: its copy when it has one, his
@@ -1297,7 +1331,8 @@ extension AppModel {
         guard let chat = conversations.chat(id: chatID) else { return .success(primary) }
         if let copyID = chat.workCopyID, let copy = automations.copy(id: copyID) {
             if copyOperations.contains(copyID) {
-                return .failure(ChatCopyRefusal(message: String(localized: "Its copy is being merged or cleaned up right now. Send again in a moment.")))
+                return .failure(ChatCopyRefusal(message: String(localized: "Its copy is being merged or cleaned up right now. Send again in a moment."),
+                                                needsYou: true))
             }
             // Asked again after the wait: a merge or a removal may have taken it meanwhile.
             if copy.isLive, await WorkCopies.isOurs(copy), !copyOperations.contains(copyID),
@@ -1307,13 +1342,15 @@ extension AppModel {
                 return .success(inCopy)
             }
             if chat.isAutomationRun {
-                return .failure(ChatCopyRefusal(message: String(localized: "This run's copy has already been cleaned up, so there is nowhere to continue it. Start the automation again for a fresh run.")))
+                return .failure(ChatCopyRefusal(message: String(localized: "This run's copy has already been cleaned up, so there is nowhere to continue it. Start the automation again for a fresh run."),
+                                                needsYou: true, startAgain: chat.automationRunID.flatMap { automations.run(id: $0)?.automationID }))
             }
         } else if let runID = chat.automationRunID, let run = automations.run(id: runID), run.isJob {
             // A job works in its automation's own plain folder, kept between runs — so a run he
             // answers or asks more of the next day still has somewhere to go on.
             guard let folder = JobFolders.existing(for: run.automationID) else {
-                return .failure(ChatCopyRefusal(message: String(localized: "This run's folder is gone, so there is nowhere to continue it. Start the automation again for a fresh run.")))
+                return .failure(ChatCopyRefusal(message: String(localized: "This run's folder is gone, so there is nowhere to continue it. Start the automation again for a fresh run."),
+                                                needsYou: true, startAgain: run.automationID))
             }
             var inFolder = primary
             inFolder.path = folder.path
@@ -1828,9 +1865,23 @@ extension AppModel {
     }
 }
 
+/// A chat that cannot take a message any more, and what to do instead.
+nonisolated struct ChatClosure: Equatable, Sendable {
+    var message: String
+    /// The automation to run again, when a fresh run is the way on.
+    var startAgain: UUID?
+    /// It will pass by itself: a merge or a clean-up under way, not a run that is over.
+    var passing = false
+}
+
 /// Why a conversation that should work in a copy was not sent anywhere.
 nonisolated struct ChatCopyRefusal: Error, Equatable, Sendable {
     var message: String
+    /// Nothing is broken: the run's copy or folder is gone, or is being taken away right now. Only
+    /// he can go on — wait, or start the automation again — so nothing is repaired or reported.
+    var needsYou = false
+    /// The automation a fresh run would come from, when starting one is the way on.
+    var startAgain: UUID?
 }
 
 extension Optional {

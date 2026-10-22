@@ -46,7 +46,7 @@ JSON
   if [ "$(worker_status "$SESSION")" = "idle" ]; then ok "the session file is found by tmux name"
   else bad "worker_status did not find the session (got: $(worker_status "$SESSION" 2>&1))"; fi
 
-  sed -i '' 's/"status":"idle"/"status":"busy"/' "$HOME/.claude/sessions/$$.json"
+  sed -i.bak 's/"status":"idle"/"status":"busy"/' "$HOME/.claude/sessions/$$.json" && rm -f "$HOME/.claude/sessions/$$.json.bak"
   if _turn_running "$SESSION"; then ok "busy is believed"; else bad "a busy CLI read as idle"; fi
 
   # A dead pid is a leftover file, not a live worker.

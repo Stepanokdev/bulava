@@ -28,7 +28,7 @@ bad() { printf '  \xe2\x9d\x8c %s\n' "$1"; fails=$((fails + 1)); }
 command -v tmux >/dev/null 2>&1 || { echo "SKIP: tmux not installed"; exit 0; }
 command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 not installed"; exit 0; }
 
-TMP="$(mktemp -d -t hung-turn)" || exit 1
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/hung-turn.XXXXXXXX")" || exit 1
 tmux_isolate "$TMP/tmux"
 trap 'tmux_cleanup; rm -rf "$TMP"' EXIT INT TERM
 

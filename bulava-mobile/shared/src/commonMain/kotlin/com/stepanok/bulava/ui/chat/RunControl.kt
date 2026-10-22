@@ -1,10 +1,14 @@
 package com.stepanok.bulava.ui.chat
 
+import androidx.compose.ui.platform.testTag
+import kotlinx.coroutines.delay
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitEachGesture
 import com.stepanok.bulava.ui.system.systemClickable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -224,7 +228,26 @@ private fun ModelMenu(controller: AppController, group: OptionGroup, chatID: Str
 internal fun DepthScale(count: Int, index: Int, label: String, name: String, modifier: Modifier, onChange: (Int) -> Unit) {
     val c = Bulava.colors
     val latest by rememberUpdatedState(onChange)
-    val current by rememberUpdatedState(index)
+    // What the finger is on while it moves, and what was chosen until the Mac says so. The knob
+    // draws from these, not from the Mac's echo: every stop crossed used to go to the Mac and back
+    // before the knob moved, an older echo threw it back, and dragging felt like wading (22.10).
+    var dragStop by remember { mutableStateOf<Int?>(null) }
+    var pending by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(index, pending) {
+        val chosen = pending ?: return@LaunchedEffect
+        if (chosen == index) { pending = null; return@LaunchedEffect }
+        delay(2_500) // the Mac did not take it: show what it has
+        pending = null
+    }
+    val shown = (dragStop ?: pending ?: index).coerceIn(0, max(count - 1, 0))
+    // Read at the moment of the gesture, not when the pointer handler was made: it is made once
+    // per `count`, so a captured `index` stayed at the depth the sheet opened with, and going
+    // back to it after one change sent nothing and the knob slid back (review, 22.10).
+    val currentIndex by rememberUpdatedState(index)
+    val commit by rememberUpdatedState { stop: Int ->
+        pending = stop
+        if (stop != currentIndex) latest(stop)
+    }
     val knobColor = if (c.isDark) Color(0xFFF2F2F3) else Color.White
     BoxWithConstraints(modifier.height(Metrics.touch)) {
         val height = 22.dp
@@ -239,29 +262,34 @@ internal fun DepthScale(count: Int, index: Int, label: String, name: String, mod
                         if (gap <= 0f) return 0
                         return ((x - inset - knob / 2) / gap).roundToInt().coerceIn(0, count - 1)
                     }
-                    detectTapGestures { offset -> stopAt(offset.x).let { if (it != current) latest(it) } }
-                }
-                .pointerInput(count) {
-                    fun stopAt(x: Float): Int {
-                        val knob = height.toPx() - 6.dp.toPx()
-                        val inset = 6.dp.toPx()
-                        val usable = max(size.width - knob - inset * 2, 1f)
-                        val gap = if (count > 1) usable / (count - 1) else 0f
-                        if (gap <= 0f) return 0
-                        return ((x - inset - knob / 2) / gap).roundToInt().coerceIn(0, count - 1)
+                    // One gesture for tap and drag, and the touch is ours from the first contact:
+                    // the sheet's own drag and the page's scroll no longer win it half the time.
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
+                        dragStop = stopAt(down.position.x)
+                        var finished = false
+                        try {
+                            finished = drag(down.id) { change ->
+                                change.consume()
+                                dragStop = stopAt(change.position.x)
+                            }
+                        } finally {
+                            // A cancelled gesture (the sheet closed under the finger) must not
+                            // leave the knob drawn where the finger was.
+                            val stop = dragStop
+                            dragStop = null
+                            if (finished && stop != null) commit(stop)
+                        }
                     }
-                    detectHorizontalDragGestures { change, _ ->
-                        val stop = stopAt(change.position.x)
-                        if (stop != current) latest(stop)
-                    }
                 }
+                .testTag(DEPTH_SCALE_TAG)
                 .semantics {
                     contentDescription = name
                     stateDescription = label
-                    progressBarRangeInfo = ProgressBarRangeInfo(index.toFloat(), 0f..(count - 1).coerceAtLeast(1).toFloat(), steps = (count - 2).coerceAtLeast(0))
+                    progressBarRangeInfo = ProgressBarRangeInfo(shown.toFloat(), 0f..(count - 1).coerceAtLeast(1).toFloat(), steps = (count - 2).coerceAtLeast(0))
                     setProgress { target ->
-                        val stop = target.roundToInt().coerceIn(0, count - 1)
-                        if (stop != current) latest(stop)
+                        commit(target.roundToInt().coerceIn(0, count - 1))
                         true
                     }
                 },
@@ -272,14 +300,14 @@ internal fun DepthScale(count: Int, index: Int, label: String, name: String, mod
             val inset = 6.dp.toPx()
             val usable = max(size.width - knob - inset * 2, 1f)
             val gap = if (count > 1) usable / (count - 1) else 0f
-            val centre = inset + knob / 2 + gap * index.coerceIn(0, max(count - 1, 0))
+            val centre = inset + knob / 2 + gap * shown
             val radius = androidx.compose.ui.geometry.CornerRadius(h / 2, h / 2)
             drawRoundRect(c.surfaceRaised, topLeft = Offset(0f, top), size = Size(size.width, h), cornerRadius = radius)
             drawRoundRect(c.accent, topLeft = Offset(0f, top), size = Size(min(centre + knob / 2 + 3.dp.toPx(), size.width), h), cornerRadius = radius)
             for (stop in 0 until count) {
                 val x = inset + knob / 2 + gap * stop
                 drawCircle(
-                    if (stop <= index) c.onAccent.copy(alpha = 0.55f) else c.textFaint.copy(alpha = 0.45f),
+                    if (stop <= shown) c.onAccent.copy(alpha = 0.55f) else c.textFaint.copy(alpha = 0.45f),
                     radius = 1.75.dp.toPx(), center = Offset(x, size.height / 2),
                 )
             }
@@ -333,3 +361,6 @@ internal fun EngineGlyph(engine: String, modifier: Modifier, tint: Color) {
         }
     }
 }
+
+/** The scale's tag, for UI tests. */
+internal const val DEPTH_SCALE_TAG = "depth-scale"

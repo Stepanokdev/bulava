@@ -1,5 +1,9 @@
 #!/bin/bash
 set -u
+# Which SUPERVISOR_* variables the CALLER exported, taken before config.sh gives every one of them a
+# default and the two become indistinguishable. A variable somebody set on purpose outranks the
+# settings file (`ns_apply_settings`).
+_NS_CALLER_SET="$(compgen -e 2>/dev/null | grep '^SUPERVISOR_' | tr '\n' ' ')"
 BIN_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 SELF="${BASH_SOURCE[0]}"
 while [ -L "$SELF" ]; do d="$(cd -P "$(dirname "$SELF")" && pwd)"; SELF="$(readlink "$SELF")"; case "$SELF" in /*) ;; *) SELF="$d/$SELF";; esac; done
@@ -10,6 +14,85 @@ SUP_DIR="$ROOT/supervisor"
 mkdir -p "$SUP_INSTANCES"
 
 cleanup_global_marker() { _any_instance || rm -f "$SUP_STATE/night-mode"; }
+
+# ── The terminal's own settings (`night-shift config`) ────────────────────────────────────────
+#
+# Kept in ~/.config/night-shift/config.json and read by `ns-cli.py`. They reach a run the one way
+# the engine already understands — SUPERVISOR_* variables at start, then the run's run-env file —
+# so nothing downstream had to learn about them.
+#
+# The desktop app is never subject to them. It keeps its own choices and sends them with every call
+# (SUPERVISOR_APP_ANSWERS and friends), and a process it spawned carries its bundle id; either one
+# means the file is not read at all, and a start with no flags never even runs Python. So a person
+# can use both at once and tune each without the other changing under them.
+ns_cli() { python3 "$BIN_DIR/ns-cli.py" "$@"; }
+
+ns_from_app() {
+  [ -n "${SUPERVISOR_APP_ANSWERS:-}${SUPERVISOR_RUN_ENV_FROM_APP:-}${SUPERVISOR_CHAT_CONTEXT_FILE:-}" ] && return 0
+  case "${__CFBundleIdentifier:-}" in stepanok.com.Night-Shift*) return 0 ;; esac
+  return 1
+}
+
+ns_settings_enabled() {
+  case "${NIGHT_SHIFT_SETTINGS:-}" in off|0) return 1 ;; on|1) return 0 ;; esac
+  ! ns_from_app
+}
+
+ns_config_file() {
+  printf '%s' "${NIGHT_SHIFT_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/night-shift/config.json}"
+}
+
+# What `ns-cli.py env` may set: the env names of its settings table, and nothing else.
+_NS_SETTABLE="SUPERVISOR_CLAUDE_MODEL SUPERVISOR_CLAUDE_EFFORT SUPERVISOR_CODEX_MODEL SUPERVISOR_CODEX_EFFORT \
+SUPERVISOR_REPORT_LANGUAGE SUPERVISOR_REPORT_WRITER SUPERVISOR_COLLABORATION_MODE SUPERVISOR_PERMISSION_MODE \
+SUPERVISOR_WORK_BRANCH SUPERVISOR_NO_WEB SUPERVISOR_MAX_ROUNDS SUPERVISOR_MAX_ROUNDS_HARD SUPERVISOR_STALL_LIMIT \
+SUPERVISOR_VERIFIER_ENABLED SUPERVISOR_USAGE_GUARD SUPERVISOR_USAGE_WEEK_GUARD SUPERVISOR_IDLE_KILL_HOURS \
+SUPERVISOR_SKILL_AUTONOMOUS"
+
+ns_apply_settings() {   # $1=project dir, then any `--set key=value` pairs from this start's flags
+  local proj="$1" out name val use_file=1
+  shift
+  ns_settings_enabled || use_file=0
+  [ -f "$(ns_config_file)" ] || use_file=0
+  [ "$use_file" = 1 ] || [ $# -gt 0 ] || return 0
+  command -v python3 >/dev/null 2>&1 || { echo "❌ python3 не знайдено — без нього налаштування й прапорці моделі не застосувати" >&2; return 1; }
+  if [ "$use_file" = 1 ]; then
+    # A variable the caller exported only outranks the file when it says something the engine's own
+    # default does not. A parent that sourced supervisor-lib.sh — the queue runner, a test — exports
+    # every default, and those are not anybody's choice.
+    local caller="${_NS_FLAG_SET:-}" defaults n
+    defaults="$(for n in $_NS_SETTABLE; do unset "$n"; done
+                . "$SUP_DIR/config.sh" >/dev/null 2>&1
+                for n in $_NS_SETTABLE; do printf '%s=%s\n' "$n" "${!n:-}"; done)"
+    for n in $_NS_CALLER_SET; do
+      case " $_NS_SETTABLE " in *" $n "*) ;; *) continue ;; esac
+      case "$defaults" in *"$n=${!n:-}"$'\n'*|*"$n=${!n:-}") continue ;; esac
+      caller="$caller $n"
+    done
+    out="$(ns_cli env --project "$proj" --caller-set "$caller" "$@")" || return 1
+  else
+    out="$(ns_cli env --no-file --project "$proj" "$@")" || return 1
+  fi
+  while IFS=$'\t' read -r name val; do
+    [ -n "$name" ] || continue
+    case " $_NS_SETTABLE " in *" $name "*) ;; *) continue ;; esac
+    case "$val" in *[[:cntrl:]]*) continue ;; esac
+    if [ "$val" = "@default@" ]; then
+      val="$(unset "$name"; . "$SUP_DIR/config.sh" >/dev/null 2>&1; printf '%s' "${!name:-}")"
+    fi
+    printf -v "$name" '%s' "$val"
+    export "${name?}"
+  done <<< "$out"
+  return 0
+}
+
+ns_start_lock_dir() { printf '%s/locks/start-%s' "$SUP_STATE" "${1:-x}"; }
+
+ns_wants_help() {   # any -h/--help among the arguments
+  local a
+  for a in "$@"; do case "$a" in -h|--help) return 0 ;; esac; done
+  return 1
+}
 
 # A start that does not happen has to say so — to the director AND to the log.
 #
@@ -116,25 +199,43 @@ case "$cmd" in
     # Read once and dropped. An answer belongs to the one start it was given for: left exported, it
     # would ride into the tmux server's environment and be there for whatever starts next.
     unset SUPERVISOR_DIRTY SUPERVISOR_DIRTY_DIGEST SUPERVISOR_COMMIT_MESSAGE
+    ns_wants_help "$@" && exec python3 "$BIN_DIR/ns-cli.py" help start
+    # This start's own choices, applied over the settings file by `ns_apply_settings` below.
+    NS_SETS=(); _want=""; _NS_FLAG_SET=""
     for a in "$@"; do
-      if [ "$_want_branch" = 1 ]; then SUPERVISOR_WORK_BRANCH="$a"; _want_branch=0; continue; fi
+      if [ "$_want_branch" = 1 ]; then SUPERVISOR_WORK_BRANCH="$a"; _want_branch=0; _NS_FLAG_SET="$_NS_FLAG_SET SUPERVISOR_WORK_BRANCH"; continue; fi
+      if [ -n "$_want" ]; then NS_SETS+=(--set "$_want=$a"); _want=""; continue; fi
       case "$a" in
         --no-attach) NO_ATTACH=1 ;;
         --branch) _want_branch=1 ;;
-        --branch=*) SUPERVISOR_WORK_BRANCH="${a#--branch=}" ;;
+        --branch=*) SUPERVISOR_WORK_BRANCH="${a#--branch=}"; _NS_FLAG_SET="$_NS_FLAG_SET SUPERVISOR_WORK_BRANCH" ;;
         --dirty=*) DIRTY_CHOICE="${a#--dirty=}" ;;
         --dirty-digest=*) DIRTY_SEEN="${a#--dirty-digest=}" ;;
         --message=*) DIRTY_MESSAGE="${a#--message=}" ;;
+        --model|--effort|--codex-model|--codex-effort|--lang|--permission-mode) _want="${a#--}" ;;
+        --model=*|--effort=*|--codex-model=*|--codex-effort=*|--lang=*|--permission-mode=*)
+          _k="${a%%=*}"; NS_SETS+=(--set "${_k#--}=${a#*=}") ;;
+        --set) _want="@pair" ;;
+        --set=*) NS_SETS+=(--set "${a#--set=}") ;;
+        --no-web) NS_SETS+=(--set "web=off") ;;
+        -*) echo "❌ невідомий прапорець: $a (night-shift help start)" >&2; exit 2 ;;
         *) [ -z "$DIRARG" ] && DIRARG="$a" ;;
       esac
+    done
+    [ "$_want_branch" = 1 ] && { echo "❌ --branch: бракує назви гілки" >&2; exit 2; }
+    [ -n "$_want" ] && { echo "❌ --${_want#@}: бракує значення" >&2; exit 2; }
+    # `--set key=value` arrives as `@pair=key=value`; the pair itself is the value.
+    for i in "${!NS_SETS[@]}"; do
+      case "${NS_SETS[$i]}" in "@pair="*) NS_SETS[$i]="${NS_SETS[$i]#@pair=}" ;; esac
     done
     case "$DIRTY_CHOICE" in
       ""|keep|commit) ;;
       *) echo "❌ --dirty: «${DIRTY_CHOICE}» — можна keep або commit" >&2; exit 2 ;;
     esac
-    export SUPERVISOR_WORK_BRANCH
     PROJECT_DIR="$(canon_path "${DIRARG:-$PWD}")"
     [ -d "$PROJECT_DIR" ] || { echo "❌ Проєкт не знайдено: ${DIRARG:-$PWD}" >&2; exit 1; }
+    ns_apply_settings "$PROJECT_DIR" ${NS_SETS[@]+"${NS_SETS[@]}"} || exit 2
+    export SUPERVISOR_WORK_BRANCH
     command -v tmux >/dev/null 2>&1 || { echo "❌ tmux не встановлено (brew install tmux)" >&2; exit 1; }
     [ -s "$SUP_DIR/STANDARDS.md" ] || { echo "❌ нема/порожній $SUP_DIR/STANDARDS.md" >&2; exit 1; }
 
@@ -151,6 +252,8 @@ case "$cmd" in
     fi
     if _container="$(workspace_container_reason "$PROJECT_DIR")"; then
       refuse_start "$PROJECT_DIR" "$_container"
+      # For the app: the folder is the director's to change, not a failure to repair or report.
+      echo "start-refused=folder" >&2
       exit 1
     fi
 
@@ -162,6 +265,16 @@ case "$cmd" in
     fi
 
     SLUG="$(slug_for "$PROJECT_DIR")"; IDIR="$(instance_dir "$SLUG")"; SESSION="$(session_name "$SLUG")"
+
+    # One start per project at a time, whoever asks — the app and a terminal can both press start on
+    # the same folder within the same second, and each would otherwise find no session yet and
+    # clear the other's instance directory. Released on every exit, and before attaching.
+    START_LOCK="$(ns_start_lock_dir "$SLUG")"
+    if ! _take_lock "$START_LOCK"; then
+      echo "❌ Цей проєкт саме зараз запускається (у застосунку Bulava чи в іншому терміналі). Зачекай і подивись: night-shift status" >&2
+      exit 1
+    fi
+    trap 'rm -rf "$START_LOCK" 2>/dev/null' EXIT
 
     if [ -d "$IDIR" ] && tmux has-session -t "$SESSION" 2>/dev/null; then
       echo "🌙 Вже запущено для цього проєкту (сесія $SESSION)."
@@ -655,6 +768,8 @@ $gone}"
     printf '%s\n' "$PROJECT_DIR" > "$IDIR/project"
     printf '%s\n' "$SESSION"     > "$IDIR/session"
     [ -n "$BRANCH" ] && printf '%s\n' "$BRANCH" > "$IDIR/branch"
+    # Who started it, for `status` and for a terminal's `stop` to ask before ending the app's run.
+    if ns_from_app; then echo app; else echo cli; fi > "$IDIR/origin"
     mv "$STD_TMP" "$IDIR/standards.md"
     : > "$IDIR/started-at"
     RUN_ID="$(uuidgen 2>/dev/null || printf '%s-%s-%s' "$(date +%s)" "$$" "${RANDOM:-0}")"
@@ -774,6 +889,7 @@ $gone}"
 
     if [ "$NO_ATTACH" = 0 ] && [ -z "${SUPERVISOR_CLAUDE_CMD:-}" ] && [ -t 0 ] && [ -t 1 ]; then
       echo "   (під'єднуюсь… Ctrl-b d — від'єднатися, робота лишиться у фоні)"
+      rm -rf "$START_LOCK" 2>/dev/null; trap - EXIT
       exec tmux attach -t "$SESSION"
     fi
     echo "   Підключитись: night-shift attach \"$PROJECT_DIR\""
@@ -1220,6 +1336,35 @@ $gone}"
     # down the instance its successor is now working in.
     STOP_GEN=""
     if [ "${1:-}" = "--generation" ]; then STOP_GEN="${2:-}"; shift 2 || shift $#; fi
+    STOP_YES=0; _rest=()
+    for a in "$@"; do
+      case "$a" in
+        --yes|-y) STOP_YES=1 ;;
+        -h|--help) exec python3 "$BIN_DIR/ns-cli.py" help stop ;;
+        *) _rest+=("$a") ;;
+      esac
+    done
+    set -- ${_rest[@]+"${_rest[@]}"}
+    # A person at a terminal about to end a run the app started is asked first: from the app's side
+    # it looks like the conversation simply died. Only a person is asked — a worker's own exit
+    # (`--generation`), the queue runner and the app itself never sit at a terminal.
+    ns_confirm_stop() {   # $@ = instance dirs → 0 to go ahead
+      local d apps="" ans
+      [ "$STOP_YES" = 1 ] && return 0
+      [ -n "$STOP_GEN" ] && return 0
+      { [ -t 0 ] && [ -t 1 ]; } || return 0
+      ns_from_app && return 0
+      for d in "$@"; do
+        [ "$(cat "$d/origin" 2>/dev/null)" = app ] && apps="$apps
+   $(cat "$d/project" 2>/dev/null)"
+      done
+      [ -n "$apps" ] || return 0
+      printf 'Ці прогони запустив застосунок Bulava:%s\nЗупинити їх із терміналу? Розмова в застосунку теж зупиниться. [y/N] ' "$apps"
+      read -r ans
+      case "$ans" in y|Y|yes|так|т|Т) return 0 ;; esac
+      echo "Нічого не зупинено."
+      return 1
+    }
     if [ "${1:-}" != "--all" ]; then
       _sidir="$(instance_dir "$(slug_for "$(canon_path "${1:-$PWD}")")")"
       if worker_tail_is_stale "$_sidir" "$STOP_GEN"; then
@@ -1228,6 +1373,8 @@ $gone}"
       fi
     fi
     if [ "${1:-}" = "--all" ]; then
+      _all=(); if [ -d "$SUP_INSTANCES" ]; then for dd in "$SUP_INSTANCES"/*/; do [ -d "$dd" ] && _all+=("${dd%/}"); done; fi
+      ns_confirm_stop ${_all[@]+"${_all[@]}"} || exit 1
       if [ -d "$SUP_INSTANCES" ]; then for dd in "$SUP_INSTANCES"/*/; do [ -d "$dd" ] && stop_instance "$(basename "$dd")"; done; fi
       _legacy_present && stop_legacy
       cleanup_global_marker
@@ -1237,6 +1384,7 @@ $gone}"
     ADIR="$(canon_path "${1:-$PWD}")"
     SLUG="$(slug_for "$ADIR")"
     if [ -d "$(instance_dir "$SLUG")" ]; then
+      ns_confirm_stop "$(instance_dir "$SLUG")" || exit 1
       stop_instance "$SLUG"
     elif _legacy_present && ! _any_instance; then
       stop_legacy
@@ -1248,6 +1396,8 @@ $gone}"
     ;;
 
   status)
+    ns_wants_help "$@" && exec python3 "$BIN_DIR/ns-cli.py" help status
+    case "${1:-}" in --json) exec python3 "$BIN_DIR/ns-cli.py" status-json ;; esac
     found=0
     if [ -d "$SUP_INSTANCES" ]; then
       for dd in "$SUP_INSTANCES"/*/; do
@@ -1257,8 +1407,15 @@ $gone}"
         proj="$(cat "$dd/project" 2>/dev/null)"; br="$(cat "$dd/branch" 2>/dev/null || echo '-')"
         wok="dead"; [ -f "$dd/watchdog.pid" ] && kill -0 "$(cat "$dd/watchdog.pid" 2>/dev/null)" 2>/dev/null && wok="alive"
         tok="no"; tmux has-session -t "$sess" 2>/dev/null && tok="yes"
+        org="$(cat "$dd/origin" 2>/dev/null || echo '?')"
+        case "$org" in app) org="застосунок" ;; cli) org="термінал" ;; esac
+        cm="$(sed -n "s/^export SUPERVISOR_CLAUDE_MODEL='\(.*\)'$/\1/p" "$dd/run-env" 2>/dev/null)"
+        ce="$(sed -n "s/^export SUPERVISOR_CLAUDE_EFFORT='\(.*\)'$/\1/p" "$dd/run-env" 2>/dev/null)"
+        xm="$(sed -n "s/^export SUPERVISOR_CODEX_MODEL='\(.*\)'$/\1/p" "$dd/run-env" 2>/dev/null)"
+        xe="$(sed -n "s/^export SUPERVISOR_CODEX_EFFORT='\(.*\)'$/\1/p" "$dd/run-env" 2>/dev/null)"
         echo "🌙 $proj"
-        echo "    сесія=$sess (tmux:$tok)  watchdog=$wok  гілка=$br"
+        echo "    сесія=$sess (tmux:$tok)  watchdog=$wok  гілка=$br  запустив=$org"
+        echo "    Claude ${cm:-auto}·${ce:-auto}   Codex ${xm:-auto}·${xe:-auto}"
         { [ "$wok" = dead ] || [ "$tok" = no ]; } && echo "    ⚠️ нездоровий стан — полагодь: night-shift stop \"$proj\""
       done
     fi
@@ -1270,6 +1427,40 @@ $gone}"
     if [ -f "$SUP_STATE/usage.json" ]; then
       jq -r '"ліміти: Claude 5h " + ((.five_hour.used_percentage // 0)|floor|tostring) + "% (reset " + ((.five_hour.resets_at // 0)|strflocaltime("%H:%M")) + ")"' "$SUP_STATE/usage.json" 2>/dev/null || true
     fi
+    ;;
+
+  config)
+    # `--run [DIR]` changes a running run; everything else is the settings file.
+    _run=0; _rundir=""; _args=(); _expect_dir=0
+    for a in "$@"; do
+      if [ "$_expect_dir" = 1 ]; then
+        _expect_dir=0
+        case "$a" in -*) ;; *) if [ -d "$a" ]; then _rundir="$a"; continue; fi ;; esac
+      fi
+      case "$a" in
+        --run) _run=1; _expect_dir=1 ;;
+        --run=*) _run=1; _rundir="${a#--run=}" ;;
+        -h|--help) exec python3 "$BIN_DIR/ns-cli.py" help config ;;
+        *) _args+=("$a") ;;
+      esac
+    done
+    if [ "$_run" = 1 ]; then
+      [ "${_args[0]:-}" = set ] || { echo "❌ --run лише з set: night-shift config set КЛЮЧ ЗНАЧЕННЯ --run [тека]" >&2; exit 2; }
+      _slug="$(slug_for "$(canon_path "${_rundir:-$PWD}")")"
+      _idir="$(instance_dir "$_slug")"
+      [ -d "$_idir" ] || { echo "❌ Немає запущеного прогону для: $(canon_path "${_rundir:-$PWD}") (night-shift status)" >&2; exit 1; }
+      exec python3 "$BIN_DIR/ns-cli.py" run-set "$_idir" "${_args[@]:1}"
+    fi
+    exec python3 "$BIN_DIR/ns-cli.py" config ${_args[@]+"${_args[@]}"}
+    ;;
+
+  models|doctor|completion)
+    ns_wants_help "$@" && exec python3 "$BIN_DIR/ns-cli.py" help "$cmd"
+    NIGHT_SHIFT_ROOT="$ROOT" exec python3 "$BIN_DIR/ns-cli.py" "$cmd" "$@"
+    ;;
+
+  help|-h|--help)
+    exec python3 "$BIN_DIR/ns-cli.py" help "$@"
     ;;
 
   attach)
@@ -1310,6 +1501,17 @@ $gone}"
         rm -f "$link"
       fi
     done
+
+    # The engine the Bulava app installed for itself. Its hooks, statusline and worker settings are
+    # what the app's own runs depend on, and the app puts them back at every launch anyway — so a
+    # terminal uninstall takes the terminal commands away and stops there.
+    case "$ROOT" in
+      "$HOME/Library/Application Support/Bulava/engine"|"$HOME/Library/Application Support/Bulava/engine/")
+        echo ""
+        echo "Цей движок належить застосунку Bulava — його хуки й налаштування Claude Code лишаю: без них не працюватимуть прогони застосунку."
+        echo "Прибрано лише команди терміналу. Повністю — видали сам застосунок."
+        exit 0 ;;
+    esac
 
     echo "прибираю слеш-команди Claude Code"
     for c in deep-audit night queue; do
@@ -1355,15 +1557,18 @@ PYEOF
     echo "  $ROOT  — сам движок; видали теку, якщо він більше не потрібен"
     ;;
 
-  version)
+  version|--version|-V)
     echo "night-shift $(cat "$ROOT/VERSION" 2>/dev/null || echo "від $(date -r "$ROOT/install.sh" '+%Y-%m-%d' 2>/dev/null || echo "?")")"
     echo "  движок: $ROOT"
     echo "  стан:   $SUP_STATE"
     ;;
 
   *)
+    echo "❌ невідома команда: $cmd" >&2
+    command -v python3 >/dev/null 2>&1 && python3 "$BIN_DIR/ns-cli.py" help >&2
+    echo "" >&2
     echo "usage: night-shift start [dir] [--dirty=keep|commit [--message=…]] | resume <dir> <session-id> [branch] | revive <dir> | stop [dir|--all]"
-    echo "       night-shift status | attach [dir] | list | dirty-state [dir] | commit-preview [dir] | heavy-state [dir] | heavy-exclude <dir> [local|gitignore] | mcp-state [dir] | mcp-decide <dir> enable|skip | mcp-carry <src> <dst> | version | uninstall [--force]"
+    echo "       night-shift status | attach [dir] | list | dirty-state [dir] | commit-preview [dir] | heavy-state [dir] | heavy-exclude <dir> [local|gitignore] | mcp-state [dir] | mcp-decide <dir> enable|skip | mcp-carry <src> <dst> | config … | models | doctor | completion <shell> | help [cmd] | version | uninstall [--force]"
     exit 1
     ;;
 esac

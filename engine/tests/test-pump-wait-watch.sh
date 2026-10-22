@@ -21,7 +21,7 @@ fails=0
 ok()  { printf '  \xe2\x9c\x85 %s\n' "$1"; }
 bad() { printf '  \xe2\x9d\x8c %s\n' "$1"; fails=$((fails + 1)); }
 
-TMP="$(mktemp -d -t pump-wait)" || exit 1
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/pump-wait.XXXXXXXX")" || exit 1
 trap 'rm -rf "$TMP"' EXIT INT TERM
 export SUPERVISOR_STATE_DIR="$TMP/state"; mkdir -p "$SUPERVISOR_STATE_DIR"
 . "$BIN_DIR/supervisor-lib.sh"
@@ -93,7 +93,7 @@ WD=$!
 # after two more polls.
 sleep 2
 # Set back by a minute — far short of the stall and idle deadlines, whose firing is not the claim.
-touch -A -000100 "$IDIR/last-activity"
+_m="$(stat -f %m "$IDIR/last-activity")"; touch -t "$(date -r "$((_m - 60))" '+%Y%m%d%H%M.%S')" "$IDIR/last-activity"
 before="$(stat -f %m "$IDIR/last-activity")"
 sleep 3
 kill "$WD" 2>/dev/null; wait "$WD" 2>/dev/null || true
