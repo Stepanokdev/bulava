@@ -12,7 +12,7 @@ fails=0
 ok()  { printf '  \xe2\x9c\x85 %s\n' "$1"; }
 bad() { printf '  \xe2\x9d\x8c %s\n' "$1"; fails=$((fails + 1)); }
 
-TMP="$(mktemp -d -t artifact-test)" || exit 1
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/artifact-test.XXXXXXXX")" || exit 1
 trap 'rm -rf "$TMP"' EXIT
 PROJ="$TMP/proj"; REPORT="$TMP/report"
 mkdir -p "$PROJ" "$REPORT"

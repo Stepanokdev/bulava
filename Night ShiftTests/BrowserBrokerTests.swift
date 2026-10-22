@@ -396,9 +396,8 @@ nonisolated final class AccountBrowserChromeTests: XCTestCase {
         let profile = FileManager.default.temporaryDirectory.appendingPathComponent("bulava-browser-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: profile) }
         ChromeApp.prepare(profile: profile)
-        let prefs = try JSONSerialization.jsonObject(with: Data(contentsOf: profile.appendingPathComponent("Default/Preferences"))) as? [String: Any]
-        XCTAssertEqual((prefs?["session"] as? [String: Any])?["restore_on_startup"] as? Int, 1,
-                       "the profile reopens where it left off, which keeps session-only sign-ins")
+        XCTAssertTrue(ChromeApp.baseArguments(profile: profile).contains("--restore-last-session"),
+                      "every launch restores the last session, which keeps session-only sign-ins")
 
         let broker = BrowserBroker()
         let launched = LockedBox<ChromePipe?>(nil)
@@ -435,6 +434,41 @@ nonisolated final class AccountBrowserChromeTests: XCTestCase {
 
         broker.setUnavailable("test over")
         XCTAssertTrue(pipe.waitForExit(seconds: 10), "Chrome closes when the browser is taken for signing in")
+    }
+
+    /// The sign-in that was lost on every close (App Store Connect, 22.10), against the real Chrome:
+    /// a session cookie set in one launch is still there in the next, and without the flag it is
+    /// not — the control that shows the flag, not luck, is what keeps it.
+    func testASessionCookieOutlivesAClosedBrowserOnlyWithTheRestoreFlag() async throws {
+        let chrome = try XCTUnwrap(ChromeApp.find(), "Google Chrome is not installed here")
+        let kept = try await sessionCookieAfterRestart(chrome, flags: ChromeApp.baseArguments)
+        XCTAssertTrue(kept, "a session cookie survives a clean close and reopen")
+        let control = try await sessionCookieAfterRestart(chrome) { profile in
+            ChromeApp.baseArguments(profile: profile).filter { $0 != "--restore-last-session" }
+        }
+        XCTAssertFalse(control, "without the flag Chrome drops it — so the flag is what keeps it")
+    }
+
+    private func sessionCookieAfterRestart(_ chrome: URL, flags: (URL) -> [String]) async throws -> Bool {
+        let profile = FileManager.default.temporaryDirectory.appendingPathComponent("bulava-cookie-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: profile) }
+        ChromeApp.prepare(profile: profile)
+        func launch() throws -> (ChromePipe, CDPCalls) {
+            let pipe = try ChromePipe.launch(executable: ChromeApp.executable(of: chrome),
+                                             arguments: flags(profile) + ["--remote-debugging-pipe", "--headless=new", "about:blank"])
+            return (pipe, CDPCalls(pipe))
+        }
+        let (first, calls) = try launch()
+        _ = try await calls.call("Storage.setCookies", ["cookies": [["name": "bulava_session", "value": "1",
+                                                                      "domain": "bulava-test.example", "path": "/",
+                                                                      "secure": true]]])
+        _ = try await calls.call("Browser.close", [:])
+        XCTAssertTrue(first.waitForExit(seconds: 15), "Chrome closes cleanly")
+        let (second, again) = try launch()
+        defer { second.terminate(); _ = second.waitForExit(seconds: 10) }
+        let answer = try await again.call("Storage.getCookies", [:])
+        let cookies = (answer["result"] as? [String: Any])?["cookies"] as? [[String: Any]] ?? []
+        return cookies.contains { $0["name"] as? String == "bulava_session" }
     }
 
     /// Why he cannot sign in to Google in the window a run drives, and what Bulava does about it,
@@ -975,5 +1009,39 @@ nonisolated final class AccountBrowserSignInCheckTests: XCTestCase {
         XCTAssertFalse(run.transcript.contains("console.test"), "nothing about it reached the run")
         run.close()
         broker.quitIfUnused()
+    }
+}
+
+/// CDP straight on a pipe, for tests that need the whole browser (cookies) rather than a run's tab.
+nonisolated final class CDPCalls: @unchecked Sendable {
+    private let pipe: ChromePipe
+    private let lock = NSLock()
+    private var next = 0
+    private var waiting: [Int: CheckedContinuation<[String: Any], Error>] = [:]
+
+    init(_ pipe: ChromePipe) {
+        self.pipe = pipe
+        pipe.listen(onMessage: { [weak self] data in
+            guard let self, let message = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let id = message["id"] as? Int else { return }
+            self.lock.lock(); let continuation = self.waiting.removeValue(forKey: id); self.lock.unlock()
+            continuation?.resume(returning: message)
+        }, onExit: { [weak self] in
+            guard let self else { return }
+            self.lock.lock(); let all = self.waiting; self.waiting = [:]; self.lock.unlock()
+            for (_, continuation) in all { continuation.resume(returning: ["exited": true]) }
+        })
+    }
+
+    func call(_ method: String, _ params: [String: Any]) async throws -> [String: Any] {
+        try await withCheckedThrowingContinuation { continuation in
+            lock.lock(); next += 1; let id = next; waiting[id] = continuation; lock.unlock()
+            let body: [String: Any] = ["id": id, "method": method, "params": params]
+            do { pipe.send(try JSONSerialization.data(withJSONObject: body)) }
+            catch {
+                lock.lock(); waiting[id] = nil; lock.unlock()
+                continuation.resume(throwing: error)
+            }
+        }
     }
 }

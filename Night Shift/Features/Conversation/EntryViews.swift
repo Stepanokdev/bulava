@@ -55,12 +55,7 @@ private struct MessageEntry: View {
         }
     }
 
-    private var pending: ForemanProposal? {
-        guard let id = entry.proposalID,
-              let productID = model.route.productID ?? model.selectedProductID,
-              let proposal = model.pendingProposals[productID], proposal.id == id else { return nil }
-        return proposal
-    }
+    private var pending: ForemanProposal? { model.liveProposal(for: entry) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -72,6 +67,12 @@ private struct MessageEntry: View {
                 Text(Fmt.clock(entry.at))
                     .font(Typo.meta)
                     .foregroundStyle(Palette.textFaint)
+                // How long the answer took, once it is finished — "Worked for 21m 40s" (22.10).
+                if !isUser, let worked = entry.workedFor, worked >= 5 {
+                    Text(verbatim: "· " + String(format: String(localized: "Worked for %@"), Fmt.elapsed(worked)))
+                        .font(Typo.meta)
+                        .foregroundStyle(Palette.textFaint)
+                }
             }
 
             if !entry.blocks.renderable.isEmpty {
@@ -452,8 +453,10 @@ private struct MessageEntry: View {
     @ViewBuilder private func confirmRow(_ proposal: ForemanProposal) -> some View {
         HStack(spacing: 8) {
             Button {
-                model.pendingProposal = nil
-                model.executeProposal(proposal)
+                // Asked again at the press: the row on screen may be older than the chat.
+                guard let live = model.liveProposal(for: entry), live.id == proposal.id else { return }
+                model.pendingProposals[entry.productID] = nil
+                model.executeProposal(live)
             } label: {
                 Label { Text("Yes, do it") } icon: { Image(systemName: "checkmark") }
                     .labelStyle(.titleAndIcon)
@@ -461,7 +464,8 @@ private struct MessageEntry: View {
             .buttonStyle(.bulava(.primary))
 
             Button {
-                model.pendingProposal = nil
+                guard model.liveProposal(for: entry)?.id == proposal.id else { return }
+                model.pendingProposals[entry.productID] = nil
                 model.postForemanText("Гаразд, скасував — нічого не роблю.")
             } label: { Text("Not now") }
                 .buttonStyle(.bulava(.quiet))

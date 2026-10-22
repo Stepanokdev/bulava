@@ -554,6 +554,27 @@ extension AppModel {
         }
     }
 
+    /// The proposal `entry` offers, while it can still be accepted: it is the one pending for its
+    /// product, and nothing he wrote in that chat came after it. A "Yes, do it" under an older
+    /// answer — after Stop, after another message — used to run the stale proposal at once (22.10).
+    func liveProposal(for entry: ConversationEntry) -> ForemanProposal? {
+        guard let id = entry.proposalID, let proposal = pendingProposals[entry.productID],
+              proposal.id == id else { return nil }
+        if let chatID = entry.chatID {
+            let thread = conversations.entries(inChat: chatID)
+            guard let index = thread.lastIndex(where: { $0.id == entry.id }) else { return nil }
+            if thread[thread.index(after: index)...].contains(where: { $0.kind == .user }) { return nil }
+        }
+        return proposal
+    }
+
+    /// He wrote again, or stopped: whatever was offered in this chat is no longer the question.
+    func withdrawProposal(inChat chatID: UUID, productID: UUID) {
+        guard let pending = pendingProposals[productID] else { return }
+        let offeredHere = conversations.entries(inChat: chatID).contains { $0.proposalID == pending.id }
+        if offeredHere { pendingProposals[productID] = nil }
+    }
+
     private func propose(_ proposal: ForemanProposal, reply: String, productID: UUID? = nil) {
         let target = productID ?? conversationTarget ?? selectedProductID
         if let target { pendingProposals[target] = proposal } else { pendingProposal = proposal }

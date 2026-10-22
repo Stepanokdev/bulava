@@ -239,6 +239,104 @@ nonisolated final class AutomationLifecycleTests: XCTestCase {
         guard case .failure = result else { return XCTFail("a run without its copy must not run in his folder") }
     }
 
+    /// 1.15.3 sent this to us as a `chat.start_refused` breakage (21 Oct) and set a repair on it.
+    /// Nothing was broken: the run was over. He is offered a fresh run instead.
+    @MainActor
+    func testASendIntoARunWhoseCopyIsGoneOffersAFreshRunAndIsNotRepaired() async {
+        let (m, _, project, product) = await world()
+        m.settings.autoRepair = true
+        let a = Automation(productID: product.id, projectID: project.id, name: "Reports",
+                           brief: "Go through the reports.", trigger: .manual)
+        m.automations.add(a)
+        let gone = WorkCopy(path: "/nowhere", checkoutRoot: "/nowhere", sourcePath: project.path,
+                            sourceRoot: project.path, projectID: project.id, branch: "b", baseRef: "main",
+                            baseSHA: "x", owner: .run(UUID()), state: .removed)
+        m.automations.addCopy(gone)
+        var run = AutomationRun(automationID: a.id, occurrence: "old", reason: .manual, state: .finished, briefRevision: 1)
+        run.result = .noChange
+        m.automations.record(run)
+        let chat = m.conversations.newAutomationChat(id: UUID(), for: product.id, runID: run.id, copyID: gone.id, title: "t")
+        let entry = m.conversations.appendUser("one more thing", productID: product.id, chatID: chat.id)
+        m.conversations.updateDelivery(entryID: entry.id, .failed)
+
+        guard case .failure(let refusal) = await m.executionProject(for: chat.id, primary: project) else {
+            return XCTFail("a run without its copy must not run in his folder")
+        }
+        XCTAssertTrue(refusal.needsYou)
+        XCTAssertEqual(refusal.startAgain, a.id)
+
+        m.refuseStart(chat.id, refusal)
+        XCTAssertNil(m.repairs[chat.id], "a run that is over is not a breakage — nothing is repaired or reported")
+        XCTAssertEqual(m.chatErrors[chat.id], refusal.message)
+        XCTAssertEqual(m.toast?.actions.map(\.title), [String(localized: "Run now")])
+    }
+
+    /// A run that is over says so where the field would be, on the Mac and the phone, before
+    /// anything is typed — the field is not offered for a message that has nowhere to go (22.10).
+    @MainActor
+    func testARunWhoseCopyIsGoneClosesItsFieldAndOffersAFreshRun() async {
+        let (m, _, project, product) = await world()
+        let a = Automation(productID: product.id, projectID: project.id, name: "Reports",
+                           brief: "Go through the reports.", trigger: .manual)
+        m.automations.add(a)
+        let gone = WorkCopy(path: "/nowhere", checkoutRoot: "/nowhere", sourcePath: project.path,
+                            sourceRoot: project.path, projectID: project.id, branch: "b", baseRef: "main",
+                            baseSHA: "x", owner: .run(UUID()), state: .removed)
+        m.automations.addCopy(gone)
+        var run = AutomationRun(automationID: a.id, occurrence: "old", reason: .manual, state: .finished, briefRevision: 1)
+        run.result = .noChange
+        m.automations.record(run)
+        let chat = m.conversations.newAutomationChat(id: UUID(), for: product.id, runID: run.id, copyID: gone.id, title: "t")
+
+        let closure = m.chatClosure(chat.id)
+        XCTAssertNotNil(closure, "a run whose copy is gone takes no more messages")
+        XCTAssertEqual(closure?.startAgain, a.id, "and the way on is a fresh run")
+        XCTAssertFalse(closure?.passing ?? true)
+
+        let projection = LinkProjection.build(m, desktop: LinkDesktop(id: "mac", name: "Mac", version: "1", language: "en"),
+                                              openChats: [chat.id])
+        let closed = projection.chats[chat.id]?.closed
+        XCTAssertEqual(closed?.message, closure?.message, "the phone is told the same, in the Mac's words")
+        XCTAssertEqual(closed?.action?.label, String(localized: "Run now"))
+    }
+
+    /// The window asks its content for a minimum size by proposing no room at all. The closed
+    /// field answered that with its whole text one letter per line, thousands of points tall; the
+    /// window took that as its floor and the chat and the sidebar went off its top — 1.16 opened
+    /// such a run as a blank page (22.10, seen on the published build).
+    @MainActor
+    func testTheClosedFieldDoesNotGrowTheWindowWhenAskedForItsSmallestSize() async {
+        let (m, _, _, _) = await world()
+        let closure = ChatClosure(message: String(localized: "This run's copy has already been cleaned up, so there is nowhere to continue it. Start the automation again for a fresh run."),
+                                  startAgain: UUID())
+        let host = NSHostingController(rootView: ClosedComposer(closure: closure).environment(m))
+        let smallest = host.sizeThatFits(in: .zero)
+        XCTAssertLessThan(smallest.height, 200, "asked for its smallest size, it must not claim the height of its text laid out a letter a line")
+        let usual = host.sizeThatFits(in: CGSize(width: 700, height: CGFloat.greatestFiniteMagnitude))
+        XCTAssertLessThan(usual.height, 120, "at a chat's width it is one field tall")
+        XCTAssertGreaterThan(usual.height, 30)
+    }
+
+    @MainActor
+    func testAnOrdinaryChatKeepsItsField() async {
+        let (m, _, _, product) = await world()
+        let chat = m.conversations.newChat(for: product.id)
+        XCTAssertNil(m.chatClosure(chat.id))
+    }
+
+    /// A copy that could not be made is still ours to look into.
+    @MainActor
+    func testACopyThatCouldNotBeMadeIsStillLeftToTheRepair() async {
+        let (m, _, _, product) = await world()
+        m.settings.autoRepair = false
+        let chat = m.conversations.newChat(for: product.id)
+        let entry = m.conversations.appendUser("go", productID: product.id, chatID: chat.id)
+        m.conversations.updateDelivery(entryID: entry.id, .failed)
+
+        m.refuseStart(chat.id, ChatCopyRefusal(message: "git worktree add failed"))
+        XCTAssertEqual(m.repairs[chat.id]?.code, "chat.start_refused")
+    }
+
     // MARK: Handing over, and cleaning up
 
     @MainActor

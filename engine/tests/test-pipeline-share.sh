@@ -20,7 +20,7 @@ fails=0
 ok()  { printf '  \xe2\x9c\x85 %s\n' "$1"; }
 bad() { printf '  \xe2\x9d\x8c %s\n' "$1"; fails=$((fails + 1)); }
 
-TMP="$(mktemp -d -t pipeline-share)" || exit 1
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/pipeline-share.XXXXXXXX")" || exit 1
 trap 'rm -rf "$TMP"' EXIT
 export HOME="$TMP/home"; mkdir -p "$HOME"
 export SUPERVISOR_STATE_DIR="$TMP/state"; mkdir -p "$SUPERVISOR_STATE_DIR"

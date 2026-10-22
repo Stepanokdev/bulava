@@ -9,12 +9,13 @@
 # in the right order, with the UTC ones converted to local.
 set -u
 BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../bin" && pwd)"
+. "$BIN_DIR/lib/portable.sh"   # the BSD `date -v` below, on Linux too; nothing on macOS
 
 fails=0
 ok()  { printf '  \xe2\x9c\x85 %s\n' "$1"; }
 bad() { printf '  \xe2\x9d\x8c %s\n' "$1"; fails=$((fails + 1)); }
 
-TMP="$(mktemp -d -t bulava-trace-test)" || exit 1
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/bulava-trace-test.XXXXXXXX")" || exit 1
 trap 'rm -rf "$TMP"' EXIT
 export SUPERVISOR_STATE_DIR="$TMP/supervisor"
 export BULAVA_STATE_DIR="$TMP/app"
@@ -105,7 +106,7 @@ case "$scoped" in
   *"Звіт по роботі"*) ok "the project's own card is kept" ;;
   *) bad "the project filter dropped that project's own conversation" ;;
 esac
-sed -i '' "s|$TMP/proj|$TMP/elsewhere|" "$BULAVA_STATE_DIR/backlog.json"
+sed -i.bak "s|$TMP/proj|$TMP/elsewhere|" "$BULAVA_STATE_DIR/backlog.json" && rm -f "$BULAVA_STATE_DIR/backlog.json.bak"
 other="$("$BIN_DIR/trace.sh" --since 30m --project "$TMP/proj" --only chat 2>&1)"
 case "$other" in
   *"Звіт по роботі"*) bad "another project's conversation showed under this project" ;;

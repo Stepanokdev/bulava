@@ -769,7 +769,7 @@ final class PreflightRunner {
                               titleKey: trusted
                                 ? "Workers can drive apps through Bulava"
                                 : "Workers cannot drive apps yet",
-                              detailKey: "A worker holds no permission of its own, so Bulava clicks and types on its behalf. Granting this once to Bulava covers every project and survives rebuilds, because Bulava is signed. Every action is written to ui-actions.log.",
+                              detailKey: "A worker holds no permission of its own, so Bulava clicks and types on its behalf. Granting this once to Bulava covers every project and survives rebuilds, because Bulava is signed. Bulava keeps a record of every action.",
                               status: trusted ? .ready : .missing,
                               gate: .appDriving,
                               settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
@@ -848,7 +848,7 @@ final class PreflightRunner {
                                   gate: .convenience)
         }
         return PreflightCheck(id: "browser", titleKey: "Browser control is not wired up",
-                              detailKey: "A browser is installed but the chrome-devtools bridge is not configured, so Bulava cannot drive it.",
+                              detailKey: "A browser is installed, but Bulava is not connected to it yet, so it cannot open pages for you.",
                               status: .missing, evidence: (browser as NSString).lastPathComponent,
                               gate: .convenience)
     }
@@ -895,7 +895,9 @@ final class PreflightRunner {
             case .notDetermined: .unknown
             default: .missing
         }
-        return PreflightCheck(id: "mic", titleKey: "Dictation works",
+        // The title says the state. "Dictation works" over a warning dot and an "Allow it" button
+        // read as a contradiction on the phone (22.10).
+        return PreflightCheck(id: "mic", titleKey: resolved == .ready ? "Dictation works" : "Dictation needs the microphone",
                               detailKey: "Only needed if you want to speak your requests instead of typing.",
                               status: resolved, gate: .convenience,
                               settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
@@ -908,7 +910,7 @@ final class PreflightRunner {
             case .notDetermined: .unknown
             default: .missing
         }
-        return PreflightCheck(id: "notify", titleKey: "Bulava can reach you",
+        return PreflightCheck(id: "notify", titleKey: resolved == .ready ? "Bulava can reach you" : "Bulava cannot notify you yet",
                               detailKey: "How you hear about a finished report or a question while you are away.",
                               status: resolved, gate: .convenience,
                               settingsURL: "x-apple.systempreferences:com.apple.preference.notifications")

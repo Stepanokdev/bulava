@@ -70,6 +70,7 @@ import com.stepanok.bulava.resources.dictation_retry
 import com.stepanok.bulava.resources.dictation_sending
 import com.stepanok.bulava.resources.dictation_start_failed
 import com.stepanok.bulava.resources.dictation_transcribing
+import com.stepanok.bulava.resources.dictation_transcribing_slow
 import com.stepanok.bulava.state.AppController
 import com.stepanok.bulava.state.Dictation
 import com.stepanok.bulava.state.VoiceNote
@@ -248,7 +249,9 @@ private fun VoiceNoteRow(controller: AppController, note: VoiceNote) {
                 Text(
                     when (note.stage) {
                         VoiceNote.Stage.Sending -> stringResource(Res.string.dictation_sending)
-                        VoiceNote.Stage.Transcribing -> stringResource(Res.string.dictation_transcribing)
+                        VoiceNote.Stage.Transcribing -> stringResource(
+                            if (note.slow) Res.string.dictation_transcribing_slow else Res.string.dictation_transcribing,
+                        )
                         VoiceNote.Stage.Failed -> reason(note)
                     },
                     style = Bulava.type.caption, color = c.text,

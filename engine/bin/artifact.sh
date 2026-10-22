@@ -43,6 +43,13 @@ for marker in "$PROJ"/artifacts/*/.report-request; do
     break
   fi
 done
+# A dated folder of the same name that belongs to ANOTHER request — built in the same minute, under a
+# title that slugs the same — is that request's page, not ours to replace. The next free name is.
+if [ -d "$OUT" ] && [ "$(tr -d '[:space:]' < "$OUT/.report-request" 2>/dev/null)" != "$REQUEST_KEY" ]; then
+  n=2
+  while [ -e "$PROJ/artifacts/$stamp-$slug-$n" ]; do n=$((n + 1)); done
+  OUT="$PROJ/artifacts/$stamp-$slug-$n"
+fi
 
 if [ -d "$PROJ/.git" ] || git -C "$PROJ" rev-parse --git-dir >/dev/null 2>&1; then
   if ! git -C "$PROJ" check-ignore -q "artifacts/x" 2>/dev/null; then

@@ -35,7 +35,7 @@ exec /bin/rm "$@"
 SH
 chmod +x "$SHIM/rm"
 
-P="$TMP/videos"; mkdir -p "$P"; echo hi > "$P/a.txt"; mkfile -n 3m "$P/rec.mov"
+P="$TMP/videos"; mkdir -p "$P"; echo hi > "$P/a.txt"; { command -v mkfile >/dev/null 2>&1 && mkfile -n 3m "$P/rec.mov" || truncate -s 3m "$P/rec.mov"; }
 bash "$NS" allow-git "$P" >/dev/null 2>&1 || bad "allow-git refused"
 
 echo "===== removal keeps failing: the start says so instead of claiming it is gone ====="

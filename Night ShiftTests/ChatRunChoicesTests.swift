@@ -310,3 +310,31 @@ nonisolated final class LargeHistoryResponsivenessTests: XCTestCase {
     }
 }
 
+
+/// Stop withdrew the message before the worker saw it. The watchdog keeps running, and that alone
+/// used to read as "working" — the spinner that outlived Stop by minutes on the Mac and both phones.
+nonisolated final class StoppedChatPhaseTests: XCTestCase {
+
+    private func idleLiveRun() -> SupervisorInstance {
+        SupervisorInstance(slug: "p", projectPath: "/tmp/p", session: "night-p",
+                           watchdogAlive: true, hasPlan: false, hasResearch: false)
+    }
+
+    func testAStoppedChatIsNotWorking() {
+        var instance = idleLiveRun()
+        instance.directorStopped = true
+        XCTAssertEqual(DirectChatPhase.resolve(instance: instance, bindingHasOutcome: false), .stopped)
+        XCTAssertFalse(DirectChatPhase.stopped.isActive, "the phone and the Mac draw a spinner for active")
+    }
+
+    func testWithoutTheStopMarkerALiveRunStillWorks() {
+        XCTAssertEqual(DirectChatPhase.resolve(instance: idleLiveRun(), bindingHasOutcome: false), .working)
+    }
+
+    func testANewMessageAfterStopIsQueuedNotStopped() {
+        var instance = idleLiveRun()
+        instance.directorStopped = true
+        instance.queuedMessageCount = 1
+        XCTAssertEqual(DirectChatPhase.resolve(instance: instance, bindingHasOutcome: false), .queued)
+    }
+}

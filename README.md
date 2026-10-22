@@ -159,28 +159,81 @@ Each of these was built first, and each is now checked by something that runs.
 
 ## Run it from the terminal instead
 
-The engine works on its own, with no app and no checkout:
+The engine works on its own, with no app and no checkout. It runs on macOS and Linux, and on
+Windows inside WSL2.
 
 ```bash
+# macOS, Linux
 curl -fsSL https://bulava.app/install.sh | bash
-night-shift status
+night-shift doctor
 ```
 
-That script is [`site/install.sh`](site/install.sh) in this repository, so you can read it first.
-It installs into `~/.night-shift`, links seven commands into `~/.local/bin`, writes three slash
-commands into `~/.claude/commands`, and sets Claude Code's status line and worker hooks. It backs
-up `~/.claude/settings.json` before touching it. To take all of that back out:
+```powershell
+# Windows (PowerShell), sets up the engine inside WSL2
+irm https://bulava.app/install.ps1 | iex
+```
+
+Both scripts are in this repository ([`site/install.sh`](site/install.sh),
+[`site/install.ps1`](site/install.ps1)), so you can read them first. On macOS and Linux the engine
+goes into `~/.night-shift`, seven commands are linked into `~/.local/bin`, three slash commands are
+written into `~/.claude/commands`, and Claude Code's status line and worker hooks are set. It backs up
+`~/.claude/settings.json` before touching it. On Windows the same thing happens inside the WSL2
+distribution, and `night-shift`, `night-queue` and `deep-audit` become ordinary commands in cmd,
+PowerShell and Windows Terminal. Windows paths such as `C:\code\app` are translated on the way in.
+Claude Code and Codex have to be installed and signed in inside WSL, because that is where they run.
+
+On a Mac that already has the app, the installer does not put a second engine on the machine. It
+points the terminal commands at the engine Bulava installed for itself, so the two never compete
+for Claude Code's hooks, and the terminal is updated whenever the app is.
+
+### Choosing models and depth
+
+Every start can say what it wants:
+
+```bash
+night-shift start ~/code/app --model opus --effort max --codex-effort xhigh
+night-shift models                  # what this machine's Claude and Codex can actually run
+```
+
+Choices you want to keep go into `~/.config/night-shift/config.json`, either for every project or
+for one:
+
+```bash
+night-shift config set claude.model opus
+night-shift config set codex.effort xhigh
+night-shift config set claude.effort max --project ~/code/app
+night-shift config set codex.effort max --run .     # the run that is going right now
+night-shift config keys                             # all of them: language, review rounds, web access…
+```
+
+A flag beats an exported `SUPERVISOR_*` variable, which beats the project's setting, which beats
+the global one. `night-shift help <command>` explains each command, and
+`eval "$(night-shift completion zsh)"` (or `bash`, `fish`, `powershell`) gives tab completion.
+
+### Using the terminal and the app together
+
+They share one state folder, so `night-shift status` lists the runs the app started next to your
+own and says which is which. The app never reads the terminal's settings, and the terminal never
+changes the app's: the app sends its own choices with every call, and a start that comes from it
+skips the file entirely. `night-shift config import-app` copies the app's choices across once if you
+want the same ones. It does not overwrite anything you already set unless you pass `--force`.
+
+Two starts of the same project, one from each side, cannot race: the second is refused until the
+first has finished starting. Stopping one of the app's runs from a terminal asks first.
+
+To take it all back out:
 
 ```bash
 night-shift uninstall
 ```
 
-which leaves `~/.claude/supervisor` — your queue, your run state, your reports — alone.
+which leaves `~/.claude/supervisor` — your queue, your run state, your reports — alone. If the engine
+belongs to the app, only the terminal commands go; the app's hooks stay where its runs need them.
 
-**The app is still the recommendation**, and not for marketing reasons. macOS grants screen
+**On a Mac the app is still the recommendation**, and not for marketing reasons. macOS grants screen
 recording and accessibility to a signed application, not to a shell script, so runs that have to
 photograph a user interface in order to prove they worked need Bulava running. Everything else
-works either way.
+works either way, Linux and WSL included.
 
 ## Build it yourself
 

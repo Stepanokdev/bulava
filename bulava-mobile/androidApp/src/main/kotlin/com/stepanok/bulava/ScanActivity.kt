@@ -45,6 +45,7 @@ import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import com.stepanok.bulava.link.LinkClient
+import com.stepanok.bulava.state.AppController
 import com.stepanok.bulava.ui.components.BulavaButton
 import com.stepanok.bulava.ui.components.ButtonKind
 import com.stepanok.bulava.ui.components.IconAction
@@ -168,7 +169,7 @@ class ScanActivity : ComponentActivity() {
         try {
             reader.process(InputImage.fromMediaImage(media, proxy.imageInfo.rotationDegrees))
                 .addOnSuccessListener { codes ->
-                    codes.firstNotNullOfOrNull { code -> code.rawValue?.takeIf { LinkClient.parsePairing(it) != null } }
+                    codes.firstNotNullOfOrNull { code -> code.rawValue?.takeIf { LinkClient.parsePairing(it) != null || it.trim() == AppController.DEMO_LINK } }
                         ?.let { deliver(it) }
                 }
                 .addOnCompleteListener { proxy.close() }

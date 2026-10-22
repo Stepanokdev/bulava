@@ -4,20 +4,33 @@ STATE_DIR="${SUPERVISOR_STATE_DIR:-$HOME/.claude/supervisor}"
 OUT="$STATE_DIR/usage.json"
 mkdir -p "$STATE_DIR"
 
-command -v security >/dev/null 2>&1 || exit 0
+# macOS keeps Claude Code's sign-in in the Keychain; Linux and WSL2 keep the same JSON in a file of
+# the CLI's own (`~/.claude/.credentials.json`, mode 600). Neither present: nothing to ask with.
+CRED_FILE="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json"
+command -v security >/dev/null 2>&1 || [ -r "$CRED_FILE" ] || exit 0
 
-python3 - "$OUT" <<'PY'
-import json, subprocess, sys, time, urllib.request, urllib.error
+python3 - "$OUT" "$CRED_FILE" <<'PY'
+import json, os, subprocess, sys, time, urllib.request, urllib.error
 
 out = sys.argv[1]
 
 def keychain_token():
-    r = subprocess.run(["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
-        return None, None
+    raw = None
     try:
-        blob = json.loads(r.stdout)
+        r = subprocess.run(["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+                           capture_output=True, text=True)
+        if r.returncode == 0:
+            raw = r.stdout
+    except FileNotFoundError:
+        pass
+    if raw is None:
+        try:
+            with open(sys.argv[2], "r", encoding="utf-8") as fh:
+                raw = fh.read()
+        except (OSError, IndexError):
+            return None, None
+    try:
+        blob = json.loads(raw)
     except json.JSONDecodeError:
         return None, None
     oauth = blob.get("claudeAiOauth") or {}

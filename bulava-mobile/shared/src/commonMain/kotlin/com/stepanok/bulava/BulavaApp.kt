@@ -1,5 +1,7 @@
 package com.stepanok.bulava
 
+import com.stepanok.bulava.ui.MacLanguageResources
+import androidx.compose.runtime.collectAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,7 +52,8 @@ import kotlin.time.Clock
  * a Mac — the demo in its place, under a bar that says so and leads back out.
  *
  * The real controller keeps running under the demo. A pairing link or a tapped notification is
- * about the real Mac, so either one ends the demo and is handled there.
+ * about the real Mac, so either one ends the demo and is handled there. The demo's own code
+ * ([AppController.DEMO_LINK]) starts it, as the button does.
  */
 @Composable
 fun BulavaApp(real: AppController) {
@@ -62,13 +65,20 @@ fun BulavaApp(real: AppController) {
         demo = null
     }
 
+    fun startDemo() {
+        if (demo == null) demo = DemoSession.start(real.platform, language) { Clock.System.now().toEpochMilliseconds() }
+    }
+
     LaunchedEffect(real) { real.link.state.collect { if (it is LinkState.Pairing) exitDemo() } }
     LaunchedEffect(real) { real.openRequests.collect { exitDemo() } }
+    // The demo's code, scanned or opened from the Camera: the same demo "Try it without a Mac" starts.
+    LaunchedEffect(real) { real.demoRequests.collect { startDemo(); real.demoStarted() } }
     DisposableEffect(Unit) { onDispose { demo?.close() } }
 
     val session = demo
     if (session == null) {
-        App(real, onTryDemo = { demo = DemoSession.start(real.platform, language) { Clock.System.now().toEpochMilliseconds() } })
+        val macLanguage by real.link.language.collectAsState()
+        MacLanguageResources(macLanguage) { App(real, onTryDemo = ::startDemo) }
         return
     }
     key(session) {

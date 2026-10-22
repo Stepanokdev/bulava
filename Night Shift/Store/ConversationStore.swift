@@ -273,6 +273,12 @@ final class ConversationStore {
     @discardableResult
     func adoptChat(id: UUID, for productID: UUID) -> Chat {
         if let existing = chat(id: id) { return existing }
+        // The window shows `openChatID`, or else the newest chat. A chat the phone just made is
+        // the newest, so without pinning what is on screen now the Mac jumped to it and took him
+        // away from the conversation he was reading at the desk (22.10).
+        if openChatID[productID] == nil, let shown = currentChatID(for: productID) {
+            openChatID[productID] = shown
+        }
         let chat = Chat(id: id, productID: productID, title: String(localized: "New chat"))
         chats.append(chat)
         return chat
@@ -549,10 +555,12 @@ final class ConversationStore {
     /// corrects itself as well as sets: a segment the fold decides to keep writing goes back to
     /// unfinished, and the action that reads this disappears while it does. Persisted only on a
     /// change, because the drain runs once a second.
-    func setTurnFinished(entryID: UUID, _ finished: Bool) {
-        guard let i = entries.firstIndex(where: { $0.id == entryID }),
-              entries[i].turnFinished != finished else { return }
+    func setTurnFinished(entryID: UUID, _ finished: Bool, endedAt: Date? = nil) {
+        guard let i = entries.firstIndex(where: { $0.id == entryID }) else { return }
+        let ended = finished ? (endedAt ?? entries[i].turnEndedAt) : nil
+        guard entries[i].turnFinished != finished || entries[i].turnEndedAt != ended else { return }
         entries[i].turnFinished = finished
+        entries[i].turnEndedAt = ended
         persist()
     }
 

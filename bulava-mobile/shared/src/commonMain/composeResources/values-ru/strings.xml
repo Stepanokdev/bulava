@@ -186,6 +186,7 @@
     <string name="dictation_note">Голосовая заметка, %1$s</string>
     <string name="dictation_sending">Отправляю на Mac…</string>
     <string name="dictation_transcribing">Mac распознаёт…</string>
+    <string name="dictation_transcribing_slow">Mac готовит голосовую модель. Это бывает один раз, текст появится сам.</string>
     <string name="dictation_retry">Ещё раз</string>
     <string name="dictation_discard">Удалить</string>
     <string name="dictation_failed_offline">Mac недоступен. Запись остаётся на телефоне.</string>
@@ -236,4 +237,75 @@
     <string name="decisions_as_sent">Это то, что ты отправил. Измени что-нибудь — и сможешь отправить исправление.</string>
     <string name="report_tab_document">Документ</string>
     <string name="report_tab_questions">Вопросы · %1$d/%2$d</string>
+    <string name="chat_worked_for">Работал %1$s</string>
+    <string name="elapsed_hm">%1$d ч %2$d мин</string>
+    <string name="elapsed_ms">%1$d мин %2$d с</string>
+    <string name="elapsed_s">%1$d с</string>
+    <plurals name="steps_read">
+        <item quantity="one">прочитан %1$d файл</item>
+        <item quantity="few">прочитано %1$d файла</item>
+        <item quantity="many">прочитано %1$d файлов</item>
+        <item quantity="other">прочитано %1$d файла</item>
+    </plurals>
+    <plurals name="steps_edited">
+        <item quantity="one">изменён %1$d файл</item>
+        <item quantity="few">изменено %1$d файла</item>
+        <item quantity="many">изменено %1$d файлов</item>
+        <item quantity="other">изменено %1$d файла</item>
+    </plurals>
+    <plurals name="steps_searched">
+        <item quantity="one">%1$d поиск по коду</item>
+        <item quantity="few">%1$d поиска по коду</item>
+        <item quantity="many">%1$d поисков по коду</item>
+        <item quantity="other">%1$d поиска по коду</item>
+    </plurals>
+    <plurals name="steps_ran">
+        <item quantity="one">выполнена %1$d команда</item>
+        <item quantity="few">выполнено %1$d команды</item>
+        <item quantity="many">выполнено %1$d команд</item>
+        <item quantity="other">выполнено %1$d команды</item>
+    </plurals>
+    <plurals name="steps_helpers">
+        <item quantity="one">запущен %1$d помощник</item>
+        <item quantity="few">запущено %1$d помощника</item>
+        <item quantity="many">запущено %1$d помощников</item>
+        <item quantity="other">запущено %1$d помощника</item>
+    </plurals>
+    <plurals name="steps_pages">
+        <item quantity="one">просмотрена %1$d страница</item>
+        <item quantity="few">просмотрено %1$d страницы</item>
+        <item quantity="many">просмотрено %1$d страниц</item>
+        <item quantity="other">просмотрено %1$d страницы</item>
+    </plurals>
+    <plurals name="steps_other">
+        <item quantity="one">ещё %1$d шаг</item>
+        <item quantity="few">ещё %1$d шага</item>
+        <item quantity="many">ещё %1$d шагов</item>
+        <item quantity="other">ещё %1$d шага</item>
+    </plurals>
+    <string name="limits_as_of_last">на момент последнего соединения</string>
+    <plurals name="steps_browser">
+        <item quantity="one">%1$d действие в браузере</item>
+        <item quantity="few">%1$d действия в браузере</item>
+        <item quantity="many">%1$d действий в браузере</item>
+        <item quantity="other">%1$d действия в браузере</item>
+    </plurals>
+    <plurals name="steps_device">
+        <item quantity="one">%1$d действие на устройстве</item>
+        <item quantity="few">%1$d действия на устройстве</item>
+        <item quantity="many">%1$d действий на устройстве</item>
+        <item quantity="other">%1$d действия на устройстве</item>
+    </plurals>
+    <plurals name="steps_tools">
+        <item quantity="one">%1$d обращение к инструментам</item>
+        <item quantity="few">%1$d обращения к инструментам</item>
+        <item quantity="many">%1$d обращений к инструментам</item>
+        <item quantity="other">%1$d обращения к инструментам</item>
+    </plurals>
+    <plurals name="steps_deployed">
+        <item quantity="one">%1$d развёртывание</item>
+        <item quantity="few">%1$d развёртывания</item>
+        <item quantity="many">%1$d развёртываний</item>
+        <item quantity="other">%1$d развёртывания</item>
+    </plurals>
 </resources>

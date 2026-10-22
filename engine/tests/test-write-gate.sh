@@ -170,7 +170,9 @@ echo "== the product's other folders: writable when the app says so, and only th
 # edit to the dashboard inside it.
 clearspec
 # Outside every temp folder: the gate lets scratch writes there through on their own.
-OUTSIDE="$(mktemp -d "$HOME/Library/Caches/bulava-write-gate.XXXXXX")"
+# macOS keeps per-user caches in ~/Library/Caches, Linux in ~/.cache.
+_CACHES="$HOME/Library/Caches"; [ -d "$_CACHES" ] || { _CACHES="${XDG_CACHE_HOME:-$HOME/.cache}"; mkdir -p "$_CACHES"; }
+OUTSIDE="$(mktemp -d "$_CACHES/bulava-write-gate.XXXXXX")"
 EXTRA="$(canon_path "$OUTSIDE")/extra"; OTHER="$(canon_path "$OUTSIDE")/other"; mkdir -p "$EXTRA" "$OTHER"; CHATDIR="$(mktemp -d)"
 printf '%s\n%s\n' "$EXTRA" "$OTHER" > "$CHATDIR/additional-directories.txt"
 check "no list from the app: the extra folder is refused" 'is_deny "$(gate "$EXTRA/dashboard/index.html")"'

@@ -263,11 +263,13 @@ final class LinkSession: Identifiable {
         let header = ChatHeaderDTO(title: new.title, archived: new.archived, status: new.status,
                                    activity: new.activity, degradation: new.degradation,
                                    queueCount: new.queueCount, busy: new.busy,
-                                   hasEarlier: new.hasEarlier, actions: new.actions, composer: new.composer)
+                                   hasEarlier: new.hasEarlier, actions: new.actions, composer: new.composer,
+                                   closed: new.closed)
         let oldHeader = ChatHeaderDTO(title: old.title, archived: old.archived, status: old.status,
                                       activity: old.activity, degradation: old.degradation,
                                       queueCount: old.queueCount, busy: old.busy,
-                                      hasEarlier: old.hasEarlier, actions: old.actions, composer: old.composer)
+                                      hasEarlier: old.hasEarlier, actions: old.actions, composer: old.composer,
+                                      closed: old.closed)
         guard !upserts.isEmpty || !removed.isEmpty || oldOrder != newOrder || header != oldHeader else {
             return nil
         }

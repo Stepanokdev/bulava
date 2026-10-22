@@ -629,6 +629,52 @@ nonisolated final class PhoneLinkTests: XCTestCase {
         phone.close()
     }
 
+    /// "Yes, do it" under an older answer ran the stale proposal at once, after Stop or another
+    /// message (22.10). It is offered only while nothing he wrote came after it.
+    @MainActor
+    func testAProposalIsNoLongerOfferedOnceHeWroteAgain() {
+        let product = model.products.add(name: "Offers")
+        let chat = model.conversations.newChat(for: product.id)
+        let proposal = ForemanProposal(action: .createTask, taskID: nil, label: "план")
+        var offer = ConversationEntry(productID: product.id, kind: .foreman, text: "Confirm?")
+        offer.chatID = chat.id
+        offer.proposalID = proposal.id
+        model.conversations.append(offer)
+        model.pendingProposals[product.id] = proposal
+        XCTAssertEqual(model.liveProposal(for: offer)?.id, proposal.id)
+
+        model.conversations.appendUser("ні, інше", productID: product.id, chatID: chat.id)
+        XCTAssertNil(model.liveProposal(for: offer), "a newer message makes the offer stale")
+    }
+
+    @MainActor
+    func testStoppingAChatWithdrawsWhatWasOfferedInIt() {
+        let product = model.products.add(name: "Stops")
+        let chat = model.conversations.newChat(for: product.id)
+        let proposal = ForemanProposal(action: .createTask, taskID: nil, label: "план")
+        var offer = ConversationEntry(productID: product.id, kind: .foreman, text: "Confirm?")
+        offer.chatID = chat.id
+        offer.proposalID = proposal.id
+        model.conversations.append(offer)
+        model.pendingProposals[product.id] = proposal
+        model.withdrawProposal(inChat: chat.id, productID: product.id)
+        XCTAssertNil(model.pendingProposals[product.id])
+    }
+
+    /// The Mac shows the newest chat when he has not clicked one. A chat the phone created became
+    /// the newest, and the window jumped to it, away from what he was reading at the desk (22.10).
+    @MainActor
+    func testAChatMadeOnThePhoneDoesNotTakeTheMacWindow() {
+        let product = model.products.add(name: "Desk")
+        let reading = model.conversations.adoptChat(id: UUID(), for: product.id)
+        XCTAssertEqual(model.conversations.currentChatID(for: product.id), reading.id)
+
+        let fromPhone = model.conversations.adoptChat(id: UUID(), for: product.id)
+        XCTAssertEqual(model.conversations.currentChatID(for: product.id), reading.id)
+        XCTAssertTrue(model.conversations.chats(for: product.id).contains { $0.id == fromPhone.id },
+                      "the new chat is still listed, only not forced onto the screen")
+    }
+
     @MainActor
     func testAQuestionAnsweredOnThePhoneIsAnsweredInItsOwnChat() async throws {
         let product = model.products.add(name: "Narada")

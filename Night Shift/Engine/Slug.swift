@@ -3,12 +3,18 @@ import CryptoKit
 
 enum Slug {
 
+    /// Remembered for a few seconds. Resolving symlinks asks the disk (`lstat` per component), and
+    /// the sidebar compares every chat with every run on every redraw: the same few dozen paths,
+    /// hundreds of times a second. That kept Bulava at 37–49 % of a core while nothing at all was
+    /// happening (22.10). A folder that becomes a symlink is seen again within `lifetime`.
     nonisolated static func canonicalPath(_ path: String) -> String {
-        let url = URL(fileURLWithPath: path)
-        let resolved = url.resolvingSymlinksInPath().path
-        var p = resolved.isEmpty ? url.standardizedFileURL.path : resolved
-        if p.count > 1 && p.hasSuffix("/") { p.removeLast() }
-        return p
+        CanonicalPaths.shared.value(for: path) { path in
+            let url = URL(fileURLWithPath: path)
+            let resolved = url.resolvingSymlinksInPath().path
+            var p = resolved.isEmpty ? url.standardizedFileURL.path : resolved
+            if p.count > 1 && p.hasSuffix("/") { p.removeLast() }
+            return p
+        }
     }
 
     nonisolated static func forPath(_ path: String) -> String {
@@ -45,5 +51,35 @@ enum Slug {
         while out.hasPrefix("-") { out.removeFirst() }
         while out.hasSuffix("-") { out.removeLast() }
         return out.isEmpty ? "proj" : out
+    }
+}
+
+nonisolated final class CanonicalPaths: @unchecked Sendable {
+    static let shared = CanonicalPaths()
+    private static let lifetime: TimeInterval = 5
+    private static let capacity = 2000
+
+    private let lock = NSLock()
+    private var memo: [String: (value: String, at: TimeInterval)] = [:]
+
+    func value(for path: String, resolve: (String) -> String) -> String {
+        let now = ProcessInfo.processInfo.systemUptime
+        lock.lock()
+        if let hit = memo[path], now - hit.at < Self.lifetime {
+            lock.unlock()
+            return hit.value
+        }
+        lock.unlock()
+
+        let value = resolve(path)
+
+        lock.lock(); defer { lock.unlock() }
+        if memo.count >= Self.capacity { memo.removeAll(keepingCapacity: true) }
+        memo[path] = (value, now)
+        return value
+    }
+
+    func forget() {
+        lock.lock(); memo.removeAll(); lock.unlock()
     }
 }

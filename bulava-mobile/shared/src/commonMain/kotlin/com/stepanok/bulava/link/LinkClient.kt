@@ -35,6 +35,8 @@ data class PairedMac(
     val port: Int,
     val credential: Credential,
     val lastHost: String? = null,
+    /** The Mac's interface language, from its last welcome: the phone speaks it too (22.10). */
+    val language: String? = null,
 )
 
 sealed interface LinkState {
@@ -85,6 +87,10 @@ class LinkClient(
 
     var paired: PairedMac? = loadPaired()
         private set
+
+    private val _language = MutableStateFlow(paired?.language)
+    /** The paired Mac's language, kept through Offline and a cold start; null when unpaired. */
+    val language: StateFlow<String?> = _language
 
     private var live: Connection? = null
     private var loop: Job? = null
@@ -172,6 +178,7 @@ class LinkClient(
         stop()
         platform.secure.remove(KEY)
         paired = null
+        _language.value = null
         _state.value = LinkState.Unpaired()
     }
 
@@ -217,6 +224,7 @@ class LinkClient(
                         ErrorCodes.REVOKED, ErrorCodes.UNAUTHORIZED -> {
                             platform.secure.remove(KEY)
                             paired = null
+                            _language.value = null
                             _state.value = LinkState.Unpaired(reply.message)
                             return
                         }
@@ -247,6 +255,9 @@ class LinkClient(
         live = connection
         lastSeenMs = now()
         val desktop = reply.desktop ?: Desktop(id = mac.desktopID, name = mac.name)
+        if (reply.desktop != null && desktop.language.isNotBlank() && paired?.language != desktop.language) {
+            paired?.let { savePaired(it.copy(language = desktop.language)) }
+        }
         _state.value = LinkState.Connected(desktop, reply.capabilities.toSet())
         connection.onText = { text -> handle(text) }
         scope.launch { connection.pump() }
@@ -262,6 +273,7 @@ class LinkClient(
                     val message = frame.data?.let { runCatching { LinkJson.decodeFromJsonElement<LinkError>(it) }.getOrNull() }
                     platform.secure.remove(KEY)
                     paired = null
+                    _language.value = null
                     live?.close(Connection.REVOKED)
                     _state.value = LinkState.Unpaired(message?.message)
                 } else {
@@ -351,6 +363,7 @@ class LinkClient(
 
     private fun savePaired(mac: PairedMac) {
         paired = mac
+        _language.value = mac.language
         platform.secure.put(KEY, LinkJson.encodeToString(PairedMac.serializer(), mac))
     }
 

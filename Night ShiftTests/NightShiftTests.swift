@@ -21,6 +21,17 @@ nonisolated final class SlugTests: XCTestCase {
         XCTAssertFalse(slug.contains("--"))
     }
 
+    /// The sidebar compares every chat with every run on every redraw. Resolving each path on the
+    /// disk every time kept Bulava at 37–49 % of a core while idle (22.10); once per path is enough.
+    func testTheSamePathIsResolvedOnceNotOnEveryComparison() {
+        let paths = CanonicalPaths()
+        var resolved = 0
+        for _ in 0..<500 {
+            _ = paths.value(for: "/tmp/some/project") { resolved += 1; return $0 }
+        }
+        XCTAssertEqual(resolved, 1)
+    }
+
     func testCanonicalPathHasNoTrailingSlash() {
         XCTAssertFalse(Slug.canonicalPath("/usr/").hasSuffix("/"))
     }

@@ -511,7 +511,8 @@ private struct Builder {
         return ChatDTO(id: chat.id.uuidString, productID: chat.productID.uuidString,
                        title: h.title, archived: h.archived, status: h.status, activity: h.activity,
                        degradation: h.degradation, queueCount: h.queueCount, busy: h.busy,
-                       entries: entries, hasEarlier: h.hasEarlier, actions: h.actions, composer: h.composer)
+                       entries: entries, hasEarlier: h.hasEarlier, actions: h.actions, composer: h.composer,
+                       closed: h.closed)
     }
 
     mutating func header(_ chat: Chat, hasEarlier: Bool) -> ChatHeaderDTO {
@@ -583,6 +584,15 @@ private struct Builder {
                                      style: "secondary", kind: "report", target: target))
         }
         let phaseActive = phase.isActive
+        var closed: ClosedDTO?
+        if !chat.archived, let closure = model.chatClosure(chat.id) {
+            let action = closure.startAgain.map { automationID in
+                register("closedRun:\(chat.id.uuidString)", label: String(localized: "Run now"), style: "primary") { model, _ in
+                    model.runAutomationNow(automationID); return nil
+                }
+            }
+            closed = ClosedDTO(message: closure.message, passing: closure.passing, action: action)
+        }
         return ChatHeaderDTO(
             title: chat.title, archived: chat.archived, status: Self.status(phase),
             activity: phaseActive ? model.directActivity(for: chat.id)?.sentence : nil,
@@ -590,7 +600,7 @@ private struct Builder {
             queueCount: model.directQueueCount(for: chat.id), busy: busy,
             hasEarlier: hasEarlier, actions: buttons,
             // This chat's own model and depth: the Mac keeps them per chat, and its pill shows them.
-            composer: composerOptions(for: chat.id))
+            composer: composerOptions(for: chat.id), closed: closed)
     }
 
     // MARK: Entries
@@ -615,6 +625,7 @@ private struct Builder {
                            attachments: e.attachments.map { attachment($0) },
                            tone: e.tone.rawValue, delivery: nil, asks: [], actions: [],
                            question: nil, card: nil, finished: e.turnFinished)
+        dto.workedMs = e.workedFor.map { Int64($0 * 1000) }
         switch e.kind {
         case .user:
             dto.delivery = e.delivery.map { delivery($0, chatID: chatID) }
@@ -624,9 +635,8 @@ private struct Builder {
             }
         case .foreman:
             dto.explanation = explanation(e, readOnly: readOnly)
-            if !readOnly, let proposalID = e.proposalID,
-               let proposal = model.pendingProposals[e.productID], proposal.id == proposalID {
-                dto.actions = proposalActions(proposal, productID: e.productID, chatID: chatID)
+            if !readOnly, let proposal = model.liveProposal(for: e) {
+                dto.actions = proposalActions(proposal, entry: e, chatID: chatID)
             }
         case .question:
             dto.question = question(e, chatID: chatID, readOnly: readOnly)
@@ -708,11 +718,14 @@ private struct Builder {
         return out
     }
 
-    mutating func proposalActions(_ proposal: ForemanProposal, productID: UUID, chatID: UUID) -> [ActionDTO] {
+    mutating func proposalActions(_ proposal: ForemanProposal, entry: ConversationEntry, chatID: UUID) -> [ActionDTO] {
         let key = proposal.id.uuidString
+        let productID = entry.productID
         return [
+            // Asked again when the phone presses: a screen drawn before Stop or a newer message
+            // still shows the buttons, and the Mac is where staleness is decided.
             register("proposal.yes:\(key)", label: String(localized: "Yes, do it"), style: "primary") { model, _ in
-                guard let live = model.pendingProposals[productID], live.id == proposal.id else {
+                guard let live = model.liveProposal(for: entry), live.id == proposal.id else {
                     return Self.stale
                 }
                 model.pendingProposals[productID] = nil
@@ -720,7 +733,7 @@ private struct Builder {
                 return nil
             },
             register("proposal.no:\(key)", label: String(localized: "Not now"), style: "secondary") { model, _ in
-                guard model.pendingProposals[productID]?.id == proposal.id else { return Self.stale }
+                guard model.liveProposal(for: entry)?.id == proposal.id else { return Self.stale }
                 model.pendingProposals[productID] = nil
                 model.conversations.appendForeman("Гаразд, скасував — нічого не роблю.",
                                                   productID: productID, chatID: chatID)
@@ -1160,7 +1173,8 @@ private struct Builder {
             let verb = Self.localized(a.verbKey)
             let sentence = verb.contains("%@") ? String(format: verb, a.object ?? "")
                 : [verb, a.object].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " ")
-            activity = ActivityDTO(sentence: sentence, status: a.status.rawValue, detail: a.detail)
+            activity = ActivityDTO(sentence: sentence, status: a.status.rawValue, detail: a.detail,
+                                   kind: ActivitySummary.kind(of: a.verbKey).rawValue)
         }
         var links: [FileDTO]?
         if b.kind == .markdown, let chatID, !roots.isEmpty {
@@ -1251,6 +1265,7 @@ private struct Builder {
         case .needsAttention: "needsAttention"
         case .needsReview: "needsReview"
         case .ready: "ready"
+        case .stopped: "stopped"
         case .resumable: "resumable"
         case .reviving: "reviving"
         case .revivalFailed: "revivalFailed"

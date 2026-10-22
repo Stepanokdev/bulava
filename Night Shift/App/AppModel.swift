@@ -442,6 +442,10 @@ final class AppModel {
             DecisionCenter.current = decisions
             automationDoor.attach(self, stateDir: settings.paths.stateDir)
             browser.attach(self, enabled: settings.accountBrowserEnabled, stateDir: settings.paths.stateDir)
+            #if canImport(WhisperKit)
+            let language = settings.dictationLanguage.code(interface: settings.interfaceLanguage)
+            Task.detached(priority: .utility) { await WhisperTranscriber.shared.prepareAtLaunch(language: language) }
+            #endif
         }
         if let drive = TestDrive.make() { testDrive = drive; drive.start(self) }
         // Reports a quit or a lost connection kept from going out last time, and any repair a
@@ -927,8 +931,8 @@ final class AppModel {
 
         /// The entry carrying the CLI's notice, kept out of the conversation. Deleting it from the
         /// store would not hold: the feed re-reads the session transcript and would write it
-        /// straight back.
-        var noticeEntryID: UUID
+        /// straight back. Nil when no answer came at all: the start stopped on the sign-in screen.
+        var noticeEntryID: UUID?
 
         /// The message that never got an answer. The only place the sign-in panel appears.
         var askedEntryID: UUID?

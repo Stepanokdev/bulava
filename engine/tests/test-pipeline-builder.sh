@@ -21,7 +21,7 @@ fails=0
 ok()  { printf '  \xe2\x9c\x85 %s\n' "$1"; }
 bad() { printf '  \xe2\x9d\x8c %s\n' "$1"; fails=$((fails + 1)); }
 
-TMP="$(mktemp -d -t pipeline-builder)" || exit 1
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/pipeline-builder.XXXXXXXX")" || exit 1
 KEEP_TMP="${KEEP_TMP:-0}"
 cleanup() {
   [ -n "${SESSION:-}" ] && tmux kill-session -t "$SESSION" 2>/dev/null
@@ -304,7 +304,7 @@ ART2="$(find "$IDIR/messages" -maxdepth 1 -type d -name '77-*' | head -1)"
 grep -q '"stage":"c"' "$ART2/stages.jsonl" 2>/dev/null && bad "the stage after the group still ran" || ok "and the stage after the group never ran"
 jq -e 'select(.message_id == "bbbbbbbb-0000-0000-0000-000000000001" and .stage == "b") | .state == "failed"' "$EV" >/dev/null 2>&1 \
   && ok "the failed stage is an event, not a silence" || bad "no failed event for stage b"
-sed -i '' 's/"group":"g","run":\["stage-fails.sh"\]/"group":"g","optional":true,"run":["stage-fails.sh"]/' "$ENG/supervisor/pipelines/grp-test.json"
+sed -i.bak 's/"group":"g","run":\["stage-fails.sh"\]/"group":"g","optional":true,"run":["stage-fails.sh"]/' "$ENG/supervisor/pipelines/grp-test.json" && rm -f "$ENG/supervisor/pipelines/grp-test.json.bak"
 printf '{"message":"x","message_id":"bbbbbbbb-0000-0000-0000-000000000002","seq":"78","pipeline":"grp-test"}\n' > "$TMP/env.json"
 bash "$ENG/bin/pipeline.sh" "$IDIR" "$TMP/env.json" >/dev/null 2>&1; rc=$?
 ART3="$(find "$IDIR/messages" -maxdepth 1 -type d -name '78-*' | head -1)"

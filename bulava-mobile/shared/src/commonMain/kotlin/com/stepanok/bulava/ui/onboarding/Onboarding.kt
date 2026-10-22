@@ -100,6 +100,8 @@ fun OnboardingScreen(controller: AppController, state: LinkState, onTryDemo: (()
     fun scan() {
         controller.platform.scanCode { text ->
             if (text == null) return@scanCode
+            // The demo's code — the one App Review is given — starts the demo instead of pairing.
+            if (text.trim() == AppController.DEMO_LINK) { controller.handleLink(text); return@scanCode }
             val code = controller.link.parse(text)
             if (code != null) pair(code) else pasting = true
         }

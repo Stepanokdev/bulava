@@ -12,6 +12,7 @@ import com.stepanok.bulava.platform.Notifier
 import com.stepanok.bulava.platform.PhoneNotification
 import com.stepanok.bulava.platform.PickedFile
 import com.stepanok.bulava.platform.PlatformServices
+import com.stepanok.bulava.state.AppController
 import com.stepanok.bulava.state.Draft
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -199,5 +200,21 @@ class DemoTest {
         val home = assertNotNull(c.home.value)
         assertEquals("Демо-Mac", home.desktop.name)
         assertEquals("Облік витрат для iPhone", home.products.first().brief)
+    }
+
+    @Test
+    fun theDemosCodeAsksForTheDemoAndPairsWithNothing() = runTest {
+        val real = Watched()
+        val c = AppController(real, demoScope()) { 1_790_000_000_000L + testScheduler.currentTime }
+        advanceUntilIdle()
+        val before = real.touched.toList()
+        assertTrue(c.handleLink(" ${AppController.DEMO_LINK}\n"), "the code is understood, as scanned")
+        assertEquals(1, c.demoRequests.replayCache.size, "the demo is asked for, even before a screen listens")
+        advanceUntilIdle()
+        assertIs<LinkState.Unpaired>(c.link.state.value, "no pairing is started")
+        assertEquals(before, real.touched, "no socket, no stored pairing")
+        c.demoStarted()
+        assertTrue(c.demoRequests.replayCache.isEmpty(), "a screen that comes back later does not start it again")
+        assertFalse(c.handleLink("bulava://demo/other"), "only the code itself")
     }
 }

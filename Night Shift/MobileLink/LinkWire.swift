@@ -417,6 +417,17 @@ nonisolated struct ChatDTO: Codable, Equatable, Sendable {
     /// What this chat's next message runs on — its own model and depth for Claude and for Codex,
     /// which the Mac keeps per chat. Absent from an older Mac: the phone then reads `home.composer`.
     var composer: ComposerOptionsDTO? = nil
+    /// Set when the chat can take no message any more (its run is over): the phone shows this
+    /// instead of its field. Absent from an older Mac, and while the chat can go on.
+    var closed: ClosedDTO? = nil
+}
+
+/// Why a chat takes no more messages, and the one action that helps — `AppModel.chatClosure`.
+nonisolated struct ClosedDTO: Codable, Equatable, Sendable {
+    var message: String
+    /// It will pass by itself (a merge under way): the phone may say "in a moment".
+    var passing: Bool
+    var action: ActionDTO?
 }
 
 /// What changed in an open chat since the last thing the phone was sent.
@@ -442,6 +453,7 @@ nonisolated struct ChatHeaderDTO: Codable, Equatable, Sendable {
     /// The chat's run control, as in `ChatDTO.composer`: a choice made on the Mac for this chat
     /// reaches the phone's chip as it is made.
     var composer: ComposerOptionsDTO? = nil
+    var closed: ClosedDTO? = nil
 }
 
 nonisolated struct EntryDTO: Codable, Equatable, Sendable {
@@ -460,6 +472,8 @@ nonisolated struct EntryDTO: Codable, Equatable, Sendable {
     var question: QuestionDTO?
     var card: CardDTO?
     var finished: Bool?
+    /// How long the agent worked on a finished answer, in milliseconds. Optional: older Macs.
+    var workedMs: Int64? = nil
     /// "Explain what happened", when the Mac offers it for this answer.
     var explanation: ExplanationDTO? = nil
 }
@@ -496,6 +510,9 @@ nonisolated struct ActivityDTO: Codable, Equatable, Sendable {
     /// running | done | failed
     var status: String
     var detail: String?
+    /// read | edit | search | run | agent | web | other — what the phone counts a run of steps by
+    /// ("Read 3 files, ran 4 commands"). Optional: an older Mac sends none.
+    var kind: String? = nil
 }
 
 /// A file the phone may fetch with `file.read`, by the opaque `ref` — never by path.

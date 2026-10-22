@@ -44,6 +44,13 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="bulava" android:host="pair" />
             </intent-filter>
+            <!-- The demo's code, bulava://demo, read by the Camera: it starts the demo. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="bulava" android:host="demo" />
+            </intent-filter>
         </activity>
         <activity
             android:name=".ScanActivity"

@@ -336,18 +336,32 @@ private fun TopBar(
 private fun ConnectionBanner(controller: AppController, link: LinkState) {
     val c = Bulava.colors
     val mac = controller.link.paired?.name ?: ""
-    val (title, body, retry) = when (link) {
-        is LinkState.Offline -> Triple(stringResource(Res.string.status_offline, mac), stringResource(Res.string.status_offline_body), true)
-        is LinkState.Connecting -> Triple(stringResource(Res.string.status_connecting, mac), null, false)
+    // One attempt tries every address and then looks the Mac up on the network, which can take
+    // half a minute. "Connecting…" for that long, with no hint, is how the phone sat there while
+    // Settings already said the Mac was out of reach (22.10). Past a few seconds it says what the
+    // Settings screen says, and keeps trying underneath.
+    var slow by remember { mutableStateOf(false) }
+    LaunchedEffect(link is LinkState.Connecting) {
+        slow = false
+        if (link is LinkState.Connecting) {
+            kotlinx.coroutines.delay(SLOW_CONNECT_MS)
+            slow = true
+        }
+    }
+    val (title, body, retry) = when {
+        link is LinkState.Offline || (link is LinkState.Connecting && slow) ->
+            Triple(stringResource(Res.string.status_offline, mac), stringResource(Res.string.status_offline_body), true)
+        link is LinkState.Connecting -> Triple(stringResource(Res.string.status_connecting, mac), null, false)
         else -> Triple(null, null, false)
     }
+    val quiet = link is LinkState.Connecting && !slow
     AnimatedVisibility(visible = title != null) {
-        Column(Modifier.fillMaxWidth().background(if (link is LinkState.Connecting) c.surfaceMuted else c.orangeSoft)
+        Column(Modifier.fillMaxWidth().background(if (quiet) c.surfaceMuted else c.orangeSoft)
             .padding(horizontal = 16.dp, vertical = 10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.material3.Icon(
-                    if (link is LinkState.Connecting) Icons.Wifi else Icons.Unplugged, null,
-                    tint = if (link is LinkState.Connecting) c.textSecondary else c.orange, modifier = Modifier.size(18.dp))
+                    if (quiet) Icons.Wifi else Icons.Unplugged, null,
+                    tint = if (quiet) c.textSecondary else c.orange, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(10.dp))
                 Text(title ?: "", style = Bulava.type.caption.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Medium),
                     color = c.text, modifier = Modifier.weight(1f))
@@ -373,3 +387,6 @@ private fun EmptyHome(onMenu: () -> Unit) {
         BulavaButton(stringResource(Res.string.empty_home_title), onMenu, kind = ButtonKind.Secondary, icon = Icons.Menu)
     }
 }
+
+/** How long "Connecting…" is shown before the banner says the Mac is not answering. */
+private const val SLOW_CONNECT_MS = 10_000L

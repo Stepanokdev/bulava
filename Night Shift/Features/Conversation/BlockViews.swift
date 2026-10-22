@@ -116,10 +116,11 @@ private struct ActivityTrace: View {
         .padding(.leading, 2)
     }
 
+    /// What was done, by kind: "Read 3 files, ran 4 commands" — not a bare count of steps.
     private var summary: String {
-        let done = activities.count - (running == nil ? 0 : 1)
-
-        return Fmt.count("%lld steps", done)
+        let line = ActivitySummary.line(activities)
+        if !line.isEmpty { return line }
+        return Fmt.count("%lld steps", activities.count - (running == nil ? 0 : 1))
     }
 }
 

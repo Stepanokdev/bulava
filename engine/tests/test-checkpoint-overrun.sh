@@ -35,7 +35,8 @@ export SUPERVISOR_CHECKPOINT_MAX_FILE_BYTES=1572864
 NS="$BIN_DIR/night-shift.sh"
 APP=(env SUPERVISOR_RUN_ENV_FROM_APP=1 "SUPERVISOR_APP_ANSWERS=dirty mcp git heavy")
 
-big() { mkdir -p "$(dirname "$1")"; rm -f "$1"; mkfile -n "${2:-3m}" "$1"; }
+# A sparse file of the given size: mkfile on macOS, truncate on Linux.
+big() { mkdir -p "$(dirname "$1")"; rm -f "$1"; if command -v mkfile >/dev/null 2>&1; then mkfile -n "${2:-3m}" "$1"; else truncate -s "${2:-3m}" "$1"; fi; }
 # Whether the rules leave this exact file out (as for a file not yet added), and whether it is
 # tracked. Both take a NAME: in a pathspec `[final]` is a glob, and it would match the twin.
 ignored() { git -C "$1" check-ignore -q --no-index -- "$2"; }

@@ -25,7 +25,7 @@ bad() { printf '  \xe2\x9d\x8c %s\n' "$1"; fails=$((fails + 1)); }
 
 command -v tmux >/dev/null 2>&1 || { echo "SKIP: tmux not installed"; exit 0; }
 
-TMP="$(mktemp -d -t revive)" || exit 1
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/revive.XXXXXXXX")" || exit 1
 tmux_isolate "$TMP/tmux"
 cleanup() {
   [ -n "${STUB_PIDS:-}" ] && kill $STUB_PIDS 2>/dev/null

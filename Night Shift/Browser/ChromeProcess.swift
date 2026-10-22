@@ -19,28 +19,29 @@ nonisolated enum ChromeApp {
         app.appendingPathComponent("Contents/MacOS/Google Chrome")
     }
 
-    /// What every launch of the account browser carries: its own profile, and none of Chrome's
-    /// first-run questions.
+    /// What every launch of the account browser carries: its own profile, none of Chrome's
+    /// first-run questions, and the last session restored.
+    ///
+    /// `--restore-last-session` is what keeps a site's sign-in across a restart. Apple's
+    /// App Store Connect session (`myacinfo`) is a session cookie: Chrome keeps such cookies only
+    /// when it reopens where it left off, and otherwise deletes them as the profile opens. Writing
+    /// `session.restore_on_startup = 1` into Preferences did not do it — Chrome guards that setting
+    /// with a signature, took the edit for tampering, reset it, and from then on ignored the value
+    /// in the file, so he signed in to App Store Connect again after every close (22.10). The flag
+    /// decides the same thing for this launch, and every launch must carry it: one that does not
+    /// (the quiet headless check included) deletes the session cookies at startup, for good.
     static func baseArguments(profile: URL) -> [String] {
-        ["--user-data-dir=\(profile.path)", "--no-first-run", "--no-default-browser-check"]
+        ["--user-data-dir=\(profile.path)", "--no-first-run", "--no-default-browser-check",
+         "--restore-last-session"]
     }
 
-    /// The profile keeps a site's sign-in across a restart only when Chrome reopens where it left
-    /// off: Apple's session cookie lives until the browser closes, and Chrome restores it only
-    /// with "Continue where you left off" (`session.restore_on_startup = 1`). Set before Chrome
-    /// first opens the profile, and again whenever it is found otherwise.
+    /// The profile's folder, private to him. Its preferences are Chrome's own to write: a setting
+    /// edited by hand is reset as tampering (see `baseArguments`).
     static func prepare(profile: URL) {
         let defaults = profile.appendingPathComponent("Default", isDirectory: true)
         try? FileManager.default.createDirectory(at: defaults, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
         try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: profile.path)
-        let file = defaults.appendingPathComponent("Preferences")
-        var prefs = (try? Data(contentsOf: file)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
-        var session = prefs["session"] as? [String: Any] ?? [:]
-        guard session["restore_on_startup"] as? Int != 1 else { return }
-        session["restore_on_startup"] = 1
-        prefs["session"] = session
-        if let data = try? JSONSerialization.data(withJSONObject: prefs) { try? data.write(to: file, options: .atomic) }
     }
 }
 

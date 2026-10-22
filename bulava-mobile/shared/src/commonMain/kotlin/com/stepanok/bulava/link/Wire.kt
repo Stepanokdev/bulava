@@ -388,7 +388,13 @@ data class ChatState(
     val actions: List<Action> = emptyList(),
     /** This chat's own run control — the Mac keeps model and depth per chat. Null from an older Mac. */
     val composer: ComposerOptions? = null,
+    /** The chat takes no more messages (its run is over): shown instead of the field. Null while it can go on. */
+    val closed: Closed? = null,
 )
+
+/** Why a chat takes no more messages, and the one action that helps — the Mac's words. */
+@Serializable
+data class Closed(val message: String = "", val passing: Boolean = false, val action: Action? = null)
 
 @Serializable
 data class ChatDelta(
@@ -411,6 +417,7 @@ data class ChatHeader(
     val hasEarlier: Boolean = false,
     val actions: List<Action> = emptyList(),
     val composer: ComposerOptions? = null,
+    val closed: Closed? = null,
 )
 
 @Serializable
@@ -433,6 +440,8 @@ data class Entry(
     val question: Question? = null,
     val card: Card? = null,
     val finished: Boolean? = null,
+    /** How long the agent worked on a finished answer. Older Macs send none. */
+    val workedMs: Long? = null,
     val explanation: Explanation? = null,
 )
 
@@ -462,7 +471,13 @@ data class Block(
 )
 
 @Serializable
-data class Activity(val sentence: String = "", val status: String = "done", val detail: String? = null)
+data class Activity(
+    val sentence: String = "",
+    val status: String = "done",
+    val detail: String? = null,
+    /** read | edit | search | run | agent | web | other — what a run of steps is counted by. Older Macs send none. */
+    val kind: String? = null,
+)
 
 /** What `file.open` answers: where the phone opens it, on the Mac's home Wi-Fi. */
 @Serializable

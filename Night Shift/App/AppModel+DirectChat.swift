@@ -81,6 +81,8 @@ nonisolated enum DirectChatPhase: Equatable, Sendable {
     case needsAttention
     case needsReview
     case ready
+    /// He pressed Stop and nothing is running any more: not working, and not a reply either.
+    case stopped
     case resumable
     /// Its watchdog died with its session while it still owed work; Bulava is bringing it back in
     /// place (`AppModel.reviveDeadRuns`).
@@ -129,6 +131,7 @@ nonisolated enum DirectChatPhase: Equatable, Sendable {
         case .needsAttention: String(localized: "Needs your answer")
         case .needsReview: String(localized: "Work stopped — review the result above")
         case .ready: String(localized: "Night Shift replied")
+        case .stopped: String(localized: "Stopped. Nothing more was done.")
         case .resumable: String(localized: "Ready to resume")
         case .reviving: String(localized: "Night Shift stopped unexpectedly — Bulava is bringing it back")
         case .revivalFailed:
@@ -155,6 +158,7 @@ nonisolated enum DirectChatPhase: Equatable, Sendable {
         case .needsAttention: "questionmark.circle"
         case .needsReview: "exclamationmark.bubble"
         case .ready: "checkmark.circle"
+        case .stopped: "stop.circle"
         case .resumable: "clock.arrow.circlepath"
         case .reviving: "arrow.clockwise.circle"
         case .revivalFailed: "exclamationmark.arrow.circlepath"
@@ -256,6 +260,11 @@ nonisolated enum DirectChatPhase: Equatable, Sendable {
         // answer, and he asked the same thing three times.
         if instance.queuedMessageCount > 0 { return .queued }
         if bindingHasOutcome || instance.outcome != nil || instance.doneResult != nil { return .ready }
+        // Stop withdrew the message before the worker ever saw it: nothing busy, nothing preparing,
+        // nothing queued (all checked above). The watchdog is still alive, so the line below would
+        // call this "working" for as long as anyone looked — the spinner that outlived Stop by
+        // minutes on the Mac and on both phones (22.10). The marker goes with the next delivery.
+        if instance.directorStopped { return .stopped }
         if instance.active || instance.watchdogAlive { return .working }
         return .resumable
     }
@@ -302,6 +311,7 @@ extension AppModel {
         guard !text.isEmpty || !attachments.isEmpty else { return .empty }
 
         let chat = conversations.adoptChat(id: chatID, for: productID)
+        withdrawProposal(inChat: chat.id, productID: productID)
         let superseding = supersededChatIDs.remove(chat.id) != nil
         let message = directMessage(text, attachments: attachments, superseding: superseding)
         let userEntry = conversations.appendUser(text, productID: productID, chatID: chat.id,
@@ -747,7 +757,7 @@ extension AppModel {
                 primary = project
             case .failure(let refusal):
                 conversations.updateDelivery(entryID: entryID, .failed)
-                failChat(chat.id, refusal.message, .unexpected("chat.start_refused"))
+                refuseStart(chat.id, refusal)
                 return
             }
             // Git-optional. A chat he is sitting at, in a folder that is not a committed git
@@ -963,6 +973,10 @@ extension AppModel {
                             failChat(chat.id, String(localized: "Claude Code asked something on its own screen while starting, and it was not answered in time. Send the message again and the question will be here."), .needsYou)
                             return
                         }
+                        if stopOnStartTheyMustClear(chatID: chat.id, entryID: entryID,
+                                                    output: launch.stdout + launch.stderr) {
+                            return
+                        }
                         if ClaudeOnboarding.engineSawIt(launch.stdout + launch.stderr) {
                             setupBlocked.insert(chat.id)
                             failChat(chat.id, String(localized: "Claude Code has not been set up on this Mac yet."), .needsYou)
@@ -1065,6 +1079,12 @@ extension AppModel {
                 conversations.updateDelivery(entryID: entryID, .failed)
 
                 failChat(chat.id, String(localized: "Another Night Shift run is working in this project. Wait for it to finish, or stop it, and send again."), .needsYou)
+            case .none where result.needsSignIn, .error where result.needsSignIn:
+                // Claude asked for a sign-in and exited before the resume could see its screen —
+                // reported to us twice from 1.15.3 as "could not resume" (21.10). The sign-in row,
+                // not a repair: nothing is broken.
+                conversations.updateDelivery(entryID: entryID, .failed)
+                stopOnStartTheyMustClear(chatID: chat.id, entryID: entryID, output: "handshake-blocked=login")
             case .none:
                 conversations.updateDelivery(entryID: entryID, .failed)
                 failChat(chat.id, bound.claudeSessionID == nil
@@ -1278,6 +1298,18 @@ extension AppModel {
         case .sessionRemains:
             return String(localized: "The other chat's session is still open. Stop it there and send again.")
         }
+    }
+
+    /// A send that never left because there was no folder to run it in. A run whose copy is gone
+    /// was reported to us as a breakage (1.15.3, 21 Oct) and handed to a repair that could only
+    /// say what the message already said: the way on is a fresh run, so that is the button.
+    func refuseStart(_ chatID: UUID, _ refusal: ChatCopyRefusal) {
+        failChat(chatID, refusal.message, refusal.needsYou ? .needsYou : .unexpected("chat.start_refused"))
+        guard let automationID = refusal.startAgain else { return }
+        toast = ToastMessage(text: refusal.message, kind: .error, key: repairToastKey(chatID),
+                             actions: [ToastAction(title: String(localized: "Run now")) { [weak self] in
+                                 self?.runAutomationNow(automationID)
+                             }])
     }
 
     /// The engine writes a refusal over several lines: the reason, what it found, what to do.
@@ -1618,6 +1650,25 @@ extension AppModel {
         }
     }
 
+    /// A start the engine stopped for something only the person can clear: Claude Code waiting for
+    /// a sign-in, or a folder that is not a project. Said as that, with the sign-in row under the
+    /// message where there is one — not as a breakage offered for repair and sent to us as a report.
+    /// Internal for tests.
+    @discardableResult
+    func stopOnStartTheyMustClear(chatID: UUID, entryID: UUID, output: String) -> Bool {
+        if StartRefusal.needsSignIn(output) {
+            signInBlocked[chatID] = SignInBlock(noticeEntryID: nil, askedEntryID: entryID)
+            failChat(chatID, String(localized: "Claude Code is not signed in on this Mac, so this was not sent. Sign in and send it again."), .needsYou)
+            return true
+        }
+        if StartRefusal.notAProject(output) {
+            let said = StartRefusal.withoutMarkers(output)
+            failChat(chatID, said.isEmpty ? String(localized: "Night Shift did not start.") : said, .needsYou)
+            return true
+        }
+        return false
+    }
+
     /// Where the sign-in panel belongs in this chat: beside the message the notice failed to
     /// answer, and nowhere else.
     func signInPromptEntryID(inChat chatID: UUID?) -> UUID? {
@@ -1639,7 +1690,12 @@ extension AppModel {
               PreflightRunner.isSignInNotice(notice.text) else {
             // A real answer arrived. The offer goes; what was hidden stays hidden, because the
             // notice is no more an answer now than it was then.
-            if signInBlocked.removeValue(forKey: chat.id) != nil { chatErrors[chat.id] = nil }
+            // Only a block a notice raised: one from a start that never began has no answer to
+            // wait for here, and goes when the message is sent again.
+            if signInBlocked[chat.id]?.noticeEntryID != nil {
+                signInBlocked[chat.id] = nil
+                chatErrors[chat.id] = nil
+            }
             return
         }
         // Recognised once and hidden for good — including on the refresh right after Send again,
@@ -1840,6 +1896,9 @@ extension AppModel {
         // answering AND the engine's worker busy; stopping Codex and returning left the other one
         // going, which is why Stop sometimes had to be pressed again and again.
         codexTurns[chatID]?.cancel()
+        if let productID = conversations.chat(id: chatID)?.productID {
+            withdrawProposal(inChat: chatID, productID: productID)
+        }
         guard let binding = conversations.chat(id: chatID)?.session,
               matchingInstance(for: binding) != nil else { return }
         stoppingChatIDs.insert(chatID)

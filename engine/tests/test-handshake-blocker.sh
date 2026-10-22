@@ -61,8 +61,26 @@ ws "{\"hooks\":{\"SessionStart\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"comma
 check "a hook pointing at a file that is not there is hooks" '[ "$(handshake_blocker "")" = hooks ]'
 # Quoted the way install.sh writes it (shlex.quote), because the real path has a space in it.
 ws "{\"hooks\":{\"SessionStart\":[{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"'$HOOK'\"}]}]}}"
+# What Claude Code says about its sign-in once it is gone, from a stand-in: the real answer depends
+# on this machine's account.
+FAKE_CLAUDE="$TMP/claude"
+fake_auth() { printf '#!/bin/sh\n[ "$1 $2" = "auth status" ] && cat <<'"'"'J'"'"'\n%s\nJ\n' "$1" > "$FAKE_CLAUDE"; chmod +x "$FAKE_CLAUDE"; }
+export SUPERVISOR_CLAUDE_BIN="$FAKE_CLAUDE"
+fake_auth '{"loggedIn":true}'
 check "an installed hook with no session to look at is exited" \
       '[ "$(handshake_blocker "" "no-such-slug-$$")" = exited ]'
+# 1.15.3, 21.10: a resume of a signed-out Claude exited with its pane before the sign-in screen
+# could be read, and was reported as "could not resume" twice.
+fake_auth '{"loggedIn":false,"authMethod":"none"}'
+check "gone, and Claude says it is signed out, is login" \
+      '[ "$(handshake_blocker "" "no-such-slug-$$")" = login ]'
+fake_auth 'not json'
+check "an answer that cannot be read is not taken for signed out" \
+      '[ "$(handshake_blocker "" "no-such-slug-$$")" = exited ]'
+printf '#!/bin/sh\nexit 1\n' > "$FAKE_CLAUDE"
+check "nor is a Claude that cannot say" \
+      '[ "$(handshake_blocker "" "no-such-slug-$$")" = exited ]'
+fake_auth '{"loggedIn":true}'
 check "an installed hook and a quiet pane is unknown, not hooks" '[ "$(handshake_blocker "")" = unknown ]'
 check "a screen outranks a broken install" \
       'rm -f "$SUPERVISOR_STATE_DIR/worker-settings.json"; [ "$(handshake_blocker "Choose the text style")" = onboarding ]'

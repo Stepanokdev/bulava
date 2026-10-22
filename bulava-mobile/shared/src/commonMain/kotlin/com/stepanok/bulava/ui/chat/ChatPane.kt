@@ -193,7 +193,9 @@ private fun EmptyChat(productName: String, loading: Boolean) {
         verticalArrangement = Arrangement.Center,
     ) {
         if (loading) {
-            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = c.textFaint)
+            // Centred: the column lays its text out from the leading edge, and the spinner sat
+            // against the left margin on its own (22.10).
+            CircularProgressIndicator(Modifier.size(20.dp).align(Alignment.CenterHorizontally), strokeWidth = 2.dp, color = c.textFaint)
         } else {
             Text(stringResource(Res.string.empty_chat_title, productName), style = Bulava.type.display, color = c.text)
             Spacer(Modifier.height(12.dp))
