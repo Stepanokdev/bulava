@@ -167,6 +167,11 @@ while :; do
     # every five, and it is the one holding the message he is waiting on — so the press that ends
     # the hold ends it now rather than on the minute.
     codex_decision_settle "$IDIR" >/dev/null 2>&1 || true
+    if [ "$why" = codex ] && codex_hold_tick "$IDIR" preparation; then
+      log "message $seq: the task was ended — Codex stayed away past the server's limit"
+      publish_wait none "$seq" "$mid"; rm -f "$env_file" 2>/dev/null || true
+      continue 2
+    fi
     sleep "$POLL"; waited=$((waited + POLL))
   done
   publish_wait none "$seq" "$mid"

@@ -30,6 +30,9 @@ if [ "${SUPERVISOR_PREFLIGHT_ENABLE:-1}" = 1 ] && [ -x "$BIN_DIR/preflight.sh" ]
     *)             pipeline="dispatch-legacy" ;;
   esac
 fi
+# A follow-up attempt of a task a bridge named: its preparation was done on the first attempt and is
+# already back in place (`task_material_restore`), so the brief goes in as it is.
+[ "${SUPERVISOR_DISPATCH_PIPELINE:-}" = plain ] && pipeline="plain"
 
 # The same hold the chat pump applies, on the other entry point into the same preparation.
 #
@@ -72,6 +75,10 @@ while [ "$_needs_codex" = 1 ]; do
     rm -f "$HELD" 2>/dev/null; exit 0
   fi
   codex_decision_settle "$IDIR" >/dev/null 2>&1 || true
+  if [ "$_why" = codex ] && codex_hold_tick "$IDIR" preparation; then
+    echo "$(date '+%F %T') [dispatch] $DISPATCH_ID ended: Codex stayed away past the server's limit" >> "$STATE/supervisor.log"
+    rm -f "$HELD" "$TASKFILE" 2>/dev/null; exit 0
+  fi
   sleep "${SUPERVISOR_PREP_HOLD_POLL:-10}"; _held=$((_held + ${SUPERVISOR_PREP_HOLD_POLL:-10}))
 done
 rm -f "$HELD" 2>/dev/null || true

@@ -110,6 +110,22 @@ ps() {
   command ps "$@"
 }
 
+cut() {
+  # BSD's `cut -c` counts characters in a UTF-8 locale; GNU's counts bytes, whatever the locale. A
+  # Ukrainian line cut at 60 "characters" ended halfway through a letter, and where that cut is a
+  # needle — the words a delivered prompt is looked up by in the transcript — nothing ever matched:
+  # a message that had arrived was taken for one that had not. The engine only ever writes
+  # `cut -c1-N` on a pipe, so that is the one spelling answered here, line by line like cut.
+  local n="${1#-c1-}"
+  if [ $# -eq 1 ] && [ "$n" != "$1" ] && [ -n "$n" ] && [ -z "${n//[0-9]/}" ]; then
+    perl -e 'use Encode; my $n = shift; binmode STDIN; binmode STDOUT;
+      while (my $l = <STDIN>) { my $nl = $l =~ s/\n\z// ? "\n" : "";
+        print encode("UTF-8", substr(decode("UTF-8", $l), 0, $n)), $nl }' "$n"
+    return
+  fi
+  command cut "$@"
+}
+
 if ! command -v shasum >/dev/null 2>&1; then
   shasum() {
     local algo=1

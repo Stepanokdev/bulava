@@ -49,6 +49,10 @@ deny() {   # $1 = reason
 # checking. Matching on the command text is coarse and a name built at runtime would slip past it;
 # the honest thing to do about a door is still to shut it rather than describe it in a comment.
 if [ -n "$command" ]; then
+  # A server's own line: credentials are not read and nothing is published from inside a run
+  # (`server_bash_refusal`). Off a server this prints nothing and the gate goes on as it always has.
+  _srv="$(server_bash_refusal "$command")"
+  [ -n "$_srv" ] && deny "$_srv"
   # Distinctive enough that the name alone identifies the file: nothing in a product repository is
   # called `codex-fallback.json`, and a false deny here would block ordinary work.
   _touches_control=0

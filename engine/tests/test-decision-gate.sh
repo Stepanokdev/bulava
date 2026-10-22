@@ -255,6 +255,19 @@ out="$(run_hook "Треба залити білд у App Store Connect — да�
 [ "$(jq -r '.unblock_action' "$IDIR/last-decision.json" 2>/dev/null)" = "Іван: залогінься в App Store Connect" ] \
   && ok "with the unblocking action intact" || bad "the unblocking action was lost"
 
+echo "===== on a server a question for a person ends the attempt instead of holding it ====="
+stub '{"decision":"ask","reason_code":"product","headline":"Яка база?","recommendation":"A","answer":""}'
+rm -f "$IDIR/ask-user.json" "$IDIR/server-question.json"
+t0=$(date +%s)
+out="$(SUPERVISOR_PROFILE=server SUPERVISOR_ASK_USER_WAIT=30 run_hook "Postgres чи SQLite?")"
+[ $(( $(date +%s) - t0 )) -lt 10 ] && ok "it does not wait for anybody" || bad "it held the turn"
+[ ! -e "$IDIR/ask-user.json" ] && ok "no question is put up for the Mac app" || bad "an ask-user card was raised on a server"
+[ "$(jq -r '.text' "$IDIR/server-question.json" 2>/dev/null)" = "Postgres чи SQLite?" ] \
+  && [ "$(jq -r '.options | join(",")' "$IDIR/server-question.json")" = "A,B" ] \
+  && ok "the question is written down for the bridge, with its options" || bad "server-question.json missing or wrong"
+printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason' | grep -q "needs_input" \
+  && ok "the worker is told to end with needs_input" || bad "the worker was not told what to do: $out"
+
 echo "===== an unsupervised session still reaches the human ====="
 stub '{"decision":"auto","answer":"x"}'
 out="$(payload "anything?" | ORCHESTRATOR_RUN_ID=not-this-run bash "$HOOK_DIR/answer-question.sh" 2>/dev/null)"

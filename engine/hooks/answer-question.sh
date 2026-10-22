@@ -218,6 +218,25 @@ if [ -z "$raw" ]; then
   fi
 fi
 
+# A server has nobody to wait for: an answer through the tracker takes hours, and a turn cannot be
+# held that long. The question is written down for the bridge — an id, the text, the options — and
+# the worker is told to end this attempt as needs_input. The answer comes back later as a new
+# message to the same task, which is where a person's reply belongs anyway.
+if [ "$decision" = "ask" ] && [ "${SUPERVISOR_PROFILE:-}" = server ] && [ -n "$IDIR" ] && [ -d "$IDIR" ]; then
+  _qid="q-$(uuidgen 2>/dev/null | tr 'A-Z' 'a-z' || date +%s%N)"
+  jq -n --arg id "$_qid" --argjson qs "$questions" --arg head "$headline" --arg rec "$recommendation" \
+        --argjson at "$(date +%s)" --arg rid "$(cat "$IDIR/run-id" 2>/dev/null || true)" '
+     {id:$id, at:$at, run_id:$rid,
+      text:([$qs[]? | .question // empty] | join("\n")),
+      options:([$qs[]? | .options[]? | (.label // .) | tostring]),
+      headline:$head, recommendation:$rec}' > "$IDIR/server-question.json.tmp" 2>/dev/null \
+    && mv -f "$IDIR/server-question.json.tmp" "$IDIR/server-question.json"
+  answer="Зараз поруч немає людини, а відповідь прийде через трекер, не в цьому прогоні. Не вгадуй і не чекай: заверши цю спробу командою
+$IDIR/report-outcome needs_input \"<питання одним реченням, із варіантами>\"
+Питання вже записане для людини (id $_qid). Відповідь прийде новим повідомленням до цієї ж задачі. Те, що вже зроблено, закоміть у гілку задачі перед цим."
+  decision="server-ask"
+fi
+
 if [ "$decision" = "ask" ] && [ -n "$IDIR" ] && [ -d "$IDIR" ]; then
   ASK_ENABLE="$(cat "$STATE_DIR/ask-user-enabled" 2>/dev/null || echo "${SUPERVISOR_ASK_USER_ENABLE:-1}")"
   ASK_WAIT="$(cat "$STATE_DIR/ask-user-wait" 2>/dev/null || echo "${SUPERVISOR_ASK_USER_WAIT:-3600}")"
@@ -367,7 +386,7 @@ journal_event "${IDIR:--}" answer "$(echo "$answer" | head -c 200)" \
 prefix="🌙 Супервізор (Codex від імені Івана) вирішив:"
 case "$decision" in
   answered) prefix="" ;;
-  ask) prefix="" ;;
+  ask|server-ask) prefix="" ;;
   degraded-auto) prefix="" ;;
 esac
 

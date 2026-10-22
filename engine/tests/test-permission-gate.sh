@@ -235,6 +235,23 @@ check "and never his Chrome on port 9222"        '! grep -q "9222" "$cfg"'
 check "the run's choices carry it to later processes" 'case " $_RUN_ENV_VARS " in *" SUPERVISOR_UNATTENDED "*) true ;; *) false ;; esac'
 check "no worker updates its Claude mid-run"     'run_env_stamp | grep -q "DISABLE_AUTOUPDATER=1"'
 
+echo "===== the browser finds a Chrome on Linux too ====="
+mkdir -p "$TMP/fakebin"; printf '#!/bin/sh\nexit 0\n' > "$TMP/fakebin/chromium"; chmod +x "$TMP/fakebin/chromium"
+check "a Mac is told nothing about which Chrome"  '[ "$(OSTYPE=darwin23 browser_executable_args)" = "[]" ]'
+if [ ! -x /opt/google/chrome/chrome ]; then
+  lin="$(OSTYPE=linux-gnu PATH="$TMP/fakebin:$PATH" browser_executable_args)"
+  check "Linux without Google's Chrome drives the Chromium it has" \
+        '[ "$(printf "%s" "$lin" | jq -r ".[1]")" = "$TMP/fakebin/chromium" ]'
+  lflags="$(OSTYPE=linux-gnu PATH="$TMP/fakebin:$PATH" SUPERVISOR_UNATTENDED=1 automation_mcp_flags)"
+  lcfg="$(printf "%s" "$lflags" | sed -E "s/^--mcp-config '([^']*)' $/\\1/")"
+  check "…and an automation's config names it"    'jq -e --arg p "$TMP/fakebin/chromium" ".mcpServers.browser.args | index(\"--executablePath\") and index(\$p)" "$lcfg" >/dev/null'
+  check "…keeping the window off and the profile throwaway" \
+        'jq -e ".mcpServers.browser.args | index(\"--headless\") and index(\"--isolated\")" "$lcfg" >/dev/null'
+fi
+case "${OSTYPE:-}" in darwin*)
+  check "on a Mac the shipped config is used as it is" 'cmp -s "$cfg" "${SUPERVISOR_AUTOMATION_MCP_CONFIG:-$BIN_DIR/../supervisor/automation-mcp.json}"' ;;
+esac
+
 echo "===== the settings an automation's worker starts with ====="
 printf '{"hooks":{"Stop":[]}}' > "$SUPERVISOR_STATE_DIR/worker-settings.json"
 check "a chat with a person uses the shared file" '[ "$(worker_settings_for "$IDIR" "$PROJ")" = "$SUPERVISOR_STATE_DIR/worker-settings.json" ]'

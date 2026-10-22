@@ -313,7 +313,12 @@ while [ -d "$IDIR" ]; do
           rm -f "$(codex_grant_file "$IDIR")" 2>/dev/null
           codex_decision_ask "$IDIR" review exhausted \
             "$(provider_state codex | awk '{print $2}')" "$(provider_unavailable_note codex)"
-          log "parked on Codex for over a day — the wait is now the director's to end"
+          if codex_hold_failed "$IDIR"; then
+            log "Codex stayed away past the server's limit — the task ended as failed, work left in place"
+            sleep "$POLL"; continue
+          fi
+          [ "${SUPERVISOR_PROFILE:-}" = server ] \
+            || log "parked on Codex for over a day — the wait is now the director's to end"
         fi
         if [ $(( now - last_pause_log )) -ge 300 ]; then
           log "paused ($(pause_provider "$IDIR")) until $(when_human "$(jq -r '.resume_after // 0' "$PAUSED" 2>/dev/null)") — re-checked against live usage"
@@ -332,6 +337,9 @@ while [ -d "$IDIR" ]; do
         [ "$(pause_provider_before_clear)" = codex ] \
           && log "Codex is available again ($verdict) — Claude was never stopped" \
           || log "Claude's limit lifted ($verdict)"
+        # Back is back: a later absence is a new one, counted from its own start.
+        [ "$verdict" = cleared-fresh ] && [ "$(pause_provider_before_clear)" = codex ] \
+          && rm -f "$(codex_away_file "$IDIR")" 2>/dev/null
         note_activity ;;
     esac
   fi

@@ -14,11 +14,19 @@ MESSAGE_ID=""
 # the foreman's relays and the report runs, and none of those should start paying for two research
 # calls because a chat setting changed.
 PIPELINE="plain"
+# A bridge's own: which task this message belongs to and what it is to it. On a server these are
+# required, and the heuristic that guesses "new or follow-up" from the text is not consulted at all.
+TASK_ID=""; RELATION=""; SOURCE=""; AUTHOR=""; ANSWERS=""
 while [ $# -gt 0 ]; do
   case "${1:-}" in
     --mode) MODE="${2:-conversation}"; shift 2 ;;
     --message-id) MESSAGE_ID="${2:-}"; shift 2 ;;
     --pipeline) PIPELINE="${2:-plain}"; shift 2 ;;
+    --task-id) TASK_ID="${2:-}"; shift 2 ;;
+    --relation) RELATION="${2:-}"; shift 2 ;;
+    --source) SOURCE="${2:-}"; shift 2 ;;
+    --author) AUTHOR="${2:-}"; shift 2 ;;
+    --answers) ANSWERS="${2:-}"; shift 2 ;;
     *) break ;;
   esac
 done
@@ -50,6 +58,54 @@ MSG="$*"
 
 slug="$(slug_for "$PROJ")"; session="$(session_name "$slug")"
 export INJECT_LOG="$SUP_STATE/supervisor.log"
+
+# ------------------------------------------------------------------ a bridge's message on a server
+#
+# Each message to a task is an attempt of its own in a fresh session (`dispatch.sh --continue`),
+# briefed from the task's record: the goal and criteria it started with, where its branches stand,
+# and what is new. Nothing is typed into a live session and nothing waits in a queue here — while an
+# attempt runs the answer is `busy` and the bridge keeps the message until the attempt is settled.
+#   TIER=dispatched / exit 0   accepted, a new attempt started
+#   TIER=duplicate  / exit 0   this message id was already taken (the earlier receipt is printed)
+#   TIER=conflict   / exit 4   same message id with a different text, or an answer to no open question
+#   TIER=busy       / exit 6   an attempt of this task is running
+#   exit 2                     unknown task for `continue`, existing task for `new`, bad arguments
+if [ "${SUPERVISOR_PROFILE:-}" = server ] || [ -n "$TASK_ID" ]; then
+  [ -n "$TASK_ID" ] || { echo "❌ на сервері потрібен --task-id" >&2; exit 2; }
+  valid_task_id "$TASK_ID" || { echo "❌ --task-id: «${TASK_ID}»" >&2; exit 2; }
+  case "$RELATION" in continue|new) ;; *) echo "❌ --relation continue|new обовʼязковий" >&2; exit 2 ;; esac
+  [ -z "$SOURCE" ] || valid_source "$SOURCE" || { echo "❌ --source: «${SOURCE}»" >&2; exit 2; }
+  [ -z "$AUTHOR" ] || valid_author "$AUTHOR" || { echo "❌ --author: «${AUTHOR}»" >&2; exit 2; }
+  _fwd=(--task-id "$TASK_ID")
+  [ -n "$MESSAGE_ID" ] && _fwd+=(--message-id "$MESSAGE_ID")
+  [ -n "$SOURCE" ] && _fwd+=(--source "$SOURCE")
+  [ -n "$AUTHOR" ] && _fwd+=(--author "$AUTHOR")
+  if [ "$RELATION" = new ]; then
+    task_exists "$TASK_ID" && { echo "❌ задача $TASK_ID уже є — для неї --relation continue" >&2; exit 2; }
+    exec "$BIN_DIR/dispatch.sh" "${_fwd[@]}" ${BR:+--branch "$BR"} "$PROJ" "$MSG"
+  fi
+  task_exists "$TASK_ID" || { echo "❌ задачі $TASK_ID немає — нічого продовжувати (--relation new?)" >&2; exit 2; }
+  # A repeat is answered before anything else, busy or not: it was already accepted.
+  _mc="$(task_message_check "$TASK_ID" "$MESSAGE_ID" "$MSG")"
+  case "${_mc%%$'\n'*}" in
+    duplicate) echo "TIER=duplicate"; printf '%s' "$_mc" | tail -n +2 | jq -c --arg t "$TASK_ID" '. + {task_id:$t}'; exit 0 ;;
+    conflict)  echo "TIER=conflict"; echo "❌ повідомлення $MESSAGE_ID для $TASK_ID уже прийняте з іншим текстом" >&2; exit 4 ;;
+  esac
+  task_busy "$TASK_ID" && { echo "TIER=busy"; echo "задача $TASK_ID зараз у роботі — надішли після вердикту" >&2; exit 6; }
+  if [ -n "$ANSWERS" ]; then
+    [ "$(task_get "$TASK_ID" '.question.id')" = "$ANSWERS" ] \
+      || { echo "TIER=conflict"; echo "❌ питання $ANSWERS для $TASK_ID не відкрите" >&2; exit 4; }
+  fi
+  _branch="$(task_get "$TASK_ID" .branch)"
+  _base="$(task_get "$TASK_ID" .base_sha)"
+  _brief="$(task_brief "$TASK_ID" "$MSG" "${SOURCE:-other}" "${AUTHOR:-unknown}" "$ANSWERS")"
+  _rs=(); [ -s "$(task_dir "$TASK_ID")/material/runspec.json" ] && _rs=(--runspec "$(task_dir "$TASK_ID")/material/runspec.json")
+  # The message id is recorded against the message as it came, not against the brief built around it.
+  _out="$(SUPERVISOR_TASK_RAW_MESSAGE="$MSG" "$BIN_DIR/dispatch.sh" --continue "${_fwd[@]}" ${_branch:+--branch "$_branch"} \
+           ${_base:+--review-base "$_base"} --dirty fail ${_rs[@]+"${_rs[@]}"} "$PROJ" "$_brief" 2>&1)"; _rc=$?
+  printf '%s\n' "$_out"
+  exit "$_rc"
+fi
 
 # Whose choices this send runs on.
 #

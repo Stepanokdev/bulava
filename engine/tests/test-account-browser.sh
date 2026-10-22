@@ -36,7 +36,9 @@ CHAT="$TMP/chat"; mkdir -p "$CHAT"
 flags="$(browser_mcp_flags "$CHAT")"
 cfg="$CHAT/browser-mcp.json"
 check "the run's own config is passed" '[ "$flags" = "--mcp-config $(shq "$cfg") " ]'
-check "a throwaway headless browser" '[ "$(args_of "$cfg" browser)" = "-y chrome-devtools-mcp@1.10.1 --headless --isolated" ]'
+# …plus, on Linux without Google's Chrome where it installs, the Chromium the machine has.
+want_browser="$(printf '%s' "-y chrome-devtools-mcp@1.10.1 --headless --isolated $(browser_executable_args | jq -r 'join(" ")')" | sed 's/ *$//')"
+check "a throwaway headless browser" '[ "$(args_of "$cfg" browser)" = "$want_browser" ]'
 acc="$(args_of "$cfg" accounts)"
 check "and Bulava's, through its door on the loopback" 'printf "%s" "$acc" | grep -q -- "--wsEndpoint ws://127.0.0.1:47293/devtools/browser/bulava"'
 token="$(jq -r .token "$CHAT/browser.json")"

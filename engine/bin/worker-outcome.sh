@@ -32,13 +32,18 @@ sid="$(cat "$IDIR/session-id" 2>/dev/null || true)"
 # once did".
 did="$(jq -r '.id // empty' "$IDIR/dispatch.json" 2>/dev/null || true)"
 tid="$(thread_get "$IDIR" '.thread_id')"
+task_id="$(cat "$IDIR/task-id" 2>/dev/null || true)"
 
 tmp="$IDIR/outcome.json.tmp.$$"
 if jq -nc --arg r "$RESULT" --arg s "$SUMMARY" --arg ts "$(date '+%F %T')" \
       --arg rid "$rid" --arg sid "$sid" --arg cwd "$PWD" --arg did "$did" --arg tid "$tid" \
+      --arg task_id "$task_id" \
+      --argjson q "$( { [ "$RESULT" = needs_input ] && jq -c '{id, text, options}' "$IDIR/server-question.json" 2>/dev/null; } || echo null)" \
       '{schema:1, result:$r, summary:$s, ts:$ts, run_id:$rid, session_id:$sid, cwd:$cwd}
        + (if $did == "" then {} else {dispatch_id:$did} end)
-       + (if $tid == "" then {} else {thread_id:$tid} end)' > "$tmp" 2>/dev/null \
+       + (if $tid == "" then {} else {thread_id:$tid} end)
+       + (if $task_id == "" then {} else {task_id:$task_id} end)
+       + (if $r == "needs_input" then {question:($q // {id:null, text:$s, options:[]})} else {} end)' > "$tmp" 2>/dev/null \
    && mv -f "$tmp" "$IDIR/outcome.json"; then
   run_event "$IDIR" outcome declared "$(printf '%s' "$SUMMARY" | clip_utf8 600 2>/dev/null || printf '%s' "$SUMMARY" | head -c 600)" \
     "$(jq -nc --arg r "$RESULT" '{result:$r}')"
@@ -99,9 +104,11 @@ write_receipt() {
         --arg ds "$diffstat" --arg ub "$unblock" --arg tk "$task" --arg rv "$review" \
         --arg lg "$lang" \
         --argjson cm "$commits" --argjson fd "$findings" \
+        --arg task_id "$task_id" --argjson repos "$(repos_state_json "$IDIR" "$PROJ_DIR" 2>/dev/null || echo '[]')" \
         '{result:$r, summary:$s, ts:$ts, run_id:$rid, branch:$br, project_name:$pn,
           diffstat:$ds, unblock:$ub, task:$tk, review:$rv, language:$lg,
-          commits:$cm, findings:$fd}' \
+          commits:$cm, findings:$fd, repos:$repos}
+         + (if $task_id == "" then {} else {task_id:$task_id} end)' \
     > "$rdir/receipt.json" 2>/dev/null || true
   python3 "$BIN_DIR/receipt-render.py" "$rdir/report.html" < "$rdir/receipt.json" >/dev/null 2>&1 || true
 }

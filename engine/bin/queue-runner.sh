@@ -90,6 +90,9 @@ while :; do
     fi
     [ -f "$STOP_FLAG" ] && { log "queue stopped while holding $(basename "$proj")"; break 2; }
     codex_decision_settle "$idir" >/dev/null 2>&1 || true
+    if [ "$_qwhy" = codex ] && codex_hold_tick "$idir" preparation; then
+      log "$(basename "$proj"): ended — Codex stayed away past the server's limit"; continue 2
+    fi
     sleep "${SUPERVISOR_QUEUE_HOLD_POLL:-30}"; _qheld=$((_qheld + ${SUPERVISOR_QUEUE_HOLD_POLL:-30}))
   done
   [ "$_qheld" -gt 0 ] && log "held $(basename "$proj") for ${_qheld}s, now preparing"

@@ -190,7 +190,7 @@ cmd="${1:-status}"; [ $# -gt 0 ] && shift
 case "$cmd" in
   start)
     NO_ATTACH=0; DIRARG=""
-    _want_branch=0
+    _want_branch=0; _want_base=0; BASE_REF=""; REVIEW_BASE=""
     # The director's answer about uncommitted work already in the folder (see `ask_about_dirty_tree`
     # below). The app hands it over in the environment, a terminal as flags; the flags win.
     DIRTY_CHOICE="${SUPERVISOR_DIRTY:-}"
@@ -204,11 +204,19 @@ case "$cmd" in
     NS_SETS=(); _want=""; _NS_FLAG_SET=""
     for a in "$@"; do
       if [ "$_want_branch" = 1 ]; then SUPERVISOR_WORK_BRANCH="$a"; _want_branch=0; _NS_FLAG_SET="$_NS_FLAG_SET SUPERVISOR_WORK_BRANCH"; continue; fi
+      if [ "$_want_base" = 1 ]; then BASE_REF="$a"; _want_base=0; continue; fi
       if [ -n "$_want" ]; then NS_SETS+=(--set "$_want=$a"); _want=""; continue; fi
       case "$a" in
         --no-attach) NO_ATTACH=1 ;;
         --branch) _want_branch=1 ;;
         --branch=*) SUPERVISOR_WORK_BRANCH="${a#--branch=}"; _NS_FLAG_SET="$_NS_FLAG_SET SUPERVISOR_WORK_BRANCH" ;;
+        # Where a branch this start creates begins — `origin/main` for a bridge that has just fetched.
+        # A branch that already exists is checked out as it is and this is not consulted.
+        --base) _want_base=1 ;;
+        --base=*) BASE_REF="${a#--base=}" ;;
+        # The commit a review measures this run from, when it is not HEAD at the start: a follow-up
+        # attempt of a task is reviewed as the whole branch against where the task began.
+        --review-base=*) REVIEW_BASE="${a#--review-base=}" ;;
         --dirty=*) DIRTY_CHOICE="${a#--dirty=}" ;;
         --dirty-digest=*) DIRTY_SEEN="${a#--dirty-digest=}" ;;
         --message=*) DIRTY_MESSAGE="${a#--message=}" ;;
@@ -223,18 +231,29 @@ case "$cmd" in
       esac
     done
     [ "$_want_branch" = 1 ] && { echo "❌ --branch: бракує назви гілки" >&2; exit 2; }
+    [ "$_want_base" = 1 ] && { echo "❌ --base: бракує ref (наприклад origin/main)" >&2; exit 2; }
+    # A server has nobody to ask about uncommitted work, and on a fresh clone there should be none:
+    # what is there was left by an earlier attempt, and starting on top of it — or committing it —
+    # would hand that attempt's leftovers to this one. So unless told otherwise it is an error.
+    [ -z "$DIRTY_CHOICE" ] && [ "${SUPERVISOR_PROFILE:-}" = server ] && DIRTY_CHOICE=fail
     [ -n "$_want" ] && { echo "❌ --${_want#@}: бракує значення" >&2; exit 2; }
     # `--set key=value` arrives as `@pair=key=value`; the pair itself is the value.
     for i in "${!NS_SETS[@]}"; do
       case "${NS_SETS[$i]}" in "@pair="*) NS_SETS[$i]="${NS_SETS[$i]#@pair=}" ;; esac
     done
     case "$DIRTY_CHOICE" in
-      ""|keep|commit) ;;
-      *) echo "❌ --dirty: «${DIRTY_CHOICE}» — можна keep або commit" >&2; exit 2 ;;
+      ""|keep|commit|fail) ;;
+      *) echo "❌ --dirty: «${DIRTY_CHOICE}» — можна keep, commit або fail" >&2; exit 2 ;;
     esac
     PROJECT_DIR="$(canon_path "${DIRARG:-$PWD}")"
     [ -d "$PROJECT_DIR" ] || { echo "❌ Проєкт не знайдено: ${DIRARG:-$PWD}" >&2; exit 1; }
+    if [ -n "$BASE_REF" ]; then
+      case "$BASE_REF" in -*) echo "❌ --base: «${BASE_REF}» — не ref" >&2; exit 2 ;; esac
+      ( cd "$PROJECT_DIR" && git rev-parse --verify --quiet "$BASE_REF^{commit}" >/dev/null 2>&1 ) \
+        || { echo "❌ --base: у $PROJECT_DIR немає коміту «${BASE_REF}» (зроби git fetch?)" >&2; exit 2; }
+    fi
     ns_apply_settings "$PROJECT_DIR" ${NS_SETS[@]+"${NS_SETS[@]}"} || exit 2
+    server_profile_guard
     export SUPERVISOR_WORK_BRANCH
     command -v tmux >/dev/null 2>&1 || { echo "❌ tmux не встановлено (brew install tmux)" >&2; exit 1; }
     [ -s "$SUP_DIR/STANDARDS.md" ] || { echo "❌ нема/порожній $SUP_DIR/STANDARDS.md" >&2; exit 1; }
@@ -293,6 +312,7 @@ case "$cmd" in
       echo
       worker_language_rule
       append_client_context
+      server_worker_rules
     } > "$STD_TMP" 2>/dev/null
     [ -s "$STD_TMP" ] || { echo "❌ не вдалося згенерувати system prompt. Старт скасовано." >&2; rm -f "$STD_TMP"; exit 1; }
 
@@ -696,6 +716,14 @@ $gone}"
             fi
             DIRTY_MODE=keep
             ;;
+          fail)
+            # Refused as the same 77 the app answers with a button, so a caller that knows that code
+            # already knows what happened — but with no question in it: nothing here is waiting for
+            # an answer, and the tree is left exactly as it was found.
+            refuse_start "$PROJECT_DIR" "У теці є незакомічені зміни, а старт без людини (--dirty=fail) на них не починає. Дерево не чіпав: $(cd "$PROJECT_DIR" && git status --porcelain 2>/dev/null | head -5 | tr '\n' ' ')"
+            echo "start-refused=dirty" >&2
+            rm -f "$STD_TMP"; exit 77
+            ;;
           *) ask_about_dirty_tree ;;
         esac
       fi
@@ -726,9 +754,9 @@ $gone}"
               rm -f "$STD_TMP"; exit 1
             fi
           else
-            if ! ( cd "$PROJECT_DIR" && git checkout -qb "$BRANCH" >/dev/null 2>&1 ) \
+            if ! ( cd "$PROJECT_DIR" && git checkout -qb "$BRANCH" ${BASE_REF:+"$BASE_REF"} >/dev/null 2>&1 ) \
                || [ "$(cd "$PROJECT_DIR" && git symbolic-ref --short HEAD 2>/dev/null)" != "$BRANCH" ]; then
-              echo "❌ git: не вдалося створити гілку $BRANCH. Старт скасовано." >&2
+              echo "❌ git: не вдалося створити гілку $BRANCH${BASE_REF:+ від $BASE_REF}. Старт скасовано." >&2
               ( cd "$PROJECT_DIR" && git checkout -q "$ORIG_REF" 2>/dev/null; [ "$CHECKPOINTED" = 1 ] && [ -n "$ORIG_HEAD" ] && git reset --soft "$ORIG_HEAD" 2>/dev/null ) || true
               rm -f "$STD_TMP"; exit 1
             fi
@@ -800,6 +828,11 @@ $gone}"
       echo "$(date '+%F %T') [start] '$PROJECT_DIR' — the director's uncommitted work left in place, snapshot $SNAPSHOT_REF" >> "$SUP_STATE/supervisor.log"
     fi
     BASE_SHA="${SNAPSHOT:-$(resolve_base_sha "$PROJECT_DIR")}"
+    # Only an ancestor of where the work stands: anything else would measure somebody else's history.
+    if [ -z "${SNAPSHOT:-}" ] && [ -n "$REVIEW_BASE" ] && [ -n "$(only_object_id "$REVIEW_BASE")" ] \
+       && ( cd "$PROJECT_DIR" && git merge-base --is-ancestor "$REVIEW_BASE" HEAD 2>/dev/null ); then
+      BASE_SHA="$REVIEW_BASE"
+    fi
     [ -n "$BASE_SHA" ] && printf '%s\n' "$BASE_SHA" > "$IDIR/base-sha"
     # What git ignored at the start, so the scope gate never deletes it (see `ignored_manifest`).
     ignored_manifest "$PROJECT_DIR" > "$IDIR/base-ignored" 2>/dev/null || true
@@ -890,7 +923,7 @@ $gone}"
     if [ "$NO_ATTACH" = 0 ] && [ -z "${SUPERVISOR_CLAUDE_CMD:-}" ] && [ -t 0 ] && [ -t 1 ]; then
       echo "   (під'єднуюсь… Ctrl-b d — від'єднатися, робота лишиться у фоні)"
       rm -rf "$START_LOCK" 2>/dev/null; trap - EXIT
-      exec tmux attach -t "$SESSION"
+      exec "$(command -v tmux)" ${SUPERVISOR_TMUX_SOCKET:+-L "$SUPERVISOR_TMUX_SOCKET"} attach -t "$SESSION"
     fi
     echo "   Підключитись: night-shift attach \"$PROJECT_DIR\""
     ;;
@@ -1078,6 +1111,59 @@ $gone}"
     echo "$(date '+%F %T') [mcp-decide] $_how for '$_d': $*" >> "$SUP_STATE/supervisor.log"
     ;;
 
+  task)
+    # A task a bridge named, as it stands: what the bridge reads instead of the engine's files.
+    #   night-shift task show --task-id PRJ-123 [--json]
+    #   night-shift task events --task-id PRJ-123 [--after N]   the task's own stream, from seq N
+    #   night-shift task list [--json]
+    _sub="${1:-}"; shift || true
+    _tid=""; _after=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --task-id) _tid="${2:-}"; shift 2 ;;
+        --after)   _after="${2:-0}"; shift 2 ;;
+        --json)    shift ;;
+        *) echo "❌ невідомий аргумент: $1" >&2; exit 2 ;;
+      esac
+    done
+    case "$_after" in ''|*[!0-9]*) _after=0 ;; esac
+    case "$_sub" in
+      show)
+        valid_task_id "$_tid" || { echo "usage: night-shift task show --task-id <id> [--json]" >&2; exit 2; }
+        task_show_json "$_tid" || { echo "❌ задачі $_tid немає" >&2; exit 1; } ;;
+      events)
+        valid_task_id "$_tid" || { echo "usage: night-shift task events --task-id <id> [--after N]" >&2; exit 2; }
+        task_exists "$_tid" || { echo "❌ задачі $_tid немає" >&2; exit 1; }
+        jq -c --argjson a "$_after" 'select(.seq > $a)' "$(task_dir "$_tid")/events.jsonl" 2>/dev/null ;;
+      list)
+        for _f in "$(tasks_root)"/t-*/task.json; do
+          [ -s "$_f" ] && jq -c '{task_id, state, updated_at, branch, attempts: (.attempts | length)}' "$_f" 2>/dev/null
+        done | jq -s -c 'sort_by(.updated_at) | reverse' ;;
+      *) echo "usage: night-shift task show|events|list …" >&2; exit 2 ;;
+    esac
+    exit 0
+    ;;
+
+  trust)
+    # Claude Code asks once per folder whether to trust it, on a screen of its own that nobody on a
+    # server will ever answer (`handshake_screen` → trust). This answers it beforehand, the way a
+    # person would by running claude there once. Each folder is a repository of its own, so every
+    # repository a task may touch — the main one and each extra — is named here.
+    [ $# -gt 0 ] || { echo "usage: night-shift trust <dir> [dir…]" >&2; exit 2; }
+    _rc=0
+    for _a in "$@"; do
+      _d="$(canon_path "$_a")"
+      [ -d "$_d" ] || { echo "❌ Теки не знайдено: $_a" >&2; _rc=1; continue; }
+      if claude_trust_folder "$_d"; then
+        echo "🔓 Claude довірятиме теці «${_d}»"
+        echo "$(date '+%F %T') [trust] '$_d' ($(claude --version 2>/dev/null | head -1))" >> "$SUP_STATE/supervisor.log"
+      else
+        echo "❌ не зміг записати довіру до «${_d}» у $(claude_config_json)" >&2; _rc=1
+      fi
+    done
+    exit "$_rc"
+    ;;
+
   mcp-carry)
     # The director's MCP answers for a folder, carried to a copy of it — a linked worktree Bulava
     # made to work in. The answers are kept per folder, so without this the copy starts with every
@@ -1215,6 +1301,7 @@ $gone}"
       cat "$SUP_DIR/STANDARDS.md"; echo
       worker_language_rule
       append_client_context
+      server_worker_rules
     } > "$STD_TMP" 2>/dev/null
     [ -s "$STD_TMP" ] || { echo "❌ не вдалося згенерувати system prompt" >&2; rm -f "$STD_TMP"; resume_rollback; exit 1; }
 
@@ -1281,6 +1368,7 @@ $gone}"
     printf 'subscription\n' > "$IDIR/auth-mode"
     # The same choices the launch line below carries, written where a later process can read them.
     # A preflight or a consultation started by the app is not a child of this tmux session.
+    server_profile_guard
     run_env_save "$IDIR"
     EFFORT_FLAG="$(claude_effort_launch_flag)"
     MODEL_FLAG=""; [ -n "${SUPERVISOR_CLAUDE_MODEL:-}" ] && MODEL_FLAG="--model $(shq "$SUPERVISOR_CLAUDE_MODEL") "
@@ -1326,7 +1414,7 @@ $gone}"
     echo "   Сесія:  $SESSION (resume $RESUME_SID)"
     [ -n "$CUR_BRANCH" ] && echo "   Гілка:  $CUR_BRANCH"
     if [ "$NO_ATTACH" = 0 ] && [ -t 0 ] && [ -t 1 ]; then
-      exec tmux attach -t "$SESSION"
+      exec "$(command -v tmux)" ${SUPERVISOR_TMUX_SOCKET:+-L "$SUPERVISOR_TMUX_SOCKET"} attach -t "$SESSION"
     fi
     ;;
 
@@ -1466,8 +1554,8 @@ $gone}"
   attach)
     ADIR="$(canon_path "${1:-$PWD}")"
     SLUG="$(slug_for "$ADIR")"; SESSION="$(session_name "$SLUG")"
-    if tmux has-session -t "$SESSION" 2>/dev/null; then exec tmux attach -t "$SESSION"
-    elif tmux has-session -t night 2>/dev/null && ! _any_instance; then exec tmux attach -t night
+    if tmux has-session -t "$SESSION" 2>/dev/null; then exec "$(command -v tmux)" ${SUPERVISOR_TMUX_SOCKET:+-L "$SUPERVISOR_TMUX_SOCKET"} attach -t "$SESSION"
+    elif tmux has-session -t night 2>/dev/null && ! _any_instance; then exec "$(command -v tmux)" ${SUPERVISOR_TMUX_SOCKET:+-L "$SUPERVISOR_TMUX_SOCKET"} attach -t night
     else echo "Немає сесії для $ADIR (дивись night-shift status)"; exit 1; fi
     ;;
 
