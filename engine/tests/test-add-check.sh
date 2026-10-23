@@ -176,6 +176,21 @@ printf '%s\037%s\037%s\037%s\n' "$XR" "$(git -C "$XR" rev-parse HEAD~2)" d 0 > "
 bash "$ROOT/bin/verify.sh" "$BARE" bare-extra-red "$BI" "$(git -C "$BARE" rev-parse HEAD)" >/dev/null 2>&1
 EVR="$BI/evidence/bare-extra-red/evidence.json"; [ -f "$EVR" ] || EVR="$SUPERVISOR_STATE_DIR/evidence/bare-extra-red/evidence.json"
 check "a red extra repository fails the evidence"                   '[ "$(jq -r .overall_status "$EVR")" = fail ]'
+# The worker said how this repository is verified (its tests need a venv the raw machine lacks):
+# its check wins, and the plain `make test` that would fail for the machine's reasons is not run.
+jq -nc --arg cwd "$XR" '{criterion:"omnis tests in its venv", argv:["true"], cwd:$cwd}' > "$BI/checks.jsonl"
+bash "$ROOT/bin/verify.sh" "$BARE" bare-extra-own "$BI" "$(git -C "$BARE" rev-parse HEAD)" >/dev/null 2>&1
+EVO="$BI/evidence/bare-extra-own/evidence.json"; [ -f "$EVO" ] || EVO="$SUPERVISOR_STATE_DIR/evidence/bare-extra-own/evidence.json"
+check "a repository the worker's own check covers is not auto-verified" '[ "$(jq -r .overall_status "$EVO")" = pass ] && ! jq -r ".criteria[].criterion" "$EVO" | grep -q "make test"'
+check "…and the evidence says why"                                  'jq -r ".criteria[] | select(.status == \"skipped\") | .note" "$EVO" | grep -q "checks the worker registered"'
+jq -nc --arg d "$XR" '{criterion:"by path", argv:["bash","-c",("cd " + $d + " && true")], cwd:"/elsewhere"}' > "$BI/checks.jsonl"
+bash "$ROOT/bin/verify.sh" "$BARE" bare-extra-path "$BI" "$(git -C "$BARE" rev-parse HEAD)" >/dev/null 2>&1
+EVP="$BI/evidence/bare-extra-path/evidence.json"; [ -f "$EVP" ] || EVP="$SUPERVISOR_STATE_DIR/evidence/bare-extra-path/evidence.json"
+check "…also when the check names the repository by its path"       '[ "$(jq -r .overall_status "$EVP")" = pass ]'
+rm -f "$BI/checks.jsonl"
+SUPERVISOR_EXTRA_REPO_AUTOVERIFY=0 bash "$ROOT/bin/verify.sh" "$BARE" bare-extra-off "$BI" "$(git -C "$BARE" rev-parse HEAD)" >/dev/null 2>&1
+EVF2="$BI/evidence/bare-extra-off/evidence.json"; [ -f "$EVF2" ] || EVF2="$SUPERVISOR_STATE_DIR/evidence/bare-extra-off/evidence.json"
+check "the operator can turn extra-repository detection off"         '! jq -r ".criteria[].criterion" "$EVF2" | grep -q "make test"'
 rm -rf "$BARE" "$XR" "$BI"
 
 echo

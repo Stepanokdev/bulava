@@ -225,6 +225,10 @@ Verification follows the work: every extra repository that changed (HEAD ≠ bas
 checked inside itself with the same plain detection as the main folder (`verify.sh`, `make verify` or
 `test`, `pytest`, `npm test`), and checks the worker registered with `add-check` count as
 verification — "no automated verification available" is reported only when nothing at all ran.
+An extra repository that one of the worker's registered checks is about (registered while standing in
+it, or naming its path in the command) is verified by that check alone, so a raw `pytest` without the
+repository's venv or services cannot fail work the worker proved another way.
+`SUPERVISOR_EXTRA_REPO_AUTOVERIFY=0` turns the detection in extra repositories off entirely.
 
 Extra repositories are in `receipt.repos` already, with their own base and reviewed commit; tasks that
 touch several repositories work today, as long as `SUPERVISOR_EXTRA_DIRS_FILE` names them on every

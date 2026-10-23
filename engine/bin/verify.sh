@@ -419,13 +419,29 @@ done
 # profile, a README — while the change and its tests live in an extra one, and "nothing to verify
 # here" was then the verdict on work that had tests of its own. The same plain detection as the
 # main folder's fallback below, run inside each changed repository and named after it.
+#
+# Two ways it stays out of the way. The worker's own checks win: when one it registered names this
+# repository — registered while standing in it, or with its path in the command — that is how this
+# repository is verified, and a plain `pytest` in the raw environment beside it (no venv, no
+# services) would only add a failure that is the machine's, not the work's. And an operator who
+# verifies everything through registered checks turns it off: SUPERVISOR_EXTRA_REPO_AUTOVERIFY=0.
 extra_ran=0
-if [ -n "$IDIR" ] && [ -s "$IDIR/extra-repos" ]; then
+extra_checked_by_worker() {   # $1=repository → 0 when a registered check is about it
+  [ -s "$IDIR/checks.jsonl" ] || return 1
+  jq -e --arg d "$1" 'select(((.cwd // "") == $d) or ((.cwd // "") | startswith($d + "/"))
+                             or ((.argv // []) | map(tostring) | join(" ") | contains($d)))' \
+     "$IDIR/checks.jsonl" >/dev/null 2>&1
+}
+if [ -n "$IDIR" ] && [ -s "$IDIR/extra-repos" ] && [ "${SUPERVISOR_EXTRA_REPO_AUTOVERIFY:-1}" = 1 ]; then
   while IFS=$'\037' read -r _xd _xbase _xdig _xdirty; do
     [ -n "$_xd" ] && [ -d "$_xd" ] || continue
     _xhead="$(git -C "$_xd" rev-parse HEAD 2>/dev/null || true)"
     [ "$_xhead" != "$_xbase" ] || [ -n "$(git -C "$_xd" status --porcelain 2>/dev/null | head -1)" ] || continue
     _xn="$(basename "$_xd")"
+    if extra_checked_by_worker "$_xd"; then
+      add_criterion "$_xn: own detection" "(skipped)" 0 "" skipped "verified by the checks the worker registered for it"
+      extra_ran=1; continue
+    fi
     STEP_DIR="$_xd"
     if [ -x "$_xd/verify.sh" ] && [ -f "$_xd/verify.sh" ] && [ "${SUPERVISOR_PROJECT_VERIFY:-1}" = 1 ]; then
       run_step "$_xn: verify.sh" "$STEP_TO" env ./verify.sh; extra_ran=1
