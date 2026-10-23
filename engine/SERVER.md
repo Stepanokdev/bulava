@@ -44,11 +44,11 @@ outbound traffic on an allowlist, and protect `main` on the GitLab side.
 ## Preparing a VM
 
 ```bash
-# engine — the latest release:
+# engine — the current main branch of the public repository (run it again to update):
 curl -fsSL https://bulava.app/install.sh | bash
-# …or exactly one commit of the public repository, which is what a pinned server should run:
-git clone https://github.com/Stepanokdev/bulava ~/bulava && git -C ~/bulava checkout <commit>
-bash ~/bulava/engine/install.sh      # the engine then runs from ~/bulava/engine; update = checkout + install.sh
+# …or the same main as a checkout, updated with `git pull` and install.sh again:
+git clone https://github.com/Stepanokdev/bulava ~/bulava && bash ~/bulava/engine/install.sh
+# A checkout can also stay on one commit (`git checkout <commit>`) when a server must not move.
 
 # a browser for runs that need one (x86_64: Google Chrome; arm64: the distribution's Chromium)
 sudo apt install ./google-chrome-stable_current_amd64.deb      # or: sudo snap install chromium
