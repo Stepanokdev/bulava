@@ -142,4 +142,41 @@ rm -rf "$SPW"
 rm -rf "$WRAP"
 
 echo
+echo "===== registered checks are verification, even where the folder has no stack ====="
+# OMD-1: the main folder held a README and nothing else, the worker registered six checks against the
+# repositories it really changed, all six passed — and "no automated verification available" made the
+# evidence inconclusive, turning the reviewer's PASS into debt. The same work with NO checks passed.
+BARE="$(mktemp -d)"; BI="$SUPERVISOR_STATE_DIR/instances/bare"; mkdir -p "$BI"
+( cd "$BARE" && git init -q && git config user.email t@t && git config user.name t && echo "# profile" > README.md && git add -A && git commit -qm init )
+jq -nc '{criterion:"the real repository builds", argv:["true"]}' > "$BI/checks.jsonl"
+bash "$ROOT/bin/verify.sh" "$BARE" bare-checks "$BI" "$(git -C "$BARE" rev-parse HEAD)" >/dev/null 2>&1
+EVB="$SUPERVISOR_STATE_DIR/evidence/bare-checks/evidence.json"
+[ -f "$EVB" ] || EVB="$BI/evidence/bare-checks/evidence.json"
+check "a green registered check in a folder with no stack is a pass" '[ "$(jq -r .overall_status "$EVB")" = pass ]'
+check "…and nothing claims that nothing was available"              '! jq -r ".criteria[].command" "$EVB" | grep -q "(none available)"'
+rm -f "$BI/checks.jsonl"
+bash "$ROOT/bin/verify.sh" "$BARE" bare-none "$BI" "$(git -C "$BARE" rev-parse HEAD)" >/dev/null 2>&1
+EVN="$BI/evidence/bare-none/evidence.json"; [ -f "$EVN" ] || EVN="$SUPERVISOR_STATE_DIR/evidence/bare-none/evidence.json"
+check "with nothing registered it is still said plainly"            'jq -r ".criteria[].command" "$EVN" | grep -q "(none available)"'
+
+echo
+echo "===== a changed extra repository is verified where the work was done ====="
+XR="$(mktemp -d)"
+( cd "$XR" && git init -q && git config user.email t@t && git config user.name t \
+  && printf 'test:\n\t@echo extra-tests-ran\n' > Makefile && git add -A && git commit -qm init )
+printf '%s\037%s\037%s\037%s\n' "$XR" "$(git -C "$XR" rev-parse HEAD)" d 0 > "$BI/extra-repos"
+( cd "$XR" && echo y > y.txt && git add y.txt && git commit -qm work )
+bash "$ROOT/bin/verify.sh" "$BARE" bare-extra "$BI" "$(git -C "$BARE" rev-parse HEAD)" >/dev/null 2>&1
+EVX="$BI/evidence/bare-extra/evidence.json"; [ -f "$EVX" ] || EVX="$SUPERVISOR_STATE_DIR/evidence/bare-extra/evidence.json"
+check "the extra repository's own tests are in the evidence"        'jq -r ".criteria[].criterion" "$EVX" | grep -q "$(basename "$XR"): make test"'
+check "…they ran inside it, and the evidence passes"                '[ "$(jq -r .overall_status "$EVX")" = pass ] && grep -q extra-tests-ran "$(jq -r ".criteria[] | select(.criterion | endswith(\"make test\")) | .artifact" "$EVX")"'
+rm -f "$BI/extra-repos"
+( cd "$XR" && printf 'test:\n\t@exit 4\n' > Makefile && git add -A && git commit -qm red )
+printf '%s\037%s\037%s\037%s\n' "$XR" "$(git -C "$XR" rev-parse HEAD~2)" d 0 > "$BI/extra-repos"
+bash "$ROOT/bin/verify.sh" "$BARE" bare-extra-red "$BI" "$(git -C "$BARE" rev-parse HEAD)" >/dev/null 2>&1
+EVR="$BI/evidence/bare-extra-red/evidence.json"; [ -f "$EVR" ] || EVR="$SUPERVISOR_STATE_DIR/evidence/bare-extra-red/evidence.json"
+check "a red extra repository fails the evidence"                   '[ "$(jq -r .overall_status "$EVR")" = fail ]'
+rm -rf "$BARE" "$XR" "$BI"
+
+echo
 [ "$fail" -eq 0 ] && { echo "RESULT: $pass passed, 0 failed"; exit 0; } || { echo "RESULT: $fail failed"; exit 1; }
