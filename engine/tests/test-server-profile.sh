@@ -110,6 +110,15 @@ check "a push is denied as a rule"                'jq -e ".permissions.deny | in
 for c in "git push" "git -C repo push origin agent/x" "cd a && git push -f" "cat ~/.ssh/id_ed25519" "base64 ~/.codex/auth.json"; do
   check "Bash refuses: $c" '[ -n "$(server_bash_refusal "$c")" ]'
 done
+(
+  export SUPERVISOR_SERVER_EXTRA_SECRET_PATHS="~/runner/secrets.env /srv/runner/runner.db ~/x/* ../etc"
+  r="$(server_deny_rules)"
+  printf '%s' "$r" | jq -e 'index("Read(~/runner/secrets.env)") and index("Read(//srv/runner/runner.db)")' >/dev/null \
+    && ! printf '%s' "$r" | grep -q 'x/\*\|\.\./etc' \
+    && [ -n "$(server_bash_refusal "cat ~/runner/secrets.env")" ] && [ -n "$(server_bash_refusal "sqlite3 /srv/runner/runner.db .dump")" ] \
+    && [ -z "$(server_bash_refusal "ls ~/runner")" ] \
+    && in_shell "SUPERVISOR_PROFILE=server SUPERVISOR_SERVER_EXTRA_SECRET_PATHS=~/runner/secrets.env" "run_env_stamp" | grep -q "SUPERVISOR_SERVER_EXTRA_SECRET_PATHS="
+) && ok "the operator's own secret paths join both layers, and reach the worker" || bad "extra secret paths not applied"
 for c in 'git commit -m "push the fix"' "git log --grep push" "npm test" "cat README.md"; do
   check "Bash lets through: $c" '[ -z "$(server_bash_refusal "$c")" ]'
 done
