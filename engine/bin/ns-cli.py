@@ -1134,7 +1134,8 @@ def platform_name():
 
 def _run(cmd, timeout=20, env=None):
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env,
+                           stdin=subprocess.DEVNULL)
         return r.returncode, (r.stdout or ""), (r.stderr or "")
     except FileNotFoundError:
         return 127, "", "not found"
@@ -1328,6 +1329,28 @@ def cmd_doctor_server(args):
                 rc, out = _lib_call('workspace_container_reason "$1"', d)
                 add(tag + ".folder", "fail" if rc == 0 else "ok",
                     out.strip()[:300] if rc == 0 else "a project, not a folder of projects")
+
+    # One real request to each model, only when asked: a token that is present but revoked or
+    # expired looks signed in to `auth status` and fails here. It costs a few tokens, so a bridge asks
+    # for it before taking work, not on every poll.
+    if getattr(args, "probe", False):
+        env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
+        if shutil.which("claude"):
+            rc, out, err = _run(["claude", "-p", "Reply with the single word OK.", "--output-format", "json",
+                                 "--max-turns", "1"], timeout=120, env=env)
+            try:
+                r = json.loads(out)
+                good = rc == 0 and not r.get("is_error")
+                add("probe.claude", "ok" if good else "fail",
+                    (r.get("result") or "")[:200] if good else (r.get("result") or err or out).strip()[:300])
+            except ValueError:
+                add("probe.claude", "fail", "rc %s: %s" % (rc, (err or out).strip()[:300]))
+        if shutil.which("codex"):
+            rc, out, err = _run(["codex", "exec", "--skip-git-repo-check", "-c", 'model_reasoning_effort="low"',
+                                 "Reply with the single word OK."],
+                                timeout=180, env=env)
+            add("probe.codex", "ok" if rc == 0 else "fail",
+                "answered" if rc == 0 else "rc %s: %s" % (rc, (err or out).strip()[-300:]))
 
     if getattr(args, "network", False):
         for name, url in (("network.anthropic", "https://api.anthropic.com"), ("network.openai", "https://api.openai.com")):
@@ -1750,6 +1773,7 @@ def main(argv):
     d.add_argument("--json", action="store_true")
     d.add_argument("--server", action="store_true")
     d.add_argument("--network", action="store_true")
+    d.add_argument("--probe", action="store_true")
     d.add_argument("dir", nargs="?")
 
     h = sub.add_parser("help", add_help=False)
