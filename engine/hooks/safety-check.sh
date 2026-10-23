@@ -43,6 +43,7 @@ if [ -d "$SUP_INSTANCES" ]; then
     if [ "$(age_h "$marker")" -ge "$STALE_HOURS" ]; then
       [ -f "$d/watchdog.pid" ] && kill "$(cat "$d/watchdog.pid")" 2>/dev/null
       proj="$(cat "$d/project" 2>/dev/null)"
+      thread_carry_save "${d%/}"   # the chat's task outlives this folder (lib/thread-carry.sh)
       rm -rf "$d"
       disabled="$disabled $proj"
       echo "$(date '+%F %T') [safety] stale instance auto-disabled: $proj" >> "$LOG"

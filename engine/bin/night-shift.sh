@@ -166,6 +166,8 @@ stop_instance() {  # $1 = slug
   fi
   # A chat that started on top of the director's uncommitted work keeps its base for a resume.
   save_run_base "$idir" "$slug"
+  # …and its task, so the next message can be asked whether it continues it (lib/thread-carry.sh).
+  thread_carry_save "$idir"
   rm -rf "$idir"   # removing the dir makes the watchdog loop exit
   echo "☀️ Зупинено: $proj"
   echo "   сесія '$session' залишена (tmux attach -t $session; закрити: tmux kill-session -t $session)"
@@ -302,6 +304,7 @@ case "$cmd" in
     fi
     if [ -d "$IDIR" ]; then
       [ -f "$IDIR/watchdog.pid" ] && kill "$(cat "$IDIR/watchdog.pid")" 2>/dev/null
+      thread_carry_save "$IDIR"
       rm -rf "$IDIR"
     fi
     tmux has-session -t "$SESSION" 2>/dev/null && tmux kill-session -t "$SESSION" 2>/dev/null
@@ -1270,6 +1273,9 @@ $gone}"
     ASIDE=""
     if [ -d "$IDIR" ]; then
       [ -f "$IDIR/watchdog.pid" ] && kill "$(cat "$IDIR/watchdog.pid")" 2>/dev/null
+      # The task as this folder last knew it, kept before the folder is put aside — a successful
+      # resume deletes the aside copy, and a rollback leaves this copy as it was.
+      thread_carry_save "$IDIR"
       ASIDE="$SUP_STATE/resume-aside/$SLUG.$$"
       mkdir -p "$SUP_STATE/resume-aside" 2>/dev/null
       if ! mv "$IDIR" "$ASIDE" 2>/dev/null; then
@@ -1316,6 +1322,9 @@ $gone}"
     printf '%s\n' "$RUN_ID" > "$IDIR/run-id"
     set_direct_chat_mode "$IDIR"
     rm -f "$IDIR/handshake-ok" "$IDIR/claude-session-id"
+    # The task this conversation was on, before its first message here is accepted: worker-send
+    # enqueues right after this resume returns, and the relation is decided then. Only with Jev on.
+    thread_carry_restore "$IDIR" "$RESUME_SID"
     BASE_SHA="$(resolve_base_sha "$PROJECT_DIR")"
     [ -n "$BASE_SHA" ] && printf '%s\n' "$BASE_SHA" > "$IDIR/base-sha"
     if restore_run_base "$IDIR" "$SLUG" "$PROJECT_DIR"; then
