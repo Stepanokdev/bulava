@@ -176,6 +176,18 @@ them before dispatching.
 Text that came from people is framed as `<<UNTRUSTED_TRACKER_TEXT source=… author=…>>` for the worker
 and the reviewer.
 
+### No main repository: the workspace layout
+
+A task has no main repository. Start the engine in a workspace folder that is a small git repository
+of its own — a `.gitignore` ignoring every clone, an `AGENTS.md` describing the folder — with every
+repository of the group cloned inside it and listed, all writable, in `SUPERVISOR_EXTRA_DIRS_FILE`.
+The worker decides which ones a task needs. The engine accepts that start (its clones are ignored,
+so it is not "a folder of projects"), shows each changed clone to the reviewer once, verifies it
+inside itself, notices an uncommitted clone the home repository ignores, and lists every repository
+in `receipt.repos` — the untouched home repository with `base_sha == reviewed_sha`. To keep the
+worker out of the home repository, give a runspec whose `write_paths` name only the clones
+(`["api/**", "web/**"]`). Pinned by `tests/test-server-workspace.sh`.
+
 ### Follow-ups: review comments, answers, red CI
 
 ```bash
