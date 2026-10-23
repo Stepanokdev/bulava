@@ -187,6 +187,10 @@ jq -nc --arg d "$XR" '{criterion:"by path", argv:["bash","-c",("cd " + $d + " &&
 bash "$ROOT/bin/verify.sh" "$BARE" bare-extra-path "$BI" "$(git -C "$BARE" rev-parse HEAD)" >/dev/null 2>&1
 EVP="$BI/evidence/bare-extra-path/evidence.json"; [ -f "$EVP" ] || EVP="$SUPERVISOR_STATE_DIR/evidence/bare-extra-path/evidence.json"
 check "…also when the check names the repository by its path"       '[ "$(jq -r .overall_status "$EVP")" = pass ]'
+jq -nc --arg d "${XR}-plugin" '{criterion:"a sibling", argv:["bash","-c",("cd " + $d + " && true")], cwd:"/elsewhere"}' > "$BI/checks.jsonl"
+bash "$ROOT/bin/verify.sh" "$BARE" bare-extra-sib "$BI" "$(git -C "$BARE" rev-parse HEAD)" >/dev/null 2>&1
+EVS="$BI/evidence/bare-extra-sib/evidence.json"; [ -f "$EVS" ] || EVS="$SUPERVISOR_STATE_DIR/evidence/bare-extra-sib/evidence.json"
+check "…but a sibling whose name merely starts the same does not count" 'jq -r ".criteria[].criterion" "$EVS" | grep -q "make test"'
 rm -f "$BI/checks.jsonl"
 SUPERVISOR_EXTRA_REPO_AUTOVERIFY=0 bash "$ROOT/bin/verify.sh" "$BARE" bare-extra-off "$BI" "$(git -C "$BARE" rev-parse HEAD)" >/dev/null 2>&1
 EVF2="$BI/evidence/bare-extra-off/evidence.json"; [ -f "$EVF2" ] || EVF2="$SUPERVISOR_STATE_DIR/evidence/bare-extra-off/evidence.json"
