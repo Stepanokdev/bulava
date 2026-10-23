@@ -232,6 +232,36 @@ for _i in 1 2 3 4; do out="$(gate)"; [ -s "$GI/done" ] && break; done
 check "a reviewer's pass over uncommitted work is never published as passed" '[ -s "$GI/done" ] && [ "$(cat "$GI/done")" != passed ] && [ "$(jq -r .review "$GI/report/receipt.json")" != passed ]'
 check "…because the pass itself was turned down, not because nothing was declared" 'grep -q "a pass over uncommitted work" "$SUPERVISOR_STATE_DIR/supervisor.log"'
 rm -f "$G/c.txt"
+echo "===== a worker that ends its turn in an extra repository is still the run's ====="
+X2="$TMP/repo-x2"; mkdir -p "$X2/sub"
+( cd "$X2" && git init -q -b agent/PRJ-5 && git config user.email t@t && git config user.name t && echo a > a && git add -A && git commit -qm base )
+X2="$(canon_path "$X2")"
+printf '%s\037%s\037%s\037%s\n' "$X2" "$(git -C "$X2" rev-parse HEAD)" d 0 > "$GI/extra-repos"
+printf '%s\n' "$X2" > "$GI/writable-dirs"
+rm -f "$GI/done" "$GI/done-digest"; rm -f "$SUPERVISOR_STATE_DIR"/outcome-nudge-* "$SUPERVISOR_STATE_DIR"/rounds-* "$SUPERVISOR_STATE_DIR"/uncommitted-* 2>/dev/null
+task_attempt_begin PRJ-5 "$GI" d-5 continue
+( cd "$X2" && echo fix > fix.txt && git add fix.txt && git commit -qm fix )
+jq -nc --arg ts "$(date '+%F %T')" '{schema:1, result:"succeeded_changes", summary:"x", ts:$ts, run_id:"gate-run"}' > "$GI/outcome.json"
+jq -nc '{result:"succeeded_changes", review:"pending"}' > "$GI/report/receipt.json"
+rm -f "$CODEX_CALLED"
+printf '{"session_id":"s1","transcript_path":"%s","cwd":"%s","stop_hook_active":false}' "$TR" "$X2/sub" \
+  | ORCHESTRATOR_RUN_ID=gate-run SUPERVISOR_VERIFIER_ENABLED=0 SUPERVISOR_CODEX_USAGE_CMD=/usr/bin/true \
+    SUPERVISOR_RELEASE_DELAY=600 PATH="$FAKE:$PATH" bash "$ROOT/hooks/review-gate.sh" >/dev/null 2>&1
+check "the review runs when the turn ends inside an extra repository" '[ -s "$CODEX_CALLED" ] && [ "$(cat "$GI/done" 2>/dev/null)" = passed ]'
+check "…and the receipt names the extra repository's reviewed commit" '[ "$(jq -r --arg p "$X2" ".repos[] | select(.path == \$p) | .reviewed_sha" "$GI/report/receipt.json")" = "$(git -C "$X2" rev-parse HEAD)" ]'
+wg() {   # $1=cwd $2=file → the write gate's answer to an Edit there
+  jq -n --arg cwd "$1" --arg f "$2" '{tool_name:"Edit", cwd:$cwd, tool_input:{file_path:$f}}' \
+    | ORCHESTRATOR_RUN_ID="${3:-gate-run}" bash "$ROOT/hooks/write-gate.sh" 2>/dev/null
+}
+check "the write fence still stands while the worker is in the extra repository" 'wg "$X2/sub" "$HOME/not-a-repo-of-the-task-$$/x.txt" | grep -q "\"deny\""'
+check "…and lets it write where the task may"                                   '! wg "$X2/sub" "$X2/sub/y.txt" | grep -q "\"deny\""'
+wg "$X2/sub" "$X2/z.txt" a-run-that-is-gone >/dev/null
+check "a hook whose token names no live run says so in the log"                 'grep -q "names no live run" "$SUPERVISOR_STATE_DIR/supervisor.log"'
+
+echo "===== a run parked as stalled settles its task ====="
+rm -f "$GI/done"; task_attempt_begin PRJ-5 "$GI" d-5 continue
+SUPERVISOR_RELEASE_DELAY=600 task_on_terminal "$GI" stalled
+check "the task does not read running for ever"   '[ "$(task_get PRJ-5 .state)" = failed ] && [ "$(task_get PRJ-5 .state_reason)" = stalled ]'
 pkill -f "$TMP/state2/instances" 2>/dev/null || true   # the delayed release names this instance, under this test's own tree
 
 echo "===== the same call off a server is the Mac's card, unchanged ====="

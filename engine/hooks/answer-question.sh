@@ -15,7 +15,7 @@ questions=$(echo "$input" | jq -c '.tool_input.questions // empty')
 tool_use_id=$(echo "$input" | jq -r '.tool_use_id // empty')
 
 cwd=$(echo "$input" | jq -r '.cwd // "."')
-scope="$(supervision_scope "$cwd")"
+scope="$(hook_scope "$cwd" answer-question)"
 [ -n "$scope" ] || exit 0
 AWAITING=""; IDIR=""
 if [ "${scope%%:*}" = "instance" ]; then

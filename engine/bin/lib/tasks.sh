@@ -222,6 +222,7 @@ task_on_terminal() {   # $1=instance dir $2=disposition
   state="$(task_state_for "$disp" "$result")"
   reason="$(jq -r '.reason // empty' "$idir/outcome.json" 2>/dev/null)"
   [ -n "$reason" ] || reason="$disp"
+  [ "$disp" = stalled ] && reason=stalled
   receipt="$(jq -c . "$idir/report/receipt.json" 2>/dev/null || echo null)"
   repos="$(printf '%s' "$receipt" | jq -c '.repos // empty' 2>/dev/null)"
   [ -n "$repos" ] || repos="$(repos_state_json "$idir" "$(cat "$idir/project" 2>/dev/null)" 2>/dev/null || echo '[]')"

@@ -23,7 +23,7 @@ transcript=$(echo "$input" | jq -r '.transcript_path // ""')
 cwd=$(echo "$input" | jq -r '.cwd // "."')
 mkdir -p "$STATE_DIR"
 
-scope="$(supervision_scope "$cwd")"
+scope="$(hook_scope "$cwd" review-gate)"
 [ -n "$scope" ] || exit 0
 if [ "${scope%%:*}" = "instance" ]; then
   IDIR_SCOPE="$(instance_dir "${scope#instance:}")"
