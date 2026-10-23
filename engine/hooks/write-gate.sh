@@ -13,7 +13,7 @@ file_path=$(printf '%s' "$input" | jq -r '.tool_input.file_path // .tool_input.n
 command=$(printf '%s' "$input" | jq -r '.tool_input.command // empty')
 [ -n "$file_path" ] || [ -n "$command" ] || exit 0   # nothing to gate
 
-scope="$(supervision_scope "$cwd")"
+scope="$(hook_scope "$cwd" write-gate once)"
 [ "${scope%%:*}" = "instance" ] || exit 0            # unsupervised / legacy / day-mode → allow
 IDIR="$(instance_dir "${scope#instance:}")"
 PROJ="$(cat "$IDIR/project" 2>/dev/null || echo "$cwd")"

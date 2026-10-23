@@ -237,6 +237,9 @@ while [ -d "$IDIR" ]; do
           '{reason:"idle at prompt, no declared outcome", since:$since, idle_seconds:$idle}' \
           > "$IDIR/stalled.json" 2>/dev/null || true
         log "STALL ${idle}s ≥ ${STALL_PARK_SECS}s, idle prompt, no outcome/done/question/review — parked (stalled.json), NOT torn down"
+        # A task a bridge named must not read "running" for ever over a run nobody is driving: it
+        # settles as failed with the reason stalled, and the bridge's next message starts it again.
+        task_on_terminal "$IDIR" stalled
       fi
     fi
   fi

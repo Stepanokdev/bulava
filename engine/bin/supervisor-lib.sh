@@ -1508,6 +1508,7 @@ hung_turn_check() {   # $1=idir $2=session $3=seconds the pane has been still $4
         needs:"a person to look at the session; the next message starts it again"}' \
       > "$idir/stalled.json" 2>/dev/null || true
     _hlog "FROZEN TURN — $attempts recoveries did not bring the worker back; parked (stalled.json)"
+    task_on_terminal "$idir" stalled
     delivery_release "$idir"; return 1
   fi
 
@@ -4255,6 +4256,34 @@ worker_scope() {   # $1=cwd → instance:<slug> | legacy | (nothing)
     return 0
   fi
   supervision_scope "$1"
+}
+
+# Which run a HOOK of a worker belongs to. The folder first, exactly as before — a hook fires on a
+# path, and the folder path already demands the worker's own token. Only when the folder belongs to
+# no run is the token asked directly (`instance_for_run`): a worker ends its turns in its extra
+# repositories too, and there the folder question made every hook go silent — the review never
+# started, the write fence and the control guard switched off, a question went unanswered, and the
+# task read "running" for ever. The token cannot be guessed and names exactly one run, so this
+# weakens nothing; a folder that belongs to a run under a different token is still refused.
+#
+# A token that names no live run is said once in the log: a hook that leaves without a word is
+# invisible from everywhere but the transcript. $2 names the hook; quiet ones log once per token.
+hook_scope() {   # $1=cwd $2=hook name [$3=once] → instance:<slug> | legacy | (nothing)
+  local cwd="${1:-}" name="${2:-hook}" once="${3:-}" scope slug mark
+  scope="$(supervision_scope "$cwd")"
+  if [ -z "$scope" ] && [ -n "${ORCHESTRATOR_RUN_ID:-}" ] && [ -z "$(active_instance_for_cwd "$cwd")" ]; then
+    slug="$(instance_for_run "$ORCHESTRATOR_RUN_ID")"
+    [ -n "$slug" ] && scope="instance:$slug"
+  fi
+  if [ -z "$scope" ] && [ -n "${ORCHESTRATOR_RUN_ID:-}" ]; then
+    mark="$SUP_STATE/locks/hook-no-run-$name-$(printf '%s' "$ORCHESTRATOR_RUN_ID" | tr -cd 'A-Za-z0-9-' | cut -c1-64)"
+    if [ -z "$once" ] || [ ! -e "$mark" ]; then
+      echo "$(date '+%F %T') [$name] ORCHESTRATOR_RUN_ID=$ORCHESTRATOR_RUN_ID names no live run here (cwd $cwd) — nothing supervised" \
+        >> "$SUP_STATE/supervisor.log" 2>/dev/null
+      [ -n "$once" ] && { mkdir -p "$SUP_STATE/locks" 2>/dev/null; : > "$mark" 2>/dev/null; }
+    fi
+  fi
+  printf '%s' "$scope"
 }
 
 # Is this still the run we resolved, at the moment of writing? Between the lookup and the write a

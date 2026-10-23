@@ -29,7 +29,7 @@ tool=$(printf '%s' "$input" | jq -r '.tool_name // ""')
 cwd=$(printf '%s' "$input" | jq -r '.cwd // "."')
 [ "$tool" = Bash ] || exit 0
 
-scope="$(supervision_scope "$cwd")"
+scope="$(hook_scope "$cwd" control-guard once)"
 [ "${scope%%:*}" = "instance" ] || exit 0
 IDIR="$(instance_dir "${scope#instance:}")"
 [ -d "$IDIR" ] || exit 0
