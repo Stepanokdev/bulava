@@ -427,10 +427,19 @@ done
 # verifies everything through registered checks turns it off: SUPERVISOR_EXTRA_REPO_AUTOVERIFY=0.
 extra_ran=0
 extra_checked_by_worker() {   # $1=repository → 0 when a registered check is about it
+  local d="$1" line
   [ -s "$IDIR/checks.jsonl" ] || return 1
-  jq -e --arg d "$1" 'select(((.cwd // "") == $d) or ((.cwd // "") | startswith($d + "/"))
-                             or ((.argv // []) | map(tostring) | join(" ") | contains($d)))' \
-     "$IDIR/checks.jsonl" >/dev/null 2>&1
+  jq -e --arg d "$d" 'select(((.cwd // "") == $d) or ((.cwd // "") | startswith($d + "/")))' \
+     "$IDIR/checks.jsonl" >/dev/null 2>&1 && return 0
+  # The repository's path in the command, ending where a path ends — so …/omnis does not claim a
+  # command that only names …/omnis-oex-plugin.
+  while IFS= read -r line; do
+    line="$line "
+    case "$line" in
+      *"$d/"*|*"$d "*|*"$d\""*|*"$d'"*|*"$d;"*|*"$d&"*|*"$d|"*|*"$d)"*) return 0 ;;
+    esac
+  done < <(jq -r '(.argv // []) | map(tostring) | join(" ")' "$IDIR/checks.jsonl" 2>/dev/null)
+  return 1
 }
 if [ -n "$IDIR" ] && [ -s "$IDIR/extra-repos" ] && [ "${SUPERVISOR_EXTRA_REPO_AUTOVERIFY:-1}" = 1 ]; then
   while IFS=$'\037' read -r _xd _xbase _xdig _xdirty; do
