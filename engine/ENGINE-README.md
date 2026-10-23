@@ -367,6 +367,43 @@ numeric ceiling: every consultation stores its question, answer, time and tokens
 the real limit is the available Codex quota. Mechanical work should not create consultations for
 ritual's sake. After implementation, the independent review gate works as before.
 
+### A chat's task across restarts, and Jev (opt-in)
+
+A run's folder goes away — `stop`, the watchdog's idle teardown, the stale cleanup, every
+`resume` — and the task record went with it. The worker resumes the same Claude session and
+remembers everything, but the engine did not: the next message in that chat found no task and was
+prepared as a new one, positions and research included, for "the ticket was updated, check it".
+On three weeks of real chats that was 13 messages and 4.4M Codex tokens.
+
+- **Kept.** Whatever takes a run folder away first saves its task — the record, its journal, the
+  alignment, research, design precedent and triage choice, and Claude's last reply — under
+  `$SUP_STATE/thread-carry/c-<hash of the session id>/` (`bin/lib/thread-carry.sh`). An older copy
+  never replaces a newer one; a rolled-back start or resume saves nothing. Kept 30 days
+  (`SUPERVISOR_THREAD_CARRY_DAYS`).
+- **Brought back only with Jev on.** `resume` restores it into the new folder before the first
+  message is accepted — never over a live task, and with the old run's queue closed. Without Jev the
+  old rule stands: no record, a new task.
+- **Jev decides.** For that first message, and for one that reaches a settled task or one quiet for
+  six hours, `pending_enqueue` asks [Jev](https://typesafe.ai) whether it starts a different task —
+  before the record's lock, since it is a network call (`bin/jev-lib.sh`, `jev_relation_for`). A
+  confident "continues" keeps the task and its material; the message goes the follow-up path, with
+  no classification, research or positions. "New", unsure, an error or a timeout give the old
+  answer — and a carried task's material is dropped, so a new task reads only its own.
+- **What leaves the Mac:** the message, the task's goal and Claude's last reply (2,000 bytes of
+  each), to TypeSafe's API in the US on the director's own account. The key lives in the Keychain
+  («TypeSafe Jev»), is handed to curl on stdin, and is stripped from every child's environment.
+
+```bash
+bin/jev.sh key set --clipboard   # or typed; the app hands it over with --env
+bin/jev.sh mode on               # off (default) | shadow (asked and logged, the old rule decides) | on
+bin/jev.sh status --json
+bin/jev.sh test                  # one real call
+bin/jev.sh log                   # the decisions, from $SUP_STATE/jev/relation.jsonl
+```
+
+The app's Settings → Jev drives the same script. `tests/test-jev-continuity.sh` pins all of the
+above, a real `resume` included.
+
 ## Settings from the terminal (`night-shift config`)
 
 A terminal user does not have to export variables. `night-shift config set <key> <value>` writes
@@ -444,6 +481,11 @@ Every default lives in **one file** — `supervisor/config.sh` (the single sourc
   current one) · `new` (always a new one)
 - `SUPERVISOR_PROTECTED_BRANCHES` — branches that may not be worked on directly → we cut a night
   branch (default `main master`)
+- `SUPERVISOR_JEV_*` — Jev's model (`jev-1.13.0`), its timeouts (8 s; 4 s while a message is being
+  accepted) and the thresholds that make an answer sure (≥ 0.75 new, ≤ 0.25 continues). The mode is
+  set with `bin/jev.sh mode` or in Settings and kept in the state directory; `SUPERVISOR_JEV_MODE`
+  applies only where nothing is set there. `SUPERVISOR_THREAD_CARRY_DAYS` — how long a chat's task
+  is kept after its run folder went (default 30)
 
 Those last two are TWO different ideas (killing a hung live session vs putting out state forgotten
 until the next day), which is why they have different names. The deprecated
