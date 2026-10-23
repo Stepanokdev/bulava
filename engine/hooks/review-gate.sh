@@ -299,7 +299,20 @@ log() {
   echo "$(date '+%F %T') [review-gate] ${who}$*" >> "$LOG"
 }
 mark_done() {  # $1 = disposition, [$2] = why, in a sentence the person reads
-  local disposition="${1:-passed}" why="${2:-}"
+  local disposition="${1:-passed}" why="${2:-}" _unc
+  # On a server `passed` means "these commits may be published". Work that was never committed is
+  # not in any of them, so whichever path led here — a declared outcome or none — a pass over an
+  # uncommitted repository is not a pass. The declared case is sent back to commit long before this;
+  # this is the guarantee for every other one.
+  if [ "$disposition" = passed ] && [ "${SUPERVISOR_PROFILE:-}" = server ] && [ -n "${IDIR_SCOPE:-}" ] \
+     && [ "${PLAIN_RUN:-0}" = 0 ]; then
+    _unc="$(repos_uncommitted "$IDIR_SCOPE" "${cwd:-$PWD}")"
+    if [ -n "$_unc" ]; then
+      disposition=needs-user
+      why="Прийнято рецензентом, але не все закомічено: $(printf '%s' "$_unc" | tr '\n' ' ')"
+      log "server: a pass over uncommitted work in $(printf '%s' "$_unc" | tr '\n' ' ') — settled as needs-user"
+    fi
+  fi
   clear_progress
   if [ -n "${IDIR_SCOPE:-}" ]; then
     if [ "$disposition" = passed ] && [ -n "${review:-}" ]; then

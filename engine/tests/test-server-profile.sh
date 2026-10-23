@@ -214,6 +214,15 @@ rm -f "$CODEX_CALLED"; out="$(gate)"
 check "committed work is reviewed"                    '[ -s "$CODEX_CALLED" ]'
 check "the receipt names the reviewed commit"         '[ "$(jq -r ".repos[0].reviewed_sha" "$GI/report/receipt.json")" = "$(git -C "$G" rev-parse HEAD)" ] && [ "$(jq -r ".repos[0].clean" "$GI/report/receipt.json")" = true ]'
 check "…and the task waits for its merge request"     '[ "$(task_get PRJ-5 .state)" = waiting_review ] && [ "$(task_get PRJ-5 .last_receipt.review)" = passed ]'
+# A stop that declared nothing, over uncommitted work, that the reviewer passes: still not a pass.
+rm -f "$GI/outcome.json" "$GI/done" "$GI/done-digest"; rm -f "$SUPERVISOR_STATE_DIR"/outcome-nudge-* "$SUPERVISOR_STATE_DIR"/rounds-* 2>/dev/null
+task_attempt_begin PRJ-5 "$GI" d-5 continue
+echo c > "$G/c.txt"
+jq -nc '{result:"", review:"pending"}' > "$GI/report/receipt.json"
+for _i in 1 2 3 4; do out="$(gate)"; [ -s "$GI/done" ] && break; done
+check "a reviewer's pass over uncommitted work is never published as passed" '[ -s "$GI/done" ] && [ "$(cat "$GI/done")" != passed ] && [ "$(jq -r .review "$GI/report/receipt.json")" != passed ]'
+check "…because the pass itself was turned down, not because nothing was declared" 'grep -q "a pass over uncommitted work" "$SUPERVISOR_STATE_DIR/supervisor.log"'
+rm -f "$G/c.txt"
 pkill -f "$TMP/state2/instances" 2>/dev/null || true   # the delayed release names this instance, under this test's own tree
 
 echo "===== the same call off a server is the Mac's card, unchanged ====="

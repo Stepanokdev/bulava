@@ -112,8 +112,20 @@ $SUPERVISOR_STATE_DIR/tasks/<key>/events.jsonl   the task's own event stream
 The folder is a hash of the id; the id is never used as a path. Session cleanup (`stop`, the idle
 timers) removes instance directories only, never a task.
 
-States: `queued` → `running` → one of `waiting_review` (passed, ready to publish), `done` (passed,
-nothing to publish), `needs_input`, `blocked`, `failed`. A follow-up moves it back to `running`.
+States: `queued` → `running` → one of the states below. A follow-up moves it back to `running`.
+
+| state | comes from | what the bridge does |
+|---|---|---|
+| `running`, `attempt_live: true` | an attempt is working | wait; follow-ups get `busy` |
+| `running`, `attempt_live: false` | the session died under the attempt (reboot, crash) | send the work on: `worker-send --relation continue` |
+| `waiting_review` | Codex passed, the worker declared `succeeded_changes` | push `receipt.repos[].reviewed_sha`, open or update the MR, wait for review |
+| `done` | Codex passed, the worker declared `succeeded_no_change` or `succeeded_research` | comment the result, nothing to push |
+| `needs_input` | a question only a person can answer (`question.id` may be `null` when the worker asked in its own words) | put `question` on the ticket; send the answer with `--answers <id>` when there is one, plain `continue` otherwise |
+| `blocked` | the worker declared `blocked`: missing access or an external wall, named in `outcome.summary` | put the summary on the ticket; continue once a person has acted |
+| `failed` | anything else: `debt`, round limits, uncommitted work, `failed`, `reason: codex_unavailable` | put `state_reason` and the summary on the ticket; a later `continue` starts a new attempt |
+
+`state_reason` is the outcome's `reason` when the engine wrote one (`codex_unavailable`), otherwise
+the gate's disposition.
 
 ### Starting a task
 
@@ -134,7 +146,7 @@ them before dispatching.
 | 0 | `TIER=dispatched` + `{"task_id","dispatch_id","attempt","message_id"}` | accepted |
 | 0 | `TIER=duplicate` + the earlier acceptance | this message id was already taken |
 | 2 | — | bad arguments, empty task, unreadable runspec, or an existing task id |
-| 4 | `TIER=conflict` | same message id, different text |
+| 4 | `TIER=conflict` | same message id, different text — the only meaning of 4 here |
 | 6 | `TIER=busy` | an attempt of this task, or another task in this folder, is running |
 | 76–79 | — | start refused: no git, dirty tree, undecided MCP servers, oversized checkpoint |
 
@@ -159,7 +171,7 @@ original runspec and plan, as the whole branch from the task's first base.
 | 0 | `TIER=dispatched` + JSON | the next attempt started |
 | 0 | `TIER=duplicate` + JSON | already taken |
 | 2 | — | `continue` for an unknown task, `new` for an existing one, bad arguments |
-| 4 | `TIER=conflict` | same message id with other text, or `--answers` for a question that is not open |
+| 4 | `TIER=conflict` | same message id with other text, or `--answers` for a question that is not open (stale, answered, or of another attempt). On a server nothing else returns 4: the live-session run conflicts of the app's chat path are never reached |
 | 6 | `TIER=busy` | an attempt is running — keep the message and send it after the verdict |
 
 ### Reading the result
@@ -182,7 +194,13 @@ Publish only when `receipt.review == "passed"`. For each entry in `receipt.repos
 
 push `reviewed_sha` when it differs from `base_sha` and the repository's `HEAD` still equals it.
 `debt` is not accepted. A run that declares `succeeded_changes` with uncommitted work is sent back to
-commit before Codex reviews it, so `passed` always refers to commits.
+commit before Codex reviews it — the same attempt, no Codex call — and after three such stops it ends
+as `failed`. Whatever path a pass takes, a pass over any uncommitted repository is settled as
+`needs-user` instead, so `review: "passed"` with `clean: false` never happens.
+
+Extra repositories are in `receipt.repos` already, with their own base and reviewed commit; tasks that
+touch several repositories work today, as long as `SUPERVISOR_EXTRA_DIRS_FILE` names them on every
+`dispatch.sh` and `worker-send.sh` call and their branches exist.
 
 Outcome reasons the engine writes itself: `codex_unavailable` with `codex_reason` one of `quota`,
 `auth`, `network`, `timeout`, `unknown`.
@@ -231,7 +249,10 @@ and writes nothing. Checks: programs, profile, Codex policy, Claude and Codex si
 usage readings (stale ones are reported as unknown, never as 0%), installed hooks, hook protocol,
 `degraded.md`, runs waiting on a question or a pause, free disk, the browser, and — with a project
 directory — git, a clean tree, trust, MCP decisions and whether the folder is a project at all, for
-the project and every extra repository. `--network` adds reachability of Anthropic and OpenAI.
+the project and every extra repository. `--network` adds reachability of Anthropic and OpenAI. `--probe` sends one
+shortest real request to each model (`probe.claude`, `probe.codex`): a token that is present but
+revoked or expired passes `auth status` and fails here. It costs a few tokens — run it before taking
+work, not on every poll.
 
 ## Telemetry
 
