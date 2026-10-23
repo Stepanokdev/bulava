@@ -149,6 +149,8 @@ run_env_stamp() {
       "$(shq "${SUPERVISOR_CODEX_UNAVAILABLE:-fail}")" "$(shq "${SUPERVISOR_CODEX_UNAVAILABLE_AFTER_HOURS:-3}")"
   fi
   [ -n "${SUPERVISOR_TMUX_SOCKET:-}" ] && printf 'SUPERVISOR_TMUX_SOCKET=%s ' "$(shq "$SUPERVISOR_TMUX_SOCKET")"
+  [ "${SUPERVISOR_PROFILE:-}" = server ] && [ -n "${SUPERVISOR_SERVER_EXTRA_SECRET_PATHS:-}" ] \
+    && printf 'SUPERVISOR_SERVER_EXTRA_SECRET_PATHS=%s ' "$(shq "$SUPERVISOR_SERVER_EXTRA_SECRET_PATHS")"
   # A task a bridge named is carried into Claude Code's own telemetry as a resource attribute, so its
   # metrics can be told apart by task without anything here counting tokens. Validated where it was
   # given (`valid_task_id`), so it carries no comma or equals sign into the list.
@@ -5779,14 +5781,32 @@ PY
 # tracker comment. Deny rules win over every allow. They are the first layer; the write gate checks
 # Bash's text for the same paths, because a shell can read a file the Read rule never sees.
 SERVER_SECRET_PATHS="~/.ssh ~/.claude/.credentials.json ~/.codex/auth.json ~/.config/glab-cli ~/.config/gh ~/.netrc ~/.git-credentials"
-server_deny_rules() {
-  local p out=""
-  for p in $SERVER_SECRET_PATHS; do
-    case "$p" in
-      */.ssh|*/glab-cli|*/gh) out="$out\nRead($p/**)\nEdit($p/**)" ;;
-      *)                      out="$out\nRead($p)\nEdit($p)" ;;
-    esac
+# The operator's own secrets on that machine — a bridge's token file, its database — named in
+# SUPERVISOR_SERVER_EXTRA_SECRET_PATHS, separated by spaces, each starting with ~/ or /. Kept out of
+# the engine's source on purpose: they are one deployment's paths. A name with a glob, a `..` or
+# anything that is not a plain path is dropped rather than turned into a rule.
+server_secret_paths() {
+  local p
+  printf '%s\n' $SERVER_SECRET_PATHS
+  for p in ${SUPERVISOR_SERVER_EXTRA_SECRET_PATHS:-}; do
+    case "$p" in *'*'*|*'?'*|*'['*|*'..'*|*'('*|*')'*) continue ;; esac
+    case "$p" in '~/'?*|/?*) printf '%s\n' "${p%/}" ;; esac
   done
+}
+
+server_deny_rules() {
+  local p r out=""
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    # Claude Code writes an absolute path in a rule as //path; a home path stays ~/path.
+    case "$p" in /*) r="/$p" ;; *) r="$p" ;; esac
+    case "$p" in
+      */.ssh|*/glab-cli|*/gh) out="$out\nRead($r/**)\nEdit($r/**)" ;;
+      *) out="$out\nRead($r)\nEdit($r)"
+         # An extra path may be a folder as well as a file; both spellings cost nothing.
+         case " $SERVER_SECRET_PATHS " in *" $p "*) ;; *) out="$out\nRead($r/**)\nEdit($r/**)" ;; esac ;;
+    esac
+  done < <(server_secret_paths)
   printf '%b\nBash(git push:*)\nBash(git push)\nBash(glab:*)\nBash(gh:*)\n' "$out" \
     | jq -R -s -c 'split("\n") | map(select(length > 0)) | unique'
 }
@@ -5803,12 +5823,16 @@ server_bash_refusal() {   # $1=command
     printf 'publishing is the bridge'"'"'s job on a server: commit your work and report the outcome; the reviewed commit is pushed for you'
     return 0
   fi
-  for p in $SERVER_SECRET_PATHS; do
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    # A home path is matched by what follows ~/, which is how it appears both as ~/x and as
+    # $HOME/x; an absolute one by itself and, inside the home folder, by its part under it too.
     bare="${p#\~/}"
+    case "$p" in "$HOME"/*) bare="${p#"$HOME"/}" ;; esac
     case "$c" in
-      *"$bare"*) printf 'that is one of the machine'"'"'s credentials (%s); a run on a server does not read them' "$p"; return 0 ;;
+      *"$bare"*|*"$p"*) printf 'that is one of the machine'"'"'s credentials (%s); a run on a server does not read them' "$p"; return 0 ;;
     esac
-  done
+  done < <(server_secret_paths)
   return 0
 }
 

@@ -29,6 +29,14 @@ Without it nothing in this file applies, and a terminal or the Mac app behaves e
 | `git push`, `glab`, `gh` from inside a run | allowed | denied — the bridge publishes |
 | tmux server | the user's default | its own socket (`SUPERVISOR_TMUX_SOCKET=bulava`) |
 
+The bridge's own secrets on the same machine are added to both layers with
+`SUPERVISOR_SERVER_EXTRA_SECRET_PATHS` — paths separated by spaces, each starting with `~/` or `/`
+(a file or a folder; globs and `..` are ignored), set in the service's environment:
+
+```
+SUPERVISOR_SERVER_EXTRA_SECRET_PATHS="~/runner/secrets.env ~/runner/bulava.env ~/runner/runner.db"
+```
+
 These are layers, not a sandbox. The agent runs as the same user as the engine, so the isolation
 boundary is the VM itself: keep the GitLab token out of the agent's reach (the bridge pushes), keep
 outbound traffic on an allowlist, and protect `main` on the GitLab side.
@@ -36,8 +44,11 @@ outbound traffic on an allowlist, and protect `main` on the GitLab side.
 ## Preparing a VM
 
 ```bash
-# engine
+# engine — the latest release:
 curl -fsSL https://bulava.app/install.sh | bash
+# …or exactly one commit of the public repository, which is what a pinned server should run:
+git clone https://github.com/Stepanokdev/bulava ~/bulava && git -C ~/bulava checkout <commit>
+bash ~/bulava/engine/install.sh      # the engine then runs from ~/bulava/engine; update = checkout + install.sh
 
 # a browser for runs that need one (x86_64: Google Chrome; arm64: the distribution's Chromium)
 sudo apt install ./google-chrome-stable_current_amd64.deb      # or: sudo snap install chromium
@@ -112,7 +123,9 @@ $SUPERVISOR_STATE_DIR/tasks/<key>/events.jsonl   the task's own event stream
 The folder is a hash of the id; the id is never used as a path. Session cleanup (`stop`, the idle
 timers) removes instance directories only, never a task.
 
-States: `queued` → `running` → one of the states below. A follow-up moves it back to `running`.
+States: `queued` → `running` → one of the states below. `queued` lasts only from the moment the record
+is created to the moment its first attempt is written, inside one `dispatch.sh` call; read it as
+`running`. A follow-up moves it back to `running`.
 
 | state | comes from | what the bridge does |
 |---|---|---|
