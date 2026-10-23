@@ -19,6 +19,7 @@ struct SettingsView: View {
                     appearanceSection
                     learningSection
                     engineSection
+                    jevSection
                     diagnosticsSection
                     weekSection
                     advancedSection
@@ -299,6 +300,17 @@ struct SettingsView: View {
     private func liveBinding<V>(_ keyPath: WritableKeyPath<AppSettings, V>) -> Binding<V> {
         Binding(get: { model.settings[keyPath: keyPath] },
                 set: { model.settings[keyPath: keyPath] = $0 })
+    }
+
+    // MARK: - Jev
+
+    // Its state lives in the engine (`jev.sh`), not in AppSettings: the engine is what reads it,
+    // night runs included, and a switch saved only in the app would say "on" to an engine that is not.
+    private var jevSection: some View {
+        SettingsSection("Jev: task continuity") {
+            JevSettingsSection()
+                .settingsRow()
+        }
     }
 
     // MARK: - Diagnostics
