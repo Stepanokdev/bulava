@@ -68,7 +68,7 @@ run_step() {  # $1 criterion  $2 timeout ; then the command + args
   # registered after it was never run and never appeared in the evidence. Not failed, not skipped:
   # absent. A registered check that can vanish without a trace is worse than no check at all,
   # because the report then reads as complete.
-  ( cd "$PROJ" && perl -e 'alarm shift; exec @ARGV' "$to" "$@" ) >"$log" 2>&1 </dev/null; ec=$?
+  ( cd "${STEP_DIR:-$PROJ}" && perl -e 'alarm shift; exec @ARGV' "$to" "$@" ) >"$log" 2>&1 </dev/null; ec=$?
   case "$ec" in
     0)   status=pass ;;
     142) status=inconclusive; note="timed out after ${to}s" ;;   # SIGALRM
@@ -414,6 +414,43 @@ $_tdir/$_tn"; done
   fi
 done
 
+# The task's other repositories, when the work changed them. A task spread over several repositories
+# is verified where it was done: the main folder can be a repository with nothing to build — a
+# profile, a README — while the change and its tests live in an extra one, and "nothing to verify
+# here" was then the verdict on work that had tests of its own. The same plain detection as the
+# main folder's fallback below, run inside each changed repository and named after it.
+extra_ran=0
+if [ -n "$IDIR" ] && [ -s "$IDIR/extra-repos" ]; then
+  while IFS=$'\037' read -r _xd _xbase _xdig _xdirty; do
+    [ -n "$_xd" ] && [ -d "$_xd" ] || continue
+    _xhead="$(git -C "$_xd" rev-parse HEAD 2>/dev/null || true)"
+    [ "$_xhead" != "$_xbase" ] || [ -n "$(git -C "$_xd" status --porcelain 2>/dev/null | head -1)" ] || continue
+    _xn="$(basename "$_xd")"
+    STEP_DIR="$_xd"
+    if [ -x "$_xd/verify.sh" ] && [ -f "$_xd/verify.sh" ] && [ "${SUPERVISOR_PROJECT_VERIFY:-1}" = 1 ]; then
+      run_step "$_xn: verify.sh" "$STEP_TO" env ./verify.sh; extra_ran=1
+    elif [ -f "$_xd/Makefile" ] && grep -qE '^verify:' "$_xd/Makefile"; then
+      run_step "$_xn: make verify" "$STEP_TO" make verify; extra_ran=1
+    elif [ -f "$_xd/Makefile" ] && grep -qE '^test:' "$_xd/Makefile"; then
+      run_step "$_xn: make test" "$STEP_TO" make test; extra_ran=1
+    elif command -v pytest >/dev/null 2>&1 && ls "$_xd"/test_*.py "$_xd"/tests/*.py "$_xd"/*/tests/*.py >/dev/null 2>&1; then
+      run_step "$_xn: pytest passes" "$STEP_TO" pytest -q; extra_ran=1
+    elif [ -f "$_xd/package.json" ] && jq -e '.scripts.test // empty' "$_xd/package.json" >/dev/null 2>&1 \
+         && command -v npm >/dev/null 2>&1 && [ -d "$_xd/node_modules" ]; then
+      run_step "$_xn: npm test" "$STEP_TO" npm test --silent; extra_ran=1
+    fi
+    unset STEP_DIR
+  done < "$IDIR/extra-repos"
+fi
+
+# Checks the worker registered (`add-check`, run below) are verification. When there is at least one,
+# "no automated verification available" is not true and must not be said: it turned a reviewer's
+# PASS with six green checks into debt, while the same work with no checks at all was accepted.
+registered_checks=0
+[ -n "$IDIR" ] && [ -s "$IDIR/checks.jsonl" ] \
+  && registered_checks="$(jq -s '[.[] | select((.criterion // "") != "" and ((.argv // []) | length) > 0)] | length' "$IDIR/checks.jsonl" 2>/dev/null || echo 0)"
+case "$registered_checks" in ''|*[!0-9]*) registered_checks=0 ;; esac
+
 if [ "$ran_any" = 0 ]; then
   PV_TO="$STEP_TO"; _left=$(( TOTAL_TO - ( $(date +%s) - START_TS ) - 10 ))
   [ "$_left" -gt "$PV_TO" ] && PV_TO="$_left"
@@ -426,7 +463,7 @@ if [ "$ran_any" = 0 ]; then
     run_step "make test" "$STEP_TO" make test
   elif command -v pytest >/dev/null 2>&1 && ls "$PROJ"/test_*.py "$PROJ"/tests/*.py >/dev/null 2>&1; then
     run_step "pytest passes" "$STEP_TO" pytest -q
-  else
+  elif [ "$extra_ran" = 0 ] && [ "$registered_checks" = 0 ]; then
     add_criterion "automated verification" "(none available)" 0 "" inconclusive "no automated verification available for this stack"
   fi
 fi

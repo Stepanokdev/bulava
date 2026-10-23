@@ -3545,7 +3545,12 @@ prep_blocked_reason() {   # $1=idir $2=1 when this message needs Codex → engin
 # Only the key that checks those signatures has to be watched, and it is written once, by the app,
 # at launch — never in the middle of somebody's shell command.
 control_fingerprint() {   # $1=idir (unused; the trusted key is per-machine, not per-run)
-  shasum -a 1 "$SUP_STATE/decision-key.pem" 2>/dev/null | awk '{print $1}' || printf 'none'
+  # No key at all is a state of its own, written as one. The fallback after the pipe never fired —
+  # a pipeline's status is awk's — so a machine without the app's key (every server) fingerprinted
+  # as nothing, the guard read "nothing" as "the fingerprint was removed", and cried tampering on
+  # every Bash call.
+  [ -s "$SUP_STATE/decision-key.pem" ] || { printf 'none'; return 0; }
+  shasum -a 1 "$SUP_STATE/decision-key.pem" 2>/dev/null | awk '{print $1}'
 }
 
 control_tamper_file() { printf '%s/control-tamper.json' "${1:-}"; }

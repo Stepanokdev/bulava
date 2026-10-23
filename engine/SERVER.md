@@ -137,8 +137,18 @@ is created to the moment its first attempt is written, inside one `dispatch.sh` 
 | `blocked` | the worker declared `blocked`: missing access or an external wall, named in `outcome.summary` | put the summary on the ticket; continue once a person has acted |
 | `failed` | anything else: `debt`, round limits, uncommitted work, `failed`, `reason: codex_unavailable` | put `state_reason` and the summary on the ticket; a later `continue` starts a new attempt |
 
-`state_reason` is the outcome's `reason` when the engine wrote one (`codex_unavailable`), otherwise
-the gate's disposition.
+`state_reason` is the outcome's `reason` when the engine wrote one (`codex_unavailable`), `stalled`
+when the watchdog parked the run, otherwise the gate's disposition.
+
+**Stalled.** The watchdog parks a run that sits at its prompt for `SUPERVISOR_STALL_PARK_SECS`
+(900 s) with no turn running and nothing settled; its task becomes `failed`, `state_reason: stalled`.
+"No turn running" is the Claude CLI's own busy/idle status, so a long build or test is never idle.
+Nothing parks while a result is declared, a usage pause holds (including `CODEX_UNAVAILABLE=wait`),
+a question is open, a review is running, or the network is down.
+
+**Continuing a `failed` task** — stalled, debt, Codex away — is an ordinary follow-up: `worker-send
+--relation continue` returns 0 with `TIER=dispatched` and starts a fresh attempt; only a `running`
+task with a live session answers `busy`.
 
 ### Starting a task
 
@@ -210,6 +220,11 @@ push `reviewed_sha` when it differs from `base_sha` and the repository's `HEAD` 
 commit before Codex reviews it — the same attempt, no Codex call — and after three such stops it ends
 as `failed`. Whatever path a pass takes, a pass over any uncommitted repository is settled as
 `needs-user` instead, so `review: "passed"` with `clean: false` never happens.
+
+Verification follows the work: every extra repository that changed (HEAD ≠ base, or uncommitted) is
+checked inside itself with the same plain detection as the main folder (`verify.sh`, `make verify` or
+`test`, `pytest`, `npm test`), and checks the worker registered with `add-check` count as
+verification — "no automated verification available" is reported only when nothing at all ran.
 
 Extra repositories are in `receipt.repos` already, with their own base and reviewed commit; tasks that
 touch several repositories work today, as long as `SUPERVISOR_EXTRA_DIRS_FILE` names them on every

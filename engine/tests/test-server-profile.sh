@@ -258,6 +258,17 @@ check "…and lets it write where the task may"                                 
 wg "$X2/sub" "$X2/z.txt" a-run-that-is-gone >/dev/null
 check "a hook whose token names no live run says so in the log"                 'grep -q "names no live run" "$SUPERVISOR_STATE_DIR/supervisor.log"'
 
+echo "===== the control guard on a machine with no decision key ====="
+cg() { jq -n --arg e "$1" --arg cwd "$G" '{hook_event_name:$e, tool_name:"Bash", cwd:$cwd, tool_input:{command:"ls"}}' \
+         | ORCHESTRATOR_RUN_ID=gate-run bash "$ROOT/hooks/control-guard.sh" 2>/dev/null; }
+rm -f "$SUPERVISOR_STATE_DIR/decision-key.pem" "$(control_tamper_file "$GI")"
+cg PreToolUse >/dev/null; out="$(cg PostToolUse)"
+check "no key is not tampering"                       '[ -z "$out" ] && [ ! -e "$(control_tamper_file "$GI")" ]'
+printf 'key-1\n' > "$SUPERVISOR_STATE_DIR/decision-key.pem"
+cg PreToolUse >/dev/null; printf 'key-2\n' > "$SUPERVISOR_STATE_DIR/decision-key.pem"; out="$(cg PostToolUse)"
+check "…while a key that changes across a call still is" '[ -e "$(control_tamper_file "$GI")" ]'
+rm -f "$SUPERVISOR_STATE_DIR/decision-key.pem" "$(control_tamper_file "$GI")"
+
 echo "===== a run parked as stalled settles its task ====="
 rm -f "$GI/done"; task_attempt_begin PRJ-5 "$GI" d-5 continue
 SUPERVISOR_RELEASE_DELAY=600 task_on_terminal "$GI" stalled
