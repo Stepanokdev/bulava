@@ -1015,6 +1015,18 @@ worker_transcript() {   # $1=tmux session [$2=instance dir] → path of the work
   printf '%s' "$p"
 }
 
+# Whether Claude Code still keeps a conversation it could resume. `claude --resume` of one it no
+# longer has — removed by its own clean-up of old transcripts, or never written because the first
+# start ended before a word — exits before any hook runs, and the resume used to end in a bare
+# "could not resume" that went to a repair and an error report (1.16.1, 23.10). A stand-in Claude
+# (tests, SUPERVISOR_CLAUDE_CMD) reads no transcript, so there is nothing to ask for it.
+claude_transcript_kept() {   # $1=Claude session id
+  local sid="${1:-}"
+  [ -n "${SUPERVISOR_CLAUDE_CMD:-}" ] && return 0
+  [ -n "$sid" ] || return 1
+  [ -n "$(find "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects" -maxdepth 2 -name "$sid.jsonl" -print -quit 2>/dev/null)" ]
+}
+
 _transcript_size() { stat -f %z "${1:-/nonexistent}" 2>/dev/null || echo 0; }
 
 # Entries written after a byte offset, one JSON object each; a line still being written is skipped
@@ -4449,11 +4461,19 @@ record_writable_dirs() {   # $1=instance dir
 
 # Write down every additional repository this run can write in, and the state it starts from.
 #
-# One line per repository: path, base commit, the digest above, and whether it already had
-# uncommitted changes — the last one so a review can be told that what it is looking at is not all
-# the run's doing.
+# One line per repository: path, base commit, the digest above, whether it already had uncommitted
+# changes — so a review can be told that what it is looking at is not all the run's doing — and the
+# last commit a review accepted.
+#
+# A bridge's task is several attempts, each in a session of its own, and its work in these
+# repositories is the sum of them. So an attempt of a task is measured from the TASK's base (its
+# `repo_bases`, written when the repository first appeared), not from where this attempt found it:
+# otherwise what an earlier attempt committed before asking a question is part of the starting
+# point, reads as nothing, and reaches a merge request that no review ever saw. And the repository
+# has work to review while its HEAD is not the commit the last passing review saw (`repo_reviewed`),
+# or the base when none has passed yet. Either one is used only while it is an ancestor of HEAD.
 record_extra_repos() {   # $1=instance dir
-  local idir="$1" file dir top base digest dirty
+  local idir="$1" file dir top base digest dirty head tf tbase acc empty
   file="${SUPERVISOR_EXTRA_DIRS_FILE:-}"
   [ -n "$idir" ] && [ -d "$idir" ] || return 0
   rm -f "$idir/extra-repos" 2>/dev/null
@@ -4468,24 +4488,47 @@ record_extra_repos() {   # $1=instance dir
     # Only a repository of its own can be measured. A plain folder handed to the worker has no
     # base to compare against, and inventing one is how this whole class of bug started.
     [ "$top" = "$dir" ] || continue
-    base="$(repo_measuring_base "$dir")"
+    base="$(repo_measuring_base "$dir")"; acc=""
+    head="$(git -C "$dir" rev-parse --verify --quiet HEAD 2>/dev/null || true)"
+    tf=""; [ -n "${SUPERVISOR_TASK_ID:-}" ] && declare -F task_file >/dev/null && tf="$(task_file "$SUPERVISOR_TASK_ID")"
+    if [ -n "$head" ] && [ -s "$tf" ]; then
+      # A repository that had no commits when the task first saw it keeps the empty tree as its base:
+      # every commit descends from it, though git will not say so of a tree.
+      empty="$(git -C "$dir" hash-object -t tree /dev/null 2>/dev/null)"
+      tbase="$(jq -r --arg p "$dir" '.repo_bases[$p] // empty' "$tf" 2>/dev/null)"
+      if [ -n "$tbase" ] && { [ "$tbase" = "$empty" ] || git -C "$dir" merge-base --is-ancestor "$tbase" "$head" 2>/dev/null; }; then
+        base="$tbase"
+      fi
+      acc="$(jq -r --arg p "$dir" '.repo_reviewed[$p] // empty' "$tf" 2>/dev/null)"
+      { [ -n "$acc" ] && git -C "$dir" merge-base --is-ancestor "$acc" "$head" 2>/dev/null \
+          && { [ "$base" = "$empty" ] || git -C "$dir" merge-base --is-ancestor "$base" "$acc" 2>/dev/null; }; } || acc="$base"
+    fi
     digest="$(repo_work_digest "$dir" "$base")"
     dirty=0; [ -n "$(git -C "$dir" status --porcelain 2>/dev/null | head -1)" ] && dirty=1
     # Unit separator, not tab. Tab is IFS whitespace, so a run of them collapses into one and an
     # empty field silently shifts every field after it — the base would be read as the digest and
     # the digest as a flag. Nothing here can contain \037.
-    printf '%s\037%s\037%s\037%s\n' "$dir" "$base" "$digest" "$dirty" >> "$idir/extra-repos"
+    printf '%s\037%s\037%s\037%s\037%s\n' "$dir" "$base" "$digest" "$dirty" "$acc" >> "$idir/extra-repos"
   done < "$file"
 }
 
-# The connected repositories whose working tree is not what it was at the start of the run.
+# Whether a connected repository has work for the review: its working tree is not what it was at
+# the start of the run, or — on a task — its HEAD is not the commit the last passing review saw.
+extra_repo_has_work() {   # $1=dir $2=base $3=digest at the start $4=accepted commit (may be empty)
+  local head
+  [ "$(repo_work_digest "$1" "$2")" != "$3" ] && return 0
+  [ -n "${4:-}" ] || return 1
+  head="$(git -C "$1" rev-parse --verify --quiet HEAD 2>/dev/null || true)"
+  [ -n "$head" ] && [ "$head" != "$4" ]
+}
+
+# The connected repositories with work for the review.
 extra_repos_changed() {   # $1=instance dir → one path per line; 0 = something changed, 1 = nothing did
-  local idir="${1:-}" dir base digest dirty now any=1
+  local idir="${1:-}" dir base digest dirty acc any=1
   [ -n "$idir" ] && [ -s "$idir/extra-repos" ] || return 1
-  while IFS=$'\037' read -r dir base digest dirty; do
+  while IFS=$'\037' read -r dir base digest dirty acc; do
     [ -n "$dir" ] && [ -d "$dir" ] && [ -n "$digest" ] || continue
-    now="$(repo_work_digest "$dir" "$base")"
-    [ "$now" = "$digest" ] && continue
+    extra_repo_has_work "$dir" "$base" "$digest" "$acc" || continue
     printf '%s\n' "$dir"
     any=0
   done < "$idir/extra-repos"
@@ -4495,12 +4538,11 @@ extra_repos_changed() {   # $1=instance dir → one path per line; 0 = something
 # What changed in them, for the review to read. Named as what they are, so nobody mistakes a
 # sibling repository's diff for the primary's.
 extra_repos_diffstat() {   # $1=instance dir
-  local idir="${1:-}" dir base digest dirty now
+  local idir="${1:-}" dir base digest dirty acc
   [ -n "$idir" ] && [ -s "$idir/extra-repos" ] || return 0
-  while IFS=$'\037' read -r dir base digest dirty; do
+  while IFS=$'\037' read -r dir base digest dirty acc; do
     [ -n "$dir" ] && [ -d "$dir" ] && [ -n "$digest" ] || continue
-    now="$(repo_work_digest "$dir" "$base")"
-    [ "$now" = "$digest" ] && continue
+    extra_repo_has_work "$dir" "$base" "$digest" "$acc" || continue
     printf '\n--- %s (підключений репозиторій продукту, не основна тека) ---\n' "$dir"
     [ "$dirty" = 1 ] && printf '    (у ньому вже були незакомічені зміни до початку прогону)\n'
     git -C "$dir" diff "$base" --stat 2>/dev/null | tail -40
@@ -5726,11 +5768,11 @@ RULES
 # main repository first, then each extra one the run was given (`record_extra_repos`). The bridge
 # pushes a repository only when `reviewed_sha` differs from `base_sha`, and only that commit.
 repos_state_json() {   # $1=instance dir $2=main project dir → JSON array
-  local idir="$1" proj="$2" dir base _digest _dirty
+  local idir="$1" proj="$2" dir base _digest _dirty _acc
   {
     [ -d "$proj" ] && printf '%s\037%s\n' "$proj" "$(read_base_sha "$idir")"
     if [ -s "$idir/extra-repos" ]; then
-      while IFS=$'\037' read -r dir base _digest _dirty; do
+      while IFS=$'\037' read -r dir base _digest _dirty _acc; do
         [ -n "$dir" ] && [ -d "$dir" ] && printf '%s\037%s\n' "$dir" "$base"
       done < "$idir/extra-repos"
     fi

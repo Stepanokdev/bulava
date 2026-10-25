@@ -439,7 +439,9 @@ if [ "${SUPERVISOR_OUTCOME_PROTOCOL:-1}" = 1 ] && [ -n "${IDIR_SCOPE:-}" ] && [ 
         elif [ -n "$BASE_SHA" ] && git -C "$cwd" cat-file -e "$BASE_SHA" 2>/dev/null \
            && oc_diff="$(git -C "$cwd" diff "$BASE_SHA" --stat 2>/dev/null)" \
            && oc_unt="$(worker_untracked "$cwd" "${IDIR_SCOPE:-}")"; then
-          oc_changed="$oc_diff$oc_unt"
+          # …and the task's work in the connected repositories that no passing review has seen yet:
+          # commits an earlier attempt left before a question are not "no change".
+          oc_changed="$oc_diff$oc_unt$(extra_repos_changed "$IDIR_SCOPE" 2>/dev/null || true)"
           if [ -n "$oc_changed" ]; then
             # Counted per DECLARATION, not per stop: the record's own timestamp says whether the
             # worker declared again or merely stopped again with the old file in place.
@@ -1013,7 +1015,8 @@ if [ -n "${IDIR_SCOPE:-}" ]; then
   "$BIN_DIR/scope-gate.sh" "$cwd" "$IDIR_SCOPE" "$BASE_SHA" >/dev/null 2>&1 || true
 
   if [ "$(runspec_mode "$IDIR_SCOPE")" != broad ]; then
-    post="$(git -C "$cwd" diff "$BASE_SHA" --stat 2>/dev/null)$(worker_untracked "$cwd" "${IDIR_SCOPE:-}")"
+    # The scope gate quarantines in this folder only; work in a connected repository is still work.
+    post="$(git -C "$cwd" diff "$BASE_SHA" --stat 2>/dev/null)$(worker_untracked "$cwd" "${IDIR_SCOPE:-}")$EXTRA_CHANGED"
     if [ -z "$post" ]; then
       log "no in-scope changes remain after scope-gate — returning to operator (scope_violation)"
       emit_review_json COMPLETE FAIL scope_violation "All worker changes were outside the RunSpec write_paths and were quarantined; nothing in scope was accomplished."

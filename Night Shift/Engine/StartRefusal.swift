@@ -13,6 +13,11 @@ nonisolated enum StartRefusal {
     /// engine will not make git there, and the start was refused before anything was touched.
     static func notAProject(_ output: String) -> Bool { says(output, "start-refused=folder") }
 
+    /// Claude Code no longer keeps the conversation a resume asked for — its own clean-up of old
+    /// transcripts removed it — so there is nothing to bring back and nothing for a repair to fix.
+    /// Reached us as `chat.resume_failed` from 1.16.1 (23 Oct).
+    static func conversationGone(_ output: String) -> Bool { says(output, "resume-refused=transcript") }
+
     /// The engine's own words, without the marker lines that are meant for the app alone.
     static func withoutMarkers(_ output: String) -> String {
         output.split(separator: "\n", omittingEmptySubsequences: false)
@@ -27,5 +32,6 @@ nonisolated enum StartRefusal {
 
     private static func isMarker(_ line: Substring) -> Bool {
         line.hasPrefix("handshake-blocked=") || line.hasPrefix("start-refused=")
+            || line.hasPrefix("resume-refused=")
     }
 }

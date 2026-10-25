@@ -11011,6 +11011,22 @@
         }
       }
     },
+    "Claude Code no longer keeps this conversation, so it cannot be continued. Start a new chat — everything here stays." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Claude Code больше не хранит этот разговор, поэтому продолжить его нельзя. Начни новый чат — всё, что здесь, останется."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Claude Code більше не зберігає цю розмову, тож продовжити її не вийде. Почни новий чат — усе, що тут є, залишиться."
+          }
+        }
+      }
+    },
     "Claude Code will ask about a folder" : {
       "extractionState" : "stale",
       "localizations" : {

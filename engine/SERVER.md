@@ -201,6 +201,16 @@ is a new attempt in a fresh session, briefed from the record: the original goal 
 branches and their commits, the question it answers, and the new text. It is reviewed against the
 original runspec and plan, as the whole branch from the task's first base.
 
+The connected repositories are measured the same way. Each keeps, in `task.json`, the base it had
+when it first appeared in the task (`repo_bases`) and the commit the last passing review saw in it
+(`repo_reviewed`). An attempt has work to review in a repository while its HEAD is not that reviewed
+commit (or the base, before any review passed), so what an attempt committed before a question or a
+blocker is reviewed by the attempt after it, and a review comment that needs no code costs no Codex
+round. `receipt.repos[].base_sha` is the task's base. Either commit counts only while it is an
+ancestor of HEAD: after a rebase the repository is measured from where the attempt found it. A
+`blocked` or `needs_input` attempt is not reviewed; publish only what a `waiting_review` receipt
+names. Pinned by `tests/test-server-task-repos.sh`.
+
 | exit | stdout | meaning |
 |---|---|---|
 | 0 | `TIER=dispatched` + JSON | the next attempt started |

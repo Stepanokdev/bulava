@@ -25,6 +25,8 @@ nonisolated struct RelayResult: Sendable {
     var undelivered = false
     /// Claude Code was not signed in, so nothing was resumed: his to clear, not ours to repair.
     var needsSignIn = false
+    /// Claude Code no longer keeps the conversation, so no resume can bring it back.
+    var conversationGone = false
 
     /// What `worker-send.sh` said, read into a result.
     ///
@@ -60,6 +62,7 @@ nonisolated struct RelayResult: Sendable {
         // A resume that stopped on Claude's sign-in: the engine says so in its marker line (see
         // `handshake_blocker`), which the last human line alone would lose.
         result.needsSignIn = StartRefusal.needsSignIn(out)
+        result.conversationGone = StartRefusal.conversationGone(out)
         if tier == .error {
             result.undelivered = !launched || endedBy == .neverStarted
                 || (endedBy == .exited && marker == .error && exitCode == 1

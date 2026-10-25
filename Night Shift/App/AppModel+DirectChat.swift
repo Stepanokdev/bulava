@@ -1085,6 +1085,12 @@ extension AppModel {
                 // not a repair: nothing is broken.
                 conversations.updateDelivery(entryID: entryID, .failed)
                 stopOnStartTheyMustClear(chatID: chat.id, entryID: entryID, output: "handshake-blocked=login")
+            case .none where result.conversationGone:
+                // Claude Code removed this conversation (23.10, 1.16.1): no resume brings it back
+                // and nothing is broken, so it is said plainly instead of repaired and reported.
+                conversations.updateDelivery(entryID: entryID, .failed)
+                failChat(chat.id, String(localized: "Claude Code no longer keeps this conversation, so it cannot be continued. Start a new chat — everything here stays."),
+                         .needsYou)
             case .none:
                 conversations.updateDelivery(entryID: entryID, .failed)
                 failChat(chat.id, bound.claudeSessionID == nil

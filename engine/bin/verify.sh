@@ -442,10 +442,10 @@ extra_checked_by_worker() {   # $1=repository → 0 when a registered check is a
   return 1
 }
 if [ -n "$IDIR" ] && [ -s "$IDIR/extra-repos" ] && [ "${SUPERVISOR_EXTRA_REPO_AUTOVERIFY:-1}" = 1 ]; then
-  while IFS=$'\037' read -r _xd _xbase _xdig _xdirty; do
+  while IFS=$'\037' read -r _xd _xbase _xdig _xdirty _xacc; do
     [ -n "$_xd" ] && [ -d "$_xd" ] || continue
     _xhead="$(git -C "$_xd" rev-parse HEAD 2>/dev/null || true)"
-    [ "$_xhead" != "$_xbase" ] || [ -n "$(git -C "$_xd" status --porcelain 2>/dev/null | head -1)" ] || continue
+    [ "$_xhead" != "${_xacc:-$_xbase}" ] || [ -n "$(git -C "$_xd" status --porcelain 2>/dev/null | head -1)" ] || continue
     _xn="$(basename "$_xd")"
     if extra_checked_by_worker "$_xd"; then
       add_criterion "$_xn: own detection" "(skipped)" 0 "" skipped "verified by the checks the worker registered for it"
