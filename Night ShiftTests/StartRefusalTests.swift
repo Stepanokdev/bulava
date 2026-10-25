@@ -102,4 +102,24 @@ nonisolated final class StartRefusalTests: XCTestCase {
         let other = RelayResult.read(output: "❌ не вдалося відновити\nTIER=none", exitCode: 3, launched: true, endedBy: .exited)
         XCTAssertFalse(other.needsSignIn, "an ordinary failed resume is still one")
     }
+
+    /// A resume of a conversation Claude Code no longer keeps (1.16.1, 23.10): worker-send's own
+    /// output, as `tests/test-resume-gone.sh` pins it — nothing to repair, nothing to report.
+    @MainActor
+    func testAConversationClaudeNoLongerKeepsIsSaidAndNotRepaired() {
+        let out = "resume-refused=transcript\nTIER=none\nнема живої/відновлюваної сесії — потрібен свіжий воркер"
+        let result = RelayResult.read(output: out, exitCode: 3, launched: true, endedBy: .exited)
+        XCTAssertEqual(result.tier, .none)
+        XCTAssertTrue(result.conversationGone)
+        XCTAssertFalse(result.needsSignIn)
+        XCTAssertEqual(StartRefusal.withoutMarkers("resume-refused=transcript\nok"), "ok")
+        XCTAssertFalse(RelayResult.read(output: "TIER=none", exitCode: 3, launched: true,
+                                        endedBy: .exited).conversationGone,
+                       "an ordinary failed resume is still one")
+
+        let (m, chat, _) = model()
+        m.failChat(chat, "gone", .needsYou)
+        XCTAssertNil(m.repairs[chat], "a conversation that is gone is not repaired or reported")
+        XCTAssertTrue(m.toast?.actions.isEmpty == true, "and no Fix it button")
+    }
 }

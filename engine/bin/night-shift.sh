@@ -1243,6 +1243,14 @@ $gone}"
     if tmux has-session -t "$SESSION" 2>/dev/null; then
       echo "🌙 Сесія вже жива для цього проєкту — resume не потрібен ($SESSION)."; exit 0
     fi
+    # A conversation Claude Code no longer keeps cannot come back, whatever is tried: said before
+    # anything is touched, in a marker the app reads, instead of a handshake that never comes.
+    if ! claude_transcript_kept "$RESUME_SID"; then
+      echo "$(date '+%F %T') [resume] REFUSED '$PROJECT_DIR' — Claude Code keeps no transcript of $RESUME_SID" >> "$SUP_STATE/supervisor.log"
+      echo "❌ resume: Claude Code більше не зберігає цю розмову — відновлювати нічого." >&2
+      echo "resume-refused=transcript" >&2
+      exit 1
+    fi
     # Before anything is touched: a conversation alive somewhere else is not started a second time.
     # Asked under the conversation's own lock, held until this resume is confirmed or rolled back —
     # two folders resuming one id at the same moment would otherwise each find nobody running it.

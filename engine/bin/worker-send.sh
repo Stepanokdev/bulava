@@ -256,8 +256,15 @@ fi
 if [ -n "$SID" ]; then
   # The launcher is a seam for the same reason the watchdog and the pump are: reviving a session
   # means starting a real Claude, and the suite has to be able to prove what happens AFTER it.
-  "${SUPERVISOR_NIGHT_SHIFT_CMD:-$BIN_DIR/night-shift.sh}" resume "$PROJ" "$SID" "${BR:-"-"}" --no-attach >>"$SUP_STATE/supervisor.log" 2>&1
+  # Into a file and not straight into the log: the marker lines it prints for the app (a sign-in,
+  # a conversation Claude no longer keeps) went only to the log, and the app, told nothing but
+  # TIER=none, took a signed-out Claude for a broken resume (1.16.1, 23.10).
+  _rout="$(mktemp "${TMPDIR:-/tmp}/worker-send-resume.XXXXXX")"
+  "${SUPERVISOR_NIGHT_SHIFT_CMD:-$BIN_DIR/night-shift.sh}" resume "$PROJ" "$SID" "${BR:-"-"}" --no-attach >"$_rout" 2>&1
   _rs=$?
+  cat "$_rout" >> "$SUP_STATE/supervisor.log" 2>/dev/null
+  grep -E '^(handshake-blocked|resume-refused)=' "$_rout" 2>/dev/null
+  rm -f "$_rout"
   if [ "$_rs" = 4 ]; then
     # The conversation is alive in another run. Starting it here as well is how one message once
     # went into his folder while the run it belonged to was working in its copy.

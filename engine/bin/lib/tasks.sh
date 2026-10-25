@@ -148,17 +148,24 @@ task_message_record() {   # $1=task id $2=message id $3=text $4=dispatch id
 }
 
 # An attempt begins: a dispatch has an instance and a run to point at.
+#
+# Each connected repository keeps the base it had when it first appeared in the task (`repo_bases`),
+# the same way the main one keeps `base_sha`: a later attempt is measured from it (`record_extra_repos`).
 task_attempt_begin() {   # $1=task id $2=instance dir $3=dispatch id $4=kind (initial|continue)
-  local tid="$1" idir="$2" did="$3" kind="${4:-initial}" rid base
+  local tid="$1" idir="$2" did="$3" kind="${4:-initial}" rid base xb
   rid="$(tr -d '[:space:]' < "$idir/run-id" 2>/dev/null || true)"
   base="$(read_base_sha "$idir")"
+  xb="$(cut -d$'\037' -f1,2 "$idir/extra-repos" 2>/dev/null \
+        | jq -Rn '[inputs | split("\u001f") | select(length == 2 and .[0] != "" and .[1] != "") | {(.[0]): .[1]}] | add // {}' 2>/dev/null)"
+  case "$xb" in '{'*) ;; *) xb='{}' ;; esac
   task_update "$tid" '
     .attempts += [{n:((.attempts | length) + 1), kind:$k, dispatch_id:$d, run_id:$r,
                    instance:$i, started_at:$_now, ended_at:null, result:null, review:null}]
     | .state = "running" | .state_reason = ""
     | .question = (if $k == "continue" then null else .question end)
-    | .base_sha = (if (.base_sha // "") == "" then $b else .base_sha end)' \
-    --arg k "$kind" --arg d "$did" --arg r "$rid" --arg i "$idir" --arg b "$base" || return 1
+    | .base_sha = (if (.base_sha // "") == "" then $b else .base_sha end)
+    | .repo_bases = ($xb + (.repo_bases // {}))' \
+    --arg k "$kind" --arg d "$did" --arg r "$rid" --arg i "$idir" --arg b "$base" --argjson xb "$xb" || return 1
   task_event "$tid" attempt-started "$(jq -nc --arg k "$kind" --arg d "$did" --arg r "$rid" '{attempt_kind:$k, dispatch_id:$d, run_id:$r}')"
 }
 
@@ -230,8 +237,13 @@ task_on_terminal() {   # $1=instance dir $2=disposition
   q="$(jq -c '.question // null' "$idir/outcome.json" 2>/dev/null || echo null)"
   [ "$state" = needs_input ] || q=null
   task_material_save "$tid" "$idir"
+  # What a passing review saw in each repository: the next attempt has work to review there only
+  # once HEAD moves past it.
   task_update "$tid" '
     .state = $st | .state_reason = $why | .repos = $repos
+    | .repo_reviewed = ((.repo_reviewed // {}) + (if $disp == "passed"
+        then ([$repos[] | select((.path // "") != "" and (.reviewed_sha // "") != "") | {(.path): .reviewed_sha}] | add // {})
+        else {} end))
     | .last_receipt = $rc | .question = $q
     | .last_outcome = $oc
     | .attempts |= (if length == 0 then . else
