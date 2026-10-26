@@ -3736,12 +3736,21 @@ engine_protocol_gap() {   # → one sentence when the installed gate is older th
 # auto-approved, not what exists. `--tools` does restrict the built-in set, and `--strict-mcp-config`
 # with nothing to point at leaves no MCP servers behind. Without Bash there is no shell to write
 # through either. What remains is checked rather than trusted — see `tree_fingerprint`.
+#
+# It is started WITHOUT the run's token. The hooks are global, so this session's own Stop fires the
+# review gate too, in a folder that has a live run; with the token inherited from the gate it would
+# be taken for the worker and reviewed — a review inside a review. Without it the folder test
+# refuses it (`supervision_scope` fails closed). Only the user's settings are read: the project's
+# `.claude/settings.json` is a file the worker can write, and its hooks would run in here.
+# `CLAUDE_PEER_ADD_DIRS` (one per line) are other folders it may read.
 claude_peer_readonly() {   # $1=timeout $2=cwd $3=prompt → the answer on stdout, the CLI's rc
-  local secs="${1:-480}" dir="${2:-.}" prompt="${3:-}"
+  local secs="${1:-480}" dir="${2:-.}" prompt="${3:-}" d
+  local -a add=()
+  while IFS= read -r d; do [ -n "$d" ] && [ -d "$d" ] && [ "$d" != "$dir" ] && add+=(--add-dir "$d"); done <<< "${CLAUDE_PEER_ADD_DIRS:-}"
   ( cd "$dir" 2>/dev/null || exit 127
     printf '%s' "$prompt" | perl -e 'alarm shift; exec @ARGV' "$secs" \
-      env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
-      "${SUPERVISOR_CLAUDE_BIN:-claude}" -p --tools 'Read,Grep,Glob' --strict-mcp-config \
+      env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ORCHESTRATOR_RUN_ID \
+      "${SUPERVISOR_CLAUDE_BIN:-claude}" -p --tools 'Read,Grep,Glob' --strict-mcp-config --setting-sources user ${add[@]+"${add[@]}"} \
       $(claude_effort_args) ${SUPERVISOR_CLAUDE_MODEL:+--model "$SUPERVISOR_CLAUDE_MODEL"} )
 }
 
@@ -6105,3 +6114,5 @@ detect_stacks() {  # $1=project dir
 
 # Tasks that outlive their sessions (a bridge's PRJ-123): bin/lib/tasks.sh.
 [ -f "$_SUP_BIN_DIR/lib/tasks.sh" ] && . "$_SUP_BIN_DIR/lib/tasks.sh"
+# Independent Claude checks before the Codex review: bin/lib/claude-checks.sh.
+[ -f "$_SUP_BIN_DIR/lib/claude-checks.sh" ] && . "$_SUP_BIN_DIR/lib/claude-checks.sh"

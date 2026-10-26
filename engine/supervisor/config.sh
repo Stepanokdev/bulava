@@ -22,7 +22,13 @@ if [ "${SUPERVISOR_PROFILE:-}" = server ]; then
   # service's environment (the sign-in token among it) rather than whatever an older server had.
   : "${SUPERVISOR_TMUX_SOCKET:=bulava}"
   export SUPERVISOR_TMUX_SOCKET
+  # Its tasks come from a tracker anyone can write in, so the work gets a code review and a security
+  # review by sessions that never saw the ticket's text (bin/lib/claude-checks.sh). Off with =0.
+  : "${SUPERVISOR_CLAUDE_CHECKS:=1}"
 fi
+# Off everywhere else — the Mac app and a terminal — unless turned on with =1.
+: "${SUPERVISOR_CLAUDE_CHECKS:=0}"
+export SUPERVISOR_CLAUDE_CHECKS
 
 : "${SUPERVISOR_MAX_ROUNDS:=3}"          # base patience: always allow at least this many FAIL rounds
 : "${SUPERVISOR_MAX_ROUNDS_HARD:=12}"    # absolute ceiling per session (runaway protection)
