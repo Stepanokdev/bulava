@@ -2164,7 +2164,15 @@ pending_enqueue() {
   safe="$(printf '%s' "$mid" | tr -cd 'A-Za-z0-9-')"
   [ -n "$safe" ] || safe="anon-$$"
   file="$dir/$seq-$safe.json"
-  bind="$(thread_bind "$idir" "$msg" "$mid" "$seq" "$rel")"
+  # Where the old rule would only have guessed — the first message after a restart, after a settled
+  # task, after hours of silence — Jev is asked (jev-lib.sh). Here, before thread_bind takes the
+  # record's lock: it is a network call, and others break that lock after ten seconds.
+  local hint="" expect=""
+  if [ -z "$rel" ] && command -v jev_relation_for >/dev/null 2>&1; then
+    hint="$(jev_relation_for "$idir" "$msg" "$mid")"
+    rel="${hint%% *}"; [ "$hint" = "$rel" ] || expect="${hint#* }"
+  fi
+  bind="$(thread_bind "$idir" "$msg" "$mid" "$seq" "$rel" "$expect")"
   rel="$(printf '%s' "$bind" | awk '{print $1}')"
   tid="$(printf '%s' "$bind" | awk '{print $2}')"
   rev="$(printf '%s' "$bind" | awk '{print $3}')"
@@ -3971,6 +3979,9 @@ thread_state() {   # $1=idir → open | settled | none
 # vote — over DEPTH alone. It cannot stop either engine from reading the message.
 thread_relation() {   # $1=idir $2=message → continue|new
   local idir="${1:-}" msg="${2:-}" h last idle
+  # Brought back with a resumed run (lib/thread-carry.sh) and not judged by Jev: the engine before
+  # it had no record here, and that is the answer it gave.
+  [ -n "$(thread_get "$idir" '.carried_at')" ] && { printf 'new'; return 0; }
   case "$(thread_state "$idir")" in
     none) printf 'new'; return 0 ;;
     open)
@@ -3993,16 +4004,26 @@ thread_relation() {   # $1=idir $2=message → continue|new
 }
 
 # Bind a message to a task. Called at ENQUEUE. Echoes "relation thread_id revision".
-thread_bind() {   # $1=idir $2=message $3=message-id $4=seq [$5=forced relation]
-  local idir="${1:-}" msg="${2:-}" mid="${3:-}" seq="${4:-}" forced="${5:-}"
+thread_bind() {   # $1=idir $2=message $3=message-id $4=seq [$5=forced relation] [$6=task it was decided against]
+  local idir="${1:-}" msg="${2:-}" mid="${3:-}" seq="${4:-}" forced="${5:-}" expect="${6:-}"
   local rel tid rev now obj
   [ -n "$idir" ] && [ -d "$idir" ] || { printf 'new  0'; return 0; }
   _thread_lock "$idir"
   now="$(date +%s)"
   rel="$forced"
+  # A relation decided outside the lock (Jev) is about the task it was decided against. If another
+  # message has moved the record since, it is about nothing here, and the rule decides afresh.
+  [ -n "$expect" ] && [ "$(thread_get "$idir" '.thread_id')" != "$expect" ] && rel=""
   case "$rel" in continue|new) ;; *) rel="$(thread_relation "$idir" "$msg")" ;; esac
   # A continuation with nothing to continue is a new task, whatever anyone asked for.
   [ "$rel" = continue ] && [ "$(thread_state "$idir")" = none ] && rel=new
+  # A task brought back with a resumed run is decided once, here. Replaced by a new one, it takes
+  # the material that came back with it, so the new task reads only its own; continued, that
+  # material is the task's own again. Either way the snapshot of Claude's last reply has served.
+  if [ -n "$(thread_get "$idir" '.carried_at')" ]; then
+    [ "$rel" = new ] && command -v thread_carry_drop_material >/dev/null 2>&1 && thread_carry_drop_material "$idir"
+    rm -f "$idir/carried-material" "$idir/carried-last-reply.txt" 2>/dev/null
+  fi
 
   if [ "$rel" = new ]; then
     tid="$(uuidgen 2>/dev/null || printf '%s-%s' "$now" "$$")"
@@ -4340,7 +4361,10 @@ choose_branch_action() {  # $1=current branch name
   esac
 }
 
-PAID_API_ENV_VARS="ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX OPENAI_API_KEY CODEX_API_KEY"
+# TYPESAFE_API_KEY is not a model a worker could fall back to, but it is a paid key all the same:
+# Jev reads its own from the Keychain (jev-lib.sh), so a copy in the environment is only a leak into
+# every Claude and Codex this engine starts.
+PAID_API_ENV_VARS="ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX OPENAI_API_KEY CODEX_API_KEY TYPESAFE_API_KEY"
 
 subscription_env_prefix() {
   local p="env" v
@@ -6105,3 +6129,6 @@ detect_stacks() {  # $1=project dir
 
 # Tasks that outlive their sessions (a bridge's PRJ-123): bin/lib/tasks.sh.
 [ -f "$_SUP_BIN_DIR/lib/tasks.sh" ] && . "$_SUP_BIN_DIR/lib/tasks.sh"
+# A chat's task kept beyond its run folder, and Jev asked whether a message continues it.
+[ -f "$_SUP_BIN_DIR/lib/thread-carry.sh" ] && . "$_SUP_BIN_DIR/lib/thread-carry.sh"
+[ -f "$_SUP_BIN_DIR/jev-lib.sh" ] && . "$_SUP_BIN_DIR/jev-lib.sh"

@@ -107,6 +107,15 @@ fi
 : "${SUPERVISOR_USAGE_FRESH_SECS:=300}"         # a usage reading older than this is re-taken
 : "${SUPERVISOR_USAGE_STALE_SECS:=1800}"        # …and older than this it cannot say "free"
 : "${SUPERVISOR_PAUSE_RECHECK_SECS:=1800}"      # how far ahead to re-arm a pause with no believable reset
+# Jev (bin/jev-lib.sh) — off unless Settings or `jev.sh mode` says otherwise; these only shape it once on.
+: "${SUPERVISOR_JEV_MODEL:=jev-1.13.0}"         # pinned: the thresholds below were measured against this version
+: "${SUPERVISOR_JEV_URL:=https://api.typesafe.ai/v1/systemone}"
+: "${SUPERVISOR_JEV_TIMEOUT:=8}"                # s for one call, the network included
+: "${SUPERVISOR_JEV_RELATION_TIMEOUT:=4}"       # …and for the one asked while a message is being accepted
+: "${SUPERVISOR_JEV_YES:=0.75}"                 # a Noul at or above this is "yes"
+: "${SUPERVISOR_JEV_NO:=0.25}"                  # at or below this "no"; anything between is "unsure"
+: "${SUPERVISOR_JEV_STATE_BYTES:=2000}"         # how much of each text (task, last reply, message) is sent
+: "${SUPERVISOR_THREAD_CARRY_DAYS:=30}"         # how long a chat's task is kept after its run folder went
 : "${SUPERVISOR_PAUSE_PROBE_BACKOFF:=600}"      # wait after a blind attempt runs back into the wall; doubles
 : "${SUPERVISOR_PAUSE_PROBE_BACKOFF_MAX:=3600}"
 : "${SUPERVISOR_REVIEW_ORPHAN_SECS:=5400}"      # a review marker whose owner is gone is stale after this
@@ -173,6 +182,8 @@ export SUPERVISOR_MAX_ROUNDS SUPERVISOR_MAX_ROUNDS_HARD SUPERVISOR_STALL_LIMIT \
   SUPERVISOR_TASK_IDLE_NEW_SECS \
   SUPERVISOR_USAGE_FRESH_SECS SUPERVISOR_USAGE_STALE_SECS \
   SUPERVISOR_PAUSE_RECHECK_SECS SUPERVISOR_PAUSE_PROBE_BACKOFF \
+  SUPERVISOR_JEV_MODEL SUPERVISOR_JEV_URL SUPERVISOR_JEV_TIMEOUT SUPERVISOR_JEV_RELATION_TIMEOUT \
+  SUPERVISOR_JEV_YES SUPERVISOR_JEV_NO SUPERVISOR_JEV_STATE_BYTES SUPERVISOR_THREAD_CARRY_DAYS \
   SUPERVISOR_PAUSE_PROBE_BACKOFF_MAX SUPERVISOR_REVIEW_ORPHAN_SECS \
   SUPERVISOR_PREFLIGHT_LOCK_WAIT SUPERVISOR_PIPELINE_LOCK_WAIT \
   SUPERVISOR_PUMP_POLL SUPERVISOR_PUMP_IDLE_WAIT \

@@ -40850,6 +40850,488 @@
           }
         }
       }
+    },
+    "Jev: task continuity" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jev: продолжение задачи"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jev: продовження задачі"
+          }
+        }
+      }
+    },
+    "Decide with Jev whether a message continues the task" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пусть Jev решает, продолжает ли сообщение задачу"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нехай Jev вирішує, чи продовжує повідомлення задачу"
+          }
+        }
+      }
+    },
+    "After a run was stopped or sat idle, its next message used to be prepared as a new task: two positions, an alignment, research. With Jev on, the task is kept and Jev decides in under a second whether the message continues it. When Jev is unsure or cannot be reached, the engine decides as before." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Раньше, если прогон остановили или он простоял, следующее сообщение готовилось как новая задача: две позиции, сверка, ресерч. С Jev задача сохраняется, и Jev меньше чем за секунду решает, продолжает ли её сообщение. Если Jev не уверен или недоступен, движок решает как раньше."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Раніше, якщо прогін зупинили або він простояв, наступне повідомлення готувалося як нова задача: дві позиції, звірка, ресерч. З Jev задача зберігається, і Jev менш ніж за секунду вирішує, чи продовжує її повідомлення. Якщо Jev не впевнений або недоступний, движок вирішує як раніше."
+          }
+        }
+      }
+    },
+    "The message, the task's goal and Claude's last reply go to TypeSafe in the US, on your own TypeSafe account: well under a cent a decision. A key is made at console.typesafe.ai." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщение, цель задачи и последний ответ Claude уходят в TypeSafe в США, на твой собственный аккаунт TypeSafe: решение стоит намного меньше цента. Ключ создаётся на console.typesafe.ai."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Повідомлення, мета задачі й остання відповідь Claude йдуть у TypeSafe у США, на твій власний акаунт TypeSafe: рішення коштує набагато менше за цент. Ключ створюється на console.typesafe.ai."
+          }
+        }
+      }
+    },
+    "Check" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверить"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перевірити"
+          }
+        }
+      }
+    },
+    "Replace key" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заменить ключ"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Замінити ключ"
+          }
+        }
+      }
+    },
+    "Remove key" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить ключ"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Видалити ключ"
+          }
+        }
+      }
+    },
+    "Reading the engine's setting…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Читаю настройку движка…"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Читаю налаштування движка…"
+          }
+        }
+      }
+    },
+    "This engine has no Jev yet. It comes with the next engine update." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В этом движке ещё нет Jev. Он придёт со следующим обновлением движка."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У цьому движку ще немає Jev. Він прийде з наступним оновленням движка."
+          }
+        }
+      }
+    },
+    "Waiting for a key. Nothing is sent until one is stored." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Жду ключ. Пока его нет, ничего не отправляется."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чекаю ключ. Поки його немає, нічого не надсилається."
+          }
+        }
+      }
+    },
+    "On. %lld decisions so far." : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "On. %lld decision so far."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "On. %lld decisions so far."
+                }
+              }
+            }
+          }
+        },
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Включено. Пока %lld решение."
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Включено. Пока %lld решения."
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Включено. Пока %lld решений."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Включено. Пока %lld решения."
+                }
+              }
+            }
+          }
+        },
+        "uk" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Увімкнено. Поки %lld рішення."
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Увімкнено. Поки %lld рішення."
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Увімкнено. Поки %lld рішень."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Увімкнено. Поки %lld рішення."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "On. The first decision comes with the next message after a restart or a long pause." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включено. Первое решение будет со следующим сообщением после перезапуска или долгой паузы."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Увімкнено. Перше рішення буде з наступним повідомленням після перезапуску чи довгої паузи."
+          }
+        }
+      }
+    },
+    "On, but there is no key: nothing is sent, and the engine decides as before." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включено, но ключа нет: ничего не отправляется, движок решает как раньше."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Увімкнено, але ключа немає: нічого не надсилається, движок вирішує як раніше."
+          }
+        }
+      }
+    },
+    "Watching only: Jev is asked and its answer written down, the engine decides as before." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Только наблюдение: Jev спрашивают и записывают ответ, а решает движок, как раньше."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Лише спостереження: Jev запитують і записують відповідь, а вирішує движок, як раніше."
+          }
+        }
+      }
+    },
+    "Off. The engine decides as it always has." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выключено. Движок решает как всегда."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вимкнено. Движок вирішує як завжди."
+          }
+        }
+      }
+    },
+    "TypeSafe API key" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API-ключ TypeSafe"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API-ключ TypeSafe"
+          }
+        }
+      }
+    },
+    "Save key" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранить ключ"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зберегти ключ"
+          }
+        }
+      }
+    },
+    "«the ticket was updated, check it» reads as the same task" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«тикет обновили, проверь» читается как та же задача"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«тікет оновили, перевір» читається як та сама задача"
+          }
+        }
+      }
+    },
+    "«the ticket was updated, check it» does not read as the same task" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«тикет обновили, проверь» не читается как та же задача"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«тікет оновили, перевір» не читається як та сама задача"
+          }
+        }
+      }
+    },
+    "Jev answered in %1$@ s (input tokens: %2$@): %3$@." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jev ответил за %1$@ с (входных токенов: %2$@): %3$@."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jev відповів за %1$@ с (вхідних токенів: %2$@): %3$@."
+          }
+        }
+      }
+    },
+    "The check failed: %@." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверка не прошла: %@."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перевірка не пройшла: %@."
+          }
+        }
+      }
+    },
+    "no answer from the engine" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "движок не ответил"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "движок не відповів"
+          }
+        }
+      }
+    },
+    "This engine has no Jev yet." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В этом движке ещё нет Jev."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У цьому движку ще немає Jev."
+          }
+        }
+      }
+    },
+    "Paste the key first." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сначала вставь ключ."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Спершу встав ключ."
+          }
+        }
+      }
+    },
+    "That does not look like a TypeSafe API key." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Это не похоже на API-ключ TypeSafe."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Це не схоже на API-ключ TypeSafe."
+          }
+        }
+      }
+    },
+    "The Keychain did not take the key." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keychain не принял ключ."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keychain не прийняв ключ."
+          }
+        }
+      }
     }
   },
   "version" : "1.1"
