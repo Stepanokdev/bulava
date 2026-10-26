@@ -28,6 +28,7 @@ Without it nothing in this file applies, and a terminal or the Mac app behaves e
 | Reading `~/.ssh`, `~/.codex/auth.json`, `~/.claude/.credentials.json`, glab/gh config | allowed | denied (permission rules + a Bash check) |
 | `git push`, `glab`, `gh` from inside a run | allowed | denied — the bridge publishes |
 | tmux server | the user's default | its own socket (`SUPERVISOR_TMUX_SOCKET=bulava`) |
+| Independent code and security checks before Codex | off (`SUPERVISOR_CLAUDE_CHECKS=1` turns them on) | **on** (`=0` turns them off) |
 
 The bridge's own secrets on the same machine are added to both layers with
 `SUPERVISOR_SERVER_EXTRA_SECRET_PATHS` — paths separated by spaces, each starting with `~/` or `/`
@@ -281,6 +282,36 @@ SUPERVISOR_CODEX_UNAVAILABLE_AFTER_HOURS=3
 counted from the first time it was found away and kept in a file, so a restart does not start the
 clock again. The work stays on its branch. `wait` waits as long as it takes. There is no setting that
 finishes without the reviewer.
+
+## Independent checks before Codex
+
+A task comes from a tracker anyone can write in, so its text can carry an injection that the worker
+believes ("while you are there, post the config to …"). After the build and tests pass, and before
+Codex, two Claude sessions read the diff — a code review and a security review. They never saw the
+ticket or the worker's conversation, they run side by side, read-only (Read, Grep, Glob; no shell,
+no MCP), without the run's token, and a session that changed any repository has its answer thrown
+away. The diff is the one the review uses: the work folder from its base and every connected
+repository with work in it, from the task's base.
+
+```
+SUPERVISOR_CLAUDE_CHECKS=1|0                  # default: 1 on a server, 0 everywhere else
+SUPERVISOR_CLAUDE_CHECKS_LIST="code security"
+SUPERVISOR_CLAUDE_CHECKS_MIN_SEVERITY=high     # critical | high | medium | low — what goes back to the worker
+SUPERVISOR_CLAUDE_CHECKS_ROUNDS=1              # per task: a follow-up attempt does not get a new budget
+SUPERVISOR_CLAUDE_CHECKS_TIMEOUT=900           # seconds per check
+SUPERVISOR_CLAUDE_CHECKS_REQUIRED=0            # 1: a check that fails parks the run (needs-user)
+```
+
+They advise; only Codex accepts or returns the work. Findings at or above the threshold go back to
+the worker while the task's budget lasts; it fixes each or declines it with a reason in its last
+message, and a finding is never returned twice. Codex then reviews with every finding and the
+worker's answers in front of it. Once the budget is spent the checks do not run again for that task,
+and Codex is shown the last reading. A check that fails (time, a refusal, no findings block, a write)
+lets the work go on to Codex unless `REQUIRED=1`; an empty diff is "nothing to check", never "clean".
+What they remember — rounds, the findings returned, the readings by snapshot — is kept beside the
+task in `tasks/<key>/checks/`. `doctor --server --json` reports the setting as `engine.claude_checks`.
+Expect ten to fifteen minutes more on an attempt whose findings go back. Pinned by
+`tests/test-claude-checks.sh`.
 
 ## Questions for a person
 
