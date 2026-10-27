@@ -835,6 +835,7 @@ settle_plan() {
       # Nothing to agree is not a disagreement: the triage called none of the roles.
       [ "$ran" = 0 ] && { rm -f "$ART/degraded.md" 2>/dev/null || true; return 0; }
       printf '%s\n' "Ролі не дійшли згоди: Codex не звів їхні результати в одне рішення. Працюй за результатами ролей нижче і сам назви, де вони розходяться." > "$ART/degraded.md"
+      codex_gap "$IDIR" align "ролі не зведено в одне рішення — Claude працює за результатами ролей"
     fi
     return 0
   fi
@@ -855,6 +856,7 @@ settle_plan() {
     # «Night Shift працює» for as long as the task runs, and «не вдалася» there read as a crash.
     printf '%s\n' "Перед роботою Codex не встиг звірити дві позиції, тож Claude працює за своєю, а позиція Codex лишається під рукою. Це не зупиняє роботу." > "$ART/degraded.md"
     log "adaptive peer: DEGRADED — alignment unavailable; both positions stand, Claude's is the working brief"
+    codex_gap "$IDIR" align "Codex не звірив дві позиції — Claude працює за своєю"
   elif [ -s "$ART/peer-codex.md" ]; then
     cp "$ART/peer-codex.md" "$ART/plan.md"
     printf '%s\n' "Позиції Claude немає${why:+ ($why)} — робота йде з позицією Codex." > "$ART/degraded.md"
@@ -863,9 +865,11 @@ settle_plan() {
     cp "$ART/peer-claude.md" "$ART/plan.md"
     printf '%s\n' "Codex не брав участі в цьому читанні${why:+ — $why}. Працюй далі сам і поверни його до консультації чи перевірки, щойно він стане доступним." > "$ART/degraded.md"
     log "adaptive peer: DEGRADED — no Codex position; continuing with the Claude position alone"
+    codex_gap "$IDIR" preflight "$(cat "$ART/peer-codex.unavailable" 2>/dev/null || echo "позиції Codex немає")"
   else
     printf '%s\n' "Жодна з двох позицій не сформувалася${why:+ — $why}. Воркер отримує початкове повідомлення як є." > "$ART/degraded.md"
     log "adaptive peer: DEGRADED — neither position available; the worker receives the original task"
+    [ -s "$ART/peer-codex.unavailable" ] && codex_gap "$IDIR" preflight "$(cat "$ART/peer-codex.unavailable")"
   fi
   # An engine installed in two halves is worth saying in the same place as everything else that is
   # wrong with this run: the worker reads this file, the app shows it, and a mismatch left only in

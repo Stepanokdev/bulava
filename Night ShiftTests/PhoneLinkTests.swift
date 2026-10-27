@@ -1287,6 +1287,62 @@ nonisolated final class PhoneLinkTests: XCTestCase {
         phone.close()
     }
 
+    /// «Create git and send» from the phone: the engine records the answer once and the SAME message
+    /// goes again — same entry, same text, same attachment, nothing added to the thread. A second
+    /// tap while the engine is still answering used to pass the same check, because the row stayed
+    /// up until `allow-git` returned, and sent the message twice.
+    @MainActor
+    func testCreateGitAndSendFromThePhoneSendsTheSameMessageOnce() async throws {
+        let state = dir.appendingPathComponent("engine-state")
+        let folder = dir.appendingPathComponent("Bulava Game")
+        try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try "the spec".write(to: folder.appendingPathComponent("SPEC.md"), atomically: true, encoding: .utf8)
+        setenv("SUPERVISOR_STATE_DIR", state.path, 1)
+        addTeardownBlock { unsetenv("SUPERVISOR_STATE_DIR") }
+
+        // No folder attached: the retry is real, and stops at «choose a primary folder» instead of
+        // starting a worker — which is how the test sees that it happened, and how many times.
+        let product = model.products.add(name: "Bulava Game")
+        let chat = model.conversations.newChat(for: product.id)
+        let shot = Attachment(kind: .image, filename: "IMG_1206.jpg", relativePath: "IMG_1206.jpg")
+        let asked = model.conversations.appendUser("нехай воно само вирішує, над чим сьогодні попрацювати",
+                                                   productID: product.id, chatID: chat.id, attachments: [shot])
+        model.conversations.updateDelivery(entryID: asked.id, .failed)
+        model.gitConsentBlocked[chat.id] = folder.path
+
+        let (phone, _, _) = try await pairedPhone()
+        _ = try await phone.request("chat.open", ["chatID": chat.id.uuidString])
+        let full = try await phone.next { $0["event"] as? String == "chat" }
+        let entries = try XCTUnwrap((full?["data"] as? [String: Any])?["entries"] as? [[String: Any]])
+        let ask = try XCTUnwrap(entries.compactMap { ($0["asks"] as? [[String: Any]])?.first }
+                                    .first { $0["kind"] as? String == "gitConsent" },
+                                "the git question reaches the phone under the message")
+        let create = try XCTUnwrap((ask["actions"] as? [[String: Any]])?.first?["id"] as? String)
+
+        let first = try await phone.request("action.invoke", ["id": create])
+        XCTAssertEqual(first["ok"] as? Bool, true)
+        let second = try await phone.request("action.invoke", ["id": create])
+        XCTAssertEqual((second["error"] as? [String: Any])?["code"] as? String, LinkErrorCode.stale,
+                       "a second tap while the engine is answering must not send again")
+
+        for _ in 0..<200 where model.chatErrors[chat.id] == nil {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertNotNil(model.chatErrors[chat.id], "the message was sent again after the answer")
+        XCTAssertNil(model.gitConsentBlocked[chat.id])
+
+        let log = (try? String(contentsOf: state.appendingPathComponent("supervisor.log"), encoding: .utf8)) ?? ""
+        XCTAssertEqual(log.components(separatedBy: "[allow-git] consent recorded").count - 1, 1,
+                       "the engine recorded the answer exactly once: \(log)")
+
+        let users = model.conversations.entries(inChat: chat.id).filter { $0.kind == .user }
+        XCTAssertEqual(users.map(\.id), [asked.id], "the same message, not a copy of it")
+        XCTAssertEqual(users.first?.text, asked.text)
+        XCTAssertEqual(users.first?.attachments, [shot], "with its attachment")
+        phone.close()
+    }
+
     // MARK: - The chat's details
 
     /// The Mac's right-hand pane on the phone: this chat's reports, newest first, named by when and

@@ -45,6 +45,7 @@ plog() { printf '%s [pipeline/codex-part %s] %s\n' "$(date '+%F %T')" "$NODE" "$
 
 unavailable() {   # $1 = why, in his words
   printf '%s\n' "$1" > "$ART/.unavailable-$STAGE" 2>/dev/null || true
+  codex_gap "$IDIR" part "$1"
   plog "no patch — $1"
   exit 1
 }

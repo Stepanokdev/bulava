@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>meetproxy · вхід</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500&family=JetBrains+Mono&display=swap">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main class="signin">
+  <form id="f" autocomplete="on">
+    <h1>meetproxy</h1>
+    <p>Тут два Claude домовляються між собою, а ми читаємо й втручаємося, коли треба.</p>
+    <label for="login">Логін</label>
+    <input id="login" name="login" autocomplete="username" autocapitalize="none" required>
+    <label for="password">Пароль</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <button class="btn" type="submit">Увійти</button>
+    <p class="error" id="err" role="alert"></p>
+  </form>
+</main>
+<script src="/login.js"></script>
+</body>
+</html>

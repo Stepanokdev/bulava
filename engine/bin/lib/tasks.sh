@@ -210,7 +210,7 @@ task_state_for() {   # $1=disposition $2=declared result → state
 # Called by the review gate when it settles a run (`mark_done`) and by the server's Codex policy.
 # The state is on disk before anyone is told about it, so whatever a notification says can be read.
 task_on_terminal() {   # $1=instance dir $2=disposition
-  local idir="$1" disp="${2:-}" tid result state reason receipt repos q gen rid did
+  local idir="$1" disp="${2:-}" tid result state reason receipt repos q gen rid did cx
   tid="$(cat "$idir/task-id" 2>/dev/null || true)"
   [ -n "$tid" ] && task_exists "$tid" || return 0
   # Which worker this verdict is about, read before anything is published: once the state says
@@ -235,6 +235,10 @@ task_on_terminal() {   # $1=instance dir $2=disposition
   [ -n "$repos" ] || repos="$(repos_state_json "$idir" "$(cat "$idir/project" 2>/dev/null)" 2>/dev/null || echo '[]')"
   case "$repos" in '['*) ;; *) repos='[]' ;; esac
   q="$(jq -c '.question // null' "$idir/outcome.json" 2>/dev/null || echo null)"
+  # Whether Codex took part in all of this attempt, so a bridge can say so without opening the app:
+  # a task that passed with Codex missing from a step is not reported as an ordinary pass.
+  cx="$(codex_participation "$idir" 2>/dev/null)"
+  case "$cx" in '{'*) ;; *) cx='{"status":"full"}' ;; esac
   [ "$state" = needs_input ] || q=null
   task_material_save "$tid" "$idir"
   # What a passing review saw in each repository: the next attempt has work to review there only
@@ -246,14 +250,16 @@ task_on_terminal() {   # $1=instance dir $2=disposition
         else {} end))
     | .last_receipt = $rc | .question = $q
     | .last_outcome = $oc
+    | .codex = $cx
     | .attempts |= (if length == 0 then . else
-        (.[-1] |= (.ended_at = $_now | .result = $res | .review = $disp | .disposition = $disp))
+        (.[-1] |= (.ended_at = $_now | .result = $res | .review = $disp | .disposition = $disp | .codex = $cx))
       end)' \
     --arg st "$state" --arg why "$reason" --argjson repos "$repos" --argjson rc "$receipt" \
     --argjson q "$q" --arg res "$result" --arg disp "$disp" \
+    --argjson cx "$cx" \
     --argjson oc "$(jq -c . "$idir/outcome.json" 2>/dev/null || echo null)" || return 1
-  task_event "$tid" attempt-ended "$(jq -nc --arg d "$disp" --arg r "$result" --arg why "$reason" \
-      '{disposition:$d, result:(if $r == "" then null else $r end), reason:$why}')"
+  task_event "$tid" attempt-ended "$(jq -nc --arg d "$disp" --arg r "$result" --arg why "$reason" --argjson cx "$cx" \
+      '{disposition:$d, result:(if $r == "" then null else $r end), reason:$why, codex:$cx}')"
   task_notify "$tid"
   [ "${SUPERVISOR_PROFILE:-}" = server ] && task_release_session "$idir" "$gen"
   return 0

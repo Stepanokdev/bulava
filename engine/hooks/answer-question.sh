@@ -335,6 +335,7 @@ $user_answer
 Це оборотне рішення — воно твоє. Обери найбезпечніший оборотний варіант, коротко зафіксуй його в підсумку і рухайся далі; не зупиняй через це роботу.
 Якщо, придивившись, воно виявиться незворотним або таким, що потребує чужих повноважень — не роби його, а заверши через report-outcome як blocked і назви рівно одну дію, яка його розблокує."
       decision="degraded-auto"
+      [ -n "$IDIR" ] && codex_gap "$IDIR" question "Claude вирішив сам: $_why_degraded"
     else
     case "$reason_code" in
       missing_authority|irreversible|product_fork|scope_expansion|no_safe_probe)

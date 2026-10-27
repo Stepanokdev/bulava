@@ -105,6 +105,7 @@ decline() {   # $1=human reason
     # And the question itself, so it is asked again when Codex comes back instead of depending on
     # Claude remembering it four hours and thirty messages later.
     codex_owe_consultation "$IDIR" "$n" "$QUESTION" "$1"
+    codex_gap "$IDIR" consultation "$1"
   fi
   exit 75
 }
@@ -224,6 +225,7 @@ if ! printf '%s' "$prompt" | text_is_utf8; then
     "$(date '+%F %T')" "$n" >> "$LOG" 2>/dev/null || true
   run_still_ours "$IDIR" && journal_event "$IDIR" peer-consultation-failed "consultation $n: $reason" \
     "$(jq -nc --argjson n "$n" '{source:"worker",call:$n,status:"refused"}')"
+  run_still_ours "$IDIR" && codex_gap "$IDIR" consultation "$reason"
   exit 5
 fi
 
@@ -324,6 +326,7 @@ echo "Працюй далі на доказах з репозиторію й п�
 printf '%s [consult-codex] consultation %s %s — %s\n' "$(date '+%F %T')" "$n" "$status" "$reason" >> "$LOG" 2>/dev/null || true
 run_still_ours "$IDIR" && journal_event "$IDIR" peer-consultation-failed "consultation $n: $reason" \
   "$(jq -nc --argjson n "$n" --arg s "$status" '{source:"worker",call:$n,status:$s}')"
+run_still_ours "$IDIR" && codex_gap "$IDIR" consultation "$(printf '%s' "$reason" | head -1)"
 case "$status" in
   empty)   exit 3 ;;
   timeout) exit 4 ;;

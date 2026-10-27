@@ -148,7 +148,7 @@ review_stage() { # $1=preparing|verifying|reviewing
 BASE_SHA=""
 BASE_SHA="$(read_base_sha "${IDIR_SCOPE:-}")"
 PLAN_TEXT=""
-[ -n "${IDIR_SCOPE:-}" ] && [ -f "$IDIR_SCOPE/plan.md" ] && PLAN_TEXT="$(head -c 6000 "$IDIR_SCOPE/plan.md" 2>/dev/null)"
+[ -n "${IDIR_SCOPE:-}" ] && [ -f "$IDIR_SCOPE/plan.md" ] && PLAN_TEXT="$(clip_utf8 6000 < "$IDIR_SCOPE/plan.md" 2>/dev/null)"
 
 CONTRACT_TEXT=""
 CHALLENGES_TEXT=""
@@ -214,7 +214,7 @@ fi
 FINDINGS_BLOCK=""
 if [ -n "${IDIR_SCOPE:-}" ]; then
   _wf="$(findings_json "$IDIR_SCOPE" "$(cat "$IDIR_SCOPE/run-id" 2>/dev/null || true)" 2>/dev/null \
-        | jq -r '.[] | select(.kind != "blocker_resolved") | "- [\(.kind)] \(.text)"' 2>/dev/null | head -c 3000)"
+        | jq -r '.[] | select(.kind != "blocker_resolved") | "- [\(.kind)] \(.text)"' 2>/dev/null | clip_utf8 3000)"
   [ -n "$_wf" ] && FINDINGS_BLOCK="
 WHAT THE WORKER REPORTED ALONG THE WAY (its own findings — claims to weigh, not verdicts):
 $_wf
@@ -314,9 +314,18 @@ mark_done() {  # $1 = disposition, [$2] = why, in a sentence the person reads
     fi
   fi
   clear_progress
+  # Whether Codex took part in all of it, said with the verdict rather than left in a note that
+  # dies with the run. A pass with Codex missing from a step is still a pass — but the run view,
+  # the receipt, the journal and a server's task record all say which step and why.
+  CODEX_PART='{"status":"full"}'; _cpn=""
+  if [ -n "${IDIR_SCOPE:-}" ]; then
+    CODEX_PART="$(codex_participation "$IDIR_SCOPE")"
+    _cpn="$(codex_participation_note "$CODEX_PART")"
+    [ -n "$_cpn" ] && log "codex participation: $_cpn"
+  fi
   if [ -n "${IDIR_SCOPE:-}" ]; then
     if [ "$disposition" = passed ] && [ -n "${review:-}" ]; then
-      gate_event "$GATE_REVIEW_STAGE" verified "Прийнято"
+      gate_event "$GATE_REVIEW_STAGE" verified "Прийнято${_cpn:+ — $_cpn}"
     elif [ "${REVIEW_STAGE_OPEN:-0}" = 1 ]; then
       # A review that ended any other way ends on the run view too. It used to be closed only by a
       # pass: a BLOCKED verdict parked the run for the director and left "Codex review · working"
@@ -327,7 +336,8 @@ mark_done() {  # $1 = disposition, [$2] = why, in a sentence the person reads
         *)    gate_event "$GATE_REVIEW_STAGE" waiting "${why:-$stopped}" ;;
       esac
     fi
-    gate_event run "$disposition" "$why" "$(jq -nc --arg d "$disposition" '{disposition:$d}')"
+    gate_event run "$disposition" "$why${_cpn:+${why:+ — }$_cpn}" \
+      "$(jq -nc --arg d "$disposition" --argjson cx "$CODEX_PART" '{disposition:$d, codex:$cx}')"
   fi
   [ -n "${DONE_FILE:-}" ] && printf '%s\n' "$disposition" > "$DONE_FILE"
   # A verdict means Codex answered, so whatever count of its absence was running is over.
@@ -340,7 +350,8 @@ mark_done() {  # $1 = disposition, [$2] = why, in a sentence the person reads
   # What the tree looked like when this was decided, so an identical stop later is not a new review.
   [ -n "${IDIR_SCOPE:-}" ] && { work_tree_digest "$cwd" 2>/dev/null || true; } > "$IDIR_SCOPE/done-digest" 2>/dev/null
   rm -f "$STATE_DIR/misdeclared-$RUN_KEY" "$STATE_DIR/handoffs-$RUN_KEY" 2>/dev/null || true
-  journal_event "${IDIR_SCOPE:--}" terminal "$disposition" "$(jq -nc --arg d "$disposition" '{disposition:$d, source:"gate"}')"
+  journal_event "${IDIR_SCOPE:--}" terminal "$disposition" \
+    "$(jq -nc --arg d "$disposition" --argjson cx "$CODEX_PART" '{disposition:$d, source:"gate", codex:$cx}')"
   if [ -n "${IDIR_SCOPE:-}" ] && [ -f "$IDIR_SCOPE/dispatch.json" ]; then
     _did="$(jq -r '.id // empty' "$IDIR_SCOPE/dispatch.json" 2>/dev/null || true)"
     if [ -n "$_did" ]; then
@@ -395,7 +406,7 @@ restamp_receipt() {  # $1 = passed | debt | needs-user | scope_violation
 
   local why=""
   if [ "$review" != passed ] && [ -f "$idir/reports/review.json" ]; then
-    why="$(jq -r '.findings // ""' "$idir/reports/review.json" 2>/dev/null | head -c 4000)"
+    why="$(jq -r '.findings // ""' "$idir/reports/review.json" 2>/dev/null | clip_utf8 4000)"
   fi
 
   local rid findings
@@ -407,8 +418,10 @@ restamp_receipt() {  # $1 = passed | debt | needs-user | scope_violation
   repos="$(repos_state_json "$idir" "$(run_project_dir "$idir" "${cwd:-$PWD}")" 2>/dev/null)"
   case "$repos" in '['*) ;; *) repos='[]' ;; esac
   jq -c --arg rv "$review" --arg why "$why" --argjson f "${findings:-[]}" --argjson repos "$repos" \
+        --argjson cx "${CODEX_PART:-null}" \
         --arg at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
-     '.review = $rv | .review_why = $why | .findings = $f | .repos = $repos | .reviewed_at = $at' \
+     '.review = $rv | .review_why = $why | .findings = $f | .repos = $repos | .reviewed_at = $at
+      | (if $cx == null then . else .codex = $cx end)' \
      "$src" > "$src.tmp" 2>/dev/null \
     && mv -f "$src.tmp" "$src" 2>/dev/null || { rm -f "$src.tmp" 2>/dev/null; return 0; }
   python3 "$BIN_DIR/receipt-render.py" "$idir/report/report.html" < "$src" >/dev/null 2>&1 || true
@@ -836,6 +849,102 @@ if [ "$rounds" -ge "$SUPERVISOR_MAX_ROUNDS_HARD" ]; then
   exit 0
 fi
 
+# The prompt, made fit to be an argument — and the parts that were not, named.
+#
+# `codex exec` refuses the whole call when an argument is not UTF-8, in its argument parser,
+# before a session opens. Every limit in this file now cuts on a character boundary, so what can
+# still be broken is text that arrived that way: the tail of a build log, a file name in the
+# diffstat. Refusing to review over a byte in somebody else's output is the very outcome being
+# fixed — a run Codex never read — so each broken byte is written out as `\xHH`, losslessly, the
+# reviewer is told which parts carried them, and the log says the same.
+#
+# If the repair itself does not come back as valid text, nothing is sent: an empty or still-broken
+# prompt handed to a reviewer is a verdict about nothing. That stops the run once, locally, like a
+# refused call — waiting for Codex would not change it either.
+review_prompt_fit() {   # $1=name of the prompt variable, then the names of the parts it was built from
+  local _pv="$1" _bad _fixed; shift
+  printf '%s' "${!_pv}" | text_is_utf8 && return 0
+  _bad="$(utf8_bad_vars "$@" | tr '\n' ' ' | sed 's/ $//')"
+  if ! _fixed="$(printf '%s' "${!_pv}" | utf8_repair)" || [ -z "$_fixed" ] \
+     || ! printf '%s' "$_fixed" | text_is_utf8; then
+    log "the review prompt is not valid UTF-8 (in: ${_bad:-a part not listed}) and could not be repaired — no reviewer called"
+    review_rc=0; review_cause="текст для рецензента містить зіпсовані байти (${_bad:-джерело не визначено}), і виправити їх не вдалося"
+    review_refused_park "Codex не запускався: $review_cause. Рецензента не викликано — перевір ці файли прогону."
+  fi
+  printf -v "$_pv" '%s' "$_fixed
+NOTE FROM THE ENGINE: some bytes in this prompt were not valid UTF-8 (in: ${_bad:-a part not identified}). Each is written out as \\xHH exactly where it was; treat those spots as damaged source text, not as content to judge."
+  log "the review prompt was not valid UTF-8 (in: ${_bad:-a part not listed}) — broken bytes escaped as \\xHH, review goes ahead"
+  [ -n "${IDIR_SCOPE:-}" ] && journal_event "$IDIR_SCOPE" review-prompt-repaired \
+    "Текст для рецензента мав зіпсовані байти (${_bad:-джерело не визначено}) — їх записано як \\xHH" \
+    "$(jq -nc --arg p "$_bad" '{source:"gate", parts:$p}')" 2>/dev/null || true
+  return 0
+}
+
+# One reviewer call, for the report and for the code alike: who reads, what it said, how it ended,
+# and the line of stderr that says why. Sets review, review_rc, review_cause, review_refused.
+#
+# stderr used to go straight onto the end of the shared codex.log, with no time and no run on it —
+# so the morning the gate parked a run five times over "код 2", the reason sat in that log as five
+# anonymous blocks nobody could match to an attempt. Each call now has its own file: its first
+# meaningful line goes into the reason, the whole of it stays in the instance as review-stderr.log,
+# and the shared log gets it under a header that says whose it was.
+review_call() {   # $1=prompt [$2=1 to let Codex search the web]
+  local _err _tok
+  _err="$(mktemp "${TMPDIR:-/tmp}/review-stderr.XXXXXX" 2>/dev/null)" || _err=""
+  review_rc=0; review_cause=""; review_refused=0
+  _tok="$(tree_guard_begin "$cwd")"
+  if [ "${REVIEWER:-codex}" = claude ]; then
+    review="$(claude_peer_readonly 480 "$cwd" "$1" 2>"${_err:-/dev/null}")"; review_rc=$?
+    if tree_guard_touched "$cwd" "$_tok"; then
+      log "the Claude stand-in TOUCHED the working tree — its review is void"
+      review=""; review_rc=99
+    fi
+  else
+    review=$(cd "$cwd" 2>/dev/null && perl -e 'alarm shift; exec @ARGV' 480 \
+      codex exec $(codex_effort_flags) --sandbox read-only --skip-git-repo-check \
+      $([ "${2:-0}" = 1 ] && codex_web_search_flags) \
+      "$1" </dev/null 2>"${_err:-/dev/null}"); review_rc=$?
+  fi
+  [ -n "$_err" ] || return 0
+  review_cause="$(stderr_cause "$_err")"
+  cli_refused_call "$review_rc" "$_err" && review_refused=1
+  if [ -s "$_err" ]; then
+    { printf '%s [review-gate] [%s] run %s — %s exited %s\n' "$(date '+%F %T')" \
+        "$(basename "${IDIR_SCOPE:-$cwd}")" "$RUN_KEY" "${REVIEWER:-codex}" "$review_rc"
+      cat "$_err"; } >> "$CODEX_LOG" 2>/dev/null || true
+  fi
+  [ -n "${IDIR_SCOPE:-}" ] && cp -f "$_err" "$IDIR_SCOPE/review-stderr.log" 2>/dev/null
+  rm -f "$_err" 2>/dev/null
+  return 0
+}
+
+# The CLI refused the call itself, so this is not a reviewer that is away.
+#
+# It used to be: no verdict meant "unreachable", which parked the run and recorded a pause on
+# Codex. The watchdog then read a healthy meter, said "Codex is available again", woke the worker,
+# and the same arguments were refused the same way — five times, then the operator, with "код 2"
+# as the whole explanation. Nothing about Codex's availability can change this answer, so nothing
+# waits for it: no pause, no owed review, no unreachable count. The run stops once, says what the
+# CLI said, and points at the full log.
+#
+# A pause or a server's away-clock left by an EARLIER attempt of this run goes too: either would keep
+# the watchdog reconciling a Codex wall that is not the reason any more, and on a server the clock
+# would later end an already-settled task a second time as `codex_unavailable`.
+review_refused_park() {   # [$1=the sentence to say instead of the CLI's refusal]
+  local why who="${REVIEWER:-codex}"
+  why="${1:-$who не запустився: CLI відхилив сам виклик (код $review_rc)${review_cause:+ — $review_cause}. Це не недоступність рецензента, очікування цього не виправить — потрібне оновлення CLI або рушія.${IDIR_SCOPE:+ Повний лог: $IDIR_SCOPE/review-stderr.log}}"
+  if [ -n "${IDIR_SCOPE:-}" ]; then
+    [ "$(pause_provider "$IDIR_SCOPE" 2>/dev/null)" = codex ] && rm -f "$(pause_file "$IDIR_SCOPE")" 2>/dev/null
+    rm -f "$IDIR_SCOPE/resume-pending" "$(codex_away_file "$IDIR_SCOPE")" 2>/dev/null || true
+  fi
+  log "reviewer call refused before it started (rc=$review_rc: ${review_cause:-no cause printed}) — not unreachable; no pause, parked for the operator"
+  [ -n "${IDIR_SCOPE:-}" ] && journal_event "$IDIR_SCOPE" review-refused "$why" \
+    "$(jq -nc --argjson rc "$review_rc" --arg c "$review_cause" '{source:"gate", rc:$rc, cause:$c}')" 2>/dev/null || true
+  emit_review_json BLOCKED N/A needs-user "$why"
+  mark_done needs-user "$why"
+  exit 0
+}
+
 # A research pipeline's report review. The worker was asked for a report and changed no code, so
 # there is no diff to read and nothing to build: the reviewer reads the REPORT, against the task and
 # against what this pipeline requires of it. Unreachable is parked like any review; FAIL goes back
@@ -863,9 +972,9 @@ if [ "${REPORT_REVIEW:-0}" = 1 ] && [ -n "${IDIR_SCOPE:-}" ]; then
   fi
   _crit=""
   _cf="$(gate_opt .reportCriteria)"
-  [ -n "$_cf" ] && [ -f "$_cf" ] && _crit="$(head -c 8000 "$_cf" 2>/dev/null)"
+  [ -n "$_cf" ] && [ -f "$_cf" ] && _crit="$(clip_utf8 8000 < "$_cf" 2>/dev/null)"
   [ -n "$_crit" ] || _crit="Every factual claim has a source, and the source really supports it. The report answers every question the task asked. Facts are kept apart from assumptions and recommendations."
-  _task="$(jq -r '.task // ""' "$IDIR_SCOPE/dispatch.json" 2>/dev/null | head -c 6000)"
+  _task="$(jq -r '.task // ""' "$IDIR_SCOPE/dispatch.json" 2>/dev/null | clip_utf8 6000)"
   _text="$(python3 "$BIN_DIR/pipeline-tool.py" report-text "$_report" --max 60000 2>/dev/null)"
   rprompt="You are reviewing a RESEARCH REPORT, not code. The worker was asked to research a question and write
 a report; it changed no product code. Judge the report only. Round $((rounds + 1)) of at most $_rmax.
@@ -895,17 +1004,10 @@ saying what is wrong and what would fix it, most important first."
   if [ "${REVIEWER:-codex}" != claude ] && [ "$(codex_fallback_choice "${IDIR_SCOPE:-}" 2>/dev/null || true)" = claude ]; then
     REVIEWER=claude
   fi
-  review_rc=0
-  _tree_token="$(tree_guard_begin "$cwd")"
-  if [ "${REVIEWER:-codex}" = claude ]; then
-    review="$(claude_peer_readonly 480 "$cwd" "$rprompt" 2>>"$CODEX_LOG")"; review_rc=$?
-    tree_guard_touched "$cwd" "$_tree_token" && { review=""; review_rc=99; }
-  else
-    review=$(cd "$cwd" 2>/dev/null && perl -e 'alarm shift; exec @ARGV' 480 \
-      codex exec $(codex_effort_flags) --sandbox read-only --skip-git-repo-check $(codex_web_search_flags) \
-      "$rprompt" </dev/null 2>>"$CODEX_LOG"); review_rc=$?
-  fi
+  review_prompt_fit rprompt _task _crit _text
+  review_call "$rprompt" 1
   [ "$review_rc" != 0 ] && review=""
+  [ "$review_refused" = 1 ] && review_refused_park
   _rhead="$(printf '%s\n' "$review" | head -8)"
   _rverdict=$(printf '%s\n' "$_rhead" | grep -m1 -oE 'VERDICT: *(PASS|FAIL)' | grep -oE 'PASS|FAIL' || echo "")
   if [ -z "$review" ]; then
@@ -914,12 +1016,14 @@ saying what is wrong and what would fix it, most important first."
        '{reason:"the report reviewer could not be reached", session_id:$sid, at:$at}' \
        > "$IDIR_SCOPE/review-pending.tmp" 2>/dev/null \
       && mv -f "$IDIR_SCOPE/review-pending.tmp" "$IDIR_SCOPE/review-pending" 2>/dev/null
-    codex_owe "$IDIR_SCOPE" review "report reviewer exited $review_rc"
-    gate_event gate.reportReview waiting "Рецензент звіту недоступний — чекаю" "$(jq -nc --argjson rc "$review_rc" '{reason:"unreachable", rc:$rc}')"
-    log "report review not reached (rc=$review_rc) — parked, no round counted"
+    codex_owe "$IDIR_SCOPE" review "report reviewer exited $review_rc${review_cause:+: $review_cause}"
+    gate_event gate.reportReview waiting "Рецензент звіту недоступний — чекаю${review_cause:+ ($review_cause)}" \
+      "$(jq -nc --argjson rc "$review_rc" --arg c "$review_cause" '{reason:"unreachable", rc:$rc, cause:$c}')"
+    log "report review not reached (rc=$review_rc${review_cause:+: $review_cause}) — parked, no round counted"
     exit 0
   fi
   if [ "${REVIEWER:-codex}" = claude ]; then
+    codex_gap "$IDIR_SCOPE" review "звіт перевіряв Claude — директор дозволив замінити Codex"
     review="🌙 Перевіряв Claude замість Codex — ти сам це дозволив, бо в Codex не було вікна.
 
 $review"
@@ -959,13 +1063,13 @@ recent_user_turns=""
 if [ -f "$transcript" ]; then
   last_msg=$(tail -r "$transcript" 2>/dev/null | jq -r 'select(.message.role=="assistant")
     | .message.content[]? | select(.type=="text") | .text' 2>/dev/null \
-    | head -c 4000)
+    | clip_utf8 4000)
   recent_user_turns=$(jq -r '
       select(.type=="user")
       | .message.content as $content
       | select(($content | type)=="string")
       | select(($content | startswith("Stop hook feedback:")) | not)
-      | $content' "$transcript" 2>/dev/null | tail -n 6 | head -c 8000)
+      | $content' "$transcript" 2>/dev/null | tail -n 6 | clip_utf8 8000)
 fi
 
 # The run's work is not only what is in `cwd`.
@@ -1273,20 +1377,13 @@ if [ "${REVIEWER:-codex}" != claude ] \
    && [ "$(codex_fallback_choice "${IDIR_SCOPE:-}" 2>/dev/null || true)" = claude ]; then
   REVIEWER=claude
 fi
-review_rc=0
-_tree_token="$(tree_guard_begin "$cwd")"
-if [ "${REVIEWER:-codex}" = claude ]; then
-  log "reviewing with Claude in Codex's place (director's decision)"
-  review="$(claude_peer_readonly 480 "$cwd" "$prompt" 2>>"$CODEX_LOG")"; review_rc=$?
-  if tree_guard_touched "$cwd" "$_tree_token"; then
-    log "the Claude stand-in TOUCHED the working tree — its review is void"
-    review=""; review_rc=99
-  fi
-else
-  review=$(cd "$cwd" 2>/dev/null && perl -e 'alarm shift; exec @ARGV' 480 \
-    codex exec $(codex_effort_flags) --sandbox read-only --skip-git-repo-check \
-    "$prompt" </dev/null 2>>"$CODEX_LOG"); review_rc=$?
-fi
+[ "${REVIEWER:-codex}" = claude ] && log "reviewing with Claude in Codex's place (director's decision)"
+# Checked BEFORE either reviewer: the stand-in takes broken text without complaint, so a check
+# that only Codex's parser made would let the same bytes through whenever Claude was reading.
+review_prompt_fit prompt persona PLAN_TEXT CONTRACT_TEXT CHALLENGES_TEXT CHALLENGE_BLOCK OWED_BLOCK FINDINGS_BLOCK \
+  CHECKS_BLOCK last_msg recent_user_turns diff_summary verify_json verify_fail_logs
+review_call "$prompt"
+[ "$review_refused" = 1 ] && review_refused_park
 
 # A call that failed has no verdict, whatever it managed to print on the way down.
 #
@@ -1309,6 +1406,7 @@ verdict=$(printf '%s\n' "$review_head" | grep -m1 -oE 'VERDICT: *(PASS|FAIL)' | 
 # Who actually read it. A substitution nobody was told about is worse than the wall it went round,
 # and this line is what the worker, the report and the receipt all end up quoting.
 if [ "${REVIEWER:-codex}" = claude ] && [ -n "$review" ]; then
+  [ -n "$state" ] && codex_gap "${IDIR_SCOPE:-}" review "код перевіряв Claude — директор дозволив замінити Codex"
   review="🌙 Перевіряв Claude замість Codex — ти сам це дозволив, бо в Codex не було вікна.
 
 $review"
@@ -1376,7 +1474,7 @@ if [ -z "$review" ] || [ -z "$state" ]; then
          else why="відповідь є, але стан у ній нечитабельний"; fi ;;
     99)  unreachable=1; why="рецензент змінив робоче дерево — перевірку відкинуто як недійсну" ;;
     142) unreachable=1; why="рецензент ($_who_reviewed) не відповів за 480 с" ;;
-    *)   unreachable=1; why="рецензент ($_who_reviewed) зупинився з кодом $review_rc" ;;
+    *)   unreachable=1; why="рецензент ($_who_reviewed) зупинився з кодом $review_rc${review_cause:+ — $review_cause}" ;;
   esac
 
   if [ "$unreachable" = 0 ]; then

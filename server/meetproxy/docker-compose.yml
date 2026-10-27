@@ -1,0 +1,20 @@
+services:
+  app:
+    build: .
+    container_name: meetproxy
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    networks:
+      - web
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.meetproxy.rule=Host(`meetproxy.stepanok.com`)"
+      - "traefik.http.routers.meetproxy.entrypoints=websecure"
+      - "traefik.http.routers.meetproxy.tls.certresolver=letsencrypt"
+      - "traefik.http.services.meetproxy.loadbalancer.server.port=3000"
+
+networks:
+  web:
+    external: true

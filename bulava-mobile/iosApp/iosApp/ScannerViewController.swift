@@ -33,11 +33,23 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        if session.isRunning { session.stopRunning() }
+        closed = true
+        stopCamera()
         if !delivered { delivered = true; onResult(nil) }
     }
 
+    /// Gone from the screen: a permission answer or a start that comes after this opens nothing.
+    private var closed = false
+    /// The capture session is started and stopped off the main thread, one call after another.
+    private let cameraQueue = DispatchQueue(label: "com.stepanok.bulava.scanner")
+
+    private func stopCamera() {
+        let session = self.session
+        cameraQueue.async { if session.isRunning { session.stopRunning() } }
+    }
+
     private func startCamera() {
+        guard !closed else { return }
         guard let device = AVCaptureDevice.default(for: .video),
               let input = try? AVCaptureDeviceInput(device: device), session.canAddInput(input) else {
             showDenied()
@@ -53,7 +65,8 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
         preview.videoGravity = .resizeAspectFill
         preview.frame = view.bounds
         view.layer.insertSublayer(preview, at: 0)
-        DispatchQueue.global(qos: .userInitiated).async { self.session.startRunning() }
+        let session = self.session
+        cameraQueue.async { session.startRunning() }
     }
 
     func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput objects: [AVMetadataObject], from connection: AVCaptureConnection) {
@@ -63,7 +76,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
             .first(where: { $0.contains("#") || $0.trimmingCharacters(in: .whitespaces) == "bulava://demo" }) else { return }
         delivered = true
         UINotificationFeedbackGenerator().notificationOccurred(.success)
-        session.stopRunning()
+        stopCamera()
         onResult(code)
         dismiss(animated: true)
     }
