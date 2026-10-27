@@ -99,13 +99,14 @@ if [ -n "$command" ]; then
   _probe="$(printf '%s' "$command" | sed -e 's/2>>[^ ]*//g' -e 's/2>[^ ]*//g')"
   #
   # The verbs are matched as words. As substrings they caught `grep -rln` as `ln ` and `add ` as
-  # `dd ` — reads refused for containing the letters of a write.
+  # `dd ` — reads refused for containing the letters of a write. A word still counts when it is
+  # the end of a path or escaped: `/bin/rm` and `\rm` are the same verb.
   _modifies=0
   case "$_probe" in
     *">"*|*truncate*|*"sed -i"*|*python*|*perl*|*ruby*|*node*) _modifies=1 ;;
   esac
   printf '%s' "$_probe" \
-    | grep -qE '(^|[[:space:];&|(`])(tee|rm|mv|cp|touch|ln|install|dd|chmod)([[:space:]]|$)' && _modifies=1
+    | grep -qE '(^|[[:space:];&|(`/\\])(tee|rm|mv|cp|touch|ln|install|dd|chmod)([[:space:]]|$)' && _modifies=1
   # There is deliberately no "but this command mentions report-finding, so let it through" clause.
   # It was written and then removed: naming the sanctioned handles as an exemption turns them into
   # a password — `echo x > $IDIR/codex-fallback.json # report-finding` walks straight past it. They
