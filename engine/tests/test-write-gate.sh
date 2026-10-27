@@ -190,6 +190,39 @@ bashgate(){ printf '{"tool_name":"Bash","cwd":"%s","tool_input":{"command":%s}}'
 check "the worker cannot add a folder to the list itself" 'is_deny "$(bashgate "echo /etc >> $IDIR/writable-dirs")"'
 SUPERVISOR_EXTRA_DIRS_FILE="" record_writable_dirs "$IDIR"
 check "a launch without the app's list clears it"         '[ ! -e "$IDIR/writable-dirs" ]'
+# The engine is worked on from its own repository, and its code and tests name the run's control
+# files all the time. Naming one is not reaching for it: the gate refused a script that edited a
+# TEST, and a grep whose flags spelled `ln`.
+denied(){ is_deny "$1"; }
+check "a script editing the engine's own test is not a forgery" '! denied "$(bashgate "python3 patch.py tests/test-x.sh  # adds a check on codex-owed.json")"'
+check "a read whose flags spell a verb is a read"         '! denied "$(bashgate "grep -rln codex-fallback.json tests | head")"'
+check "a word that merely contains a verb is not one"     '! denied "$(bashgate "grep -q add $IDIR/review-pending")"'
+check "…but the same name inside the run's folder is"     'denied "$(bashgate "python3 -c x > $IDIR/codex-owed.json")"'
+check "and through the variable the worker is given"      'denied "$(bashgate "printf x > \"\$IDIR/codex-fallback.json\"")"'
+check "and through the state directory"                   'denied "$(bashgate "cd ~/.claude/supervisor/instances/x && rm review-pending")"'
+# A verb is still a verb when it is spelled as a path or escaped past an alias.
+check "/bin/rm on the run's state is a write"              'denied "$(bashgate "/bin/rm \\"$IDIR/review-pending\\"")"'
+check "/bin/cp over the fallback is a write"               'denied "$(bashgate "/bin/cp /tmp/answer \\"$IDIR/codex-fallback.json\\"")"'
+check "\\rm past an alias is a write"                      'denied "$(bashgate "\\rm $IDIR/paused-for-limit.json")"'
+check "/usr/bin/tee into the state is a write"             'denied "$(bashgate "echo x | /usr/bin/tee $IDIR/codex-owed.json")"'
+check "and grep -rln over the same names is still a read"  '! denied "$(bashgate "grep -rln review-pending $IDIR")"'
+# Every spelling of a write the gate has ever refused, against every control file: narrowing the
+# verbs to words must not have let one of them through. Measured against the gate before the
+# narrowing, 324 of 324 were refused by both.
+_leaks=""
+for _f in codex-fallback.json codex-decision-answer.json codex-owed.json review-pending paused-for-limit.json \
+          ask-user.json resume-refused writable-dirs outcome.json answer.json run-env plain-folder; do
+  for _c in "echo x > $IDIR/$_f" "rm -f $IDIR/$_f" "/bin/rm $IDIR/$_f" "\\rm $IDIR/$_f" "cp /tmp/a $IDIR/$_f" \
+            "/bin/cp /tmp/a \"$IDIR/$_f\"" "/bin/mv /tmp/a $IDIR/$_f" "/usr/bin/touch $IDIR/$_f" \
+            "ln -sf /tmp/a $IDIR/$_f" "echo x | /usr/bin/tee -a $IDIR/$_f" "dd if=/dev/zero of=$IDIR/$_f" \
+            "chmod 000 $IDIR/$_f" "install -m 644 /tmp/a $IDIR/$_f" "sed -i '' s/a/b/ $IDIR/$_f" \
+            "python3 -c \"open('$IDIR/$_f','w')\"" "truncate -s 0 $IDIR/$_f" "printf x &>$IDIR/$_f" \
+            "cd $IDIR && rm $_f" "(rm $IDIR/$_f)" "\`rm $IDIR/$_f\`" "true&&rm $IDIR/$_f" "true;cp /tmp/a $IDIR/$_f"; do
+    denied "$(bashgate "$_c")" || _leaks="$_leaks
+      $_c"
+  done
+done
+check "no spelling of a write reaches a control file${_leaks:+:$_leaks}" '[ -z "$_leaks" ]'
 MEM="$HOME/.claude/projects/$(printf '%s' "$CPROJ" | sed 's/[^A-Za-z0-9]/-/g')/memory"
 check "Claude's own memory for this project is writable"  'is_allow "$(gate "$MEM/note.md")"'
 check "another project's memory is not"                   'is_deny "$(gate "$HOME/.claude/projects/-elsewhere/memory/note.md")"'
