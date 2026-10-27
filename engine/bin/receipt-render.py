@@ -127,6 +127,40 @@ if review_why and review in ("failed", "debt"):
     card(t("What the review said", "Що сказала перевірка", "Что сказала проверка"),
          f'<pre class="task">{esc(review_why[:4000])}</pre>', accent=True)
 
+# Where Codex was meant to take part and did not. Each of those steps carried on with Claude alone,
+# on purpose — and until this card the result never said so: a pass read the same whether Codex had
+# prepared, advised and reviewed, or only reviewed.
+codex = R.get("codex") or {}
+gaps = codex.get("gaps") or []
+if codex.get("status") in ("partial", "review_by_claude") and gaps:
+    STAGE = {
+        "preflight": t("Preparation", "Підготовка", "Подготовка"),
+        "align": t("Comparing the two positions", "Звірка позицій", "Сверка позиций"),
+        "consultation": t("Consultation", "Консультація", "Консультация"),
+        "part": t("Codex's part of the code", "Частина коду від Codex", "Часть кода от Codex"),
+        "question": t("A question from the worker", "Питання воркера", "Вопрос воркера"),
+        "review": t("Final review", "Фінальне ревʼю", "Финальное ревью"),
+    }
+    items = "".join(
+        f'<li><span class="tag">{esc(STAGE.get(g.get("stage"), g.get("stage") or ""))}'
+        f'{esc(" ×" + str(g.get("count")) if (g.get("count") or 1) > 1 else "")}</span>'
+        f'<span>{esc(g.get("reason") or "")}</span></li>'
+        for g in gaps[:20]
+    )
+    head = (t("The final review was done by Claude, not Codex.",
+              "Фінальне ревʼю зробив Claude, а не Codex.",
+              "Финальное ревью сделал Claude, а не Codex.")
+            if codex.get("status") == "review_by_claude" else
+            t("Codex reviewed the result but missed these steps; Claude went on alone.",
+              "Codex перевірив результат, але цих кроків не робив — Claude пройшов їх сам.",
+              "Codex проверил результат, но этих шагов не делал — Claude прошёл их сам.")
+            if review == "passed" else
+            t("Codex missed these steps; Claude went on alone.",
+              "Цих кроків Codex не робив — Claude пройшов їх сам.",
+              "Этих шагов Codex не делал — Claude прошёл их сам."))
+    card(t("Without Codex", "Без Codex", "Без Codex"),
+         f'<p class="lead">{esc(head)}</p><ul class="finds">{items}</ul>', accent=True)
+
 # The one action that unblocks it. A blocker without this is not a blocker, it is a shrug.
 if needed:
     card(t("What is needed from you", "Що потрібно від тебе", "Что нужно от тебя"),

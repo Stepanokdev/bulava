@@ -190,6 +190,10 @@ bashgate(){ printf '{"tool_name":"Bash","cwd":"%s","tool_input":{"command":%s}}'
 check "the worker cannot add a folder to the list itself" 'is_deny "$(bashgate "echo /etc >> $IDIR/writable-dirs")"'
 SUPERVISOR_EXTRA_DIRS_FILE="" record_writable_dirs "$IDIR"
 check "a launch without the app's list clears it"         '[ ! -e "$IDIR/writable-dirs" ]'
+MEM="$HOME/.claude/projects/$(printf '%s' "$CPROJ" | sed 's/[^A-Za-z0-9]/-/g')/memory"
+check "Claude's own memory for this project is writable"  'is_allow "$(gate "$MEM/note.md")"'
+check "another project's memory is not"                   'is_deny "$(gate "$HOME/.claude/projects/-elsewhere/memory/note.md")"'
+check "nor is anything else under ~/.claude"              'is_deny "$(gate "$HOME/.claude/settings.json")"'
 rm -rf "$OUTSIDE" "$CHATDIR"
 
 echo ""

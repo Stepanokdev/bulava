@@ -390,6 +390,14 @@ check "a loop is not mistaken for a write"        '! denied "$(bashcall "for f i
 check "the project's own answer.json is not ours" '! denied "$(bashcall "echo {} > $PROJ/fixtures/answer.json")"'
 check "but the run's answer.json is"              'denied "$(bashcall "echo {} > $IDIR/answer.json")"'
 check "and the worker's own notes stay writable"  '! denied "$(bashcall "echo note >> $IDIR/decisions.md")"'
+# The engine is worked on from its own repository, and its code and tests name these files all the
+# time. Naming one is not reaching for it: the gate refused a script that edited a TEST, and a grep.
+check "a script editing the engine's own test is not a forgery" '! denied "$(bashcall "python3 patch.py tests/test-x.sh  # adds a check on codex-owed.json")"'
+check "a read whose flags spell a verb is a read"  '! denied "$(bashcall "grep -rln codex-fallback.json tests | head")"'
+check "…but the same name inside the run's folder is" 'denied "$(bashcall "python3 -c x > $IDIR/codex-owed.json")"'
+check "and through the variable the worker is given" 'denied "$(bashcall "printf x > \"\$IDIR/codex-fallback.json\"")"'
+check "and through the state directory"           'denied "$(bashcall "cd ~/.claude/supervisor/instances/x && rm review-pending")"'
+check "a word that merely contains a verb is not one" '! denied "$(bashcall "grep -q add $IDIR/review-pending")"'
 
 echo "===== the app dispatch is held on the same rule as the chat pump ====="
 # Two entry points into the same preparation, and only one of them used to be guarded. A dispatch

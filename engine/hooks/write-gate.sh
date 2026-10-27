@@ -53,15 +53,28 @@ if [ -n "$command" ]; then
   # (`server_bash_refusal`). Off a server this prints nothing and the gate goes on as it always has.
   _srv="$(server_bash_refusal "$command")"
   [ -n "$_srv" ] && deny "$_srv"
-  # Distinctive enough that the name alone identifies the file: nothing in a product repository is
-  # called `codex-fallback.json`, and a false deny here would block ordinary work.
-  _touches_control=0
+  # Where the run's state lives, as a command would have to spell it to reach it: the folder's own
+  # path either way round, the state directory, or the variables the worker is handed for them.
+  _reaches_state=0
   case "$command" in
-    *codex-decision-answer.json*|*codex-fallback.json*|*codex-decision.json*|*codex-owed.json*|\
-    *consult-unanswered.jsonl*|*paused-for-limit.json*|*review-pending*|*review-off*|\
-    *ask-user.json*|*resume-refused*|*decision-key.pem*|\
-    *writable-dirs*|*writable-directories*) _touches_control=1 ;;
+    *"$IDIR"*|*"$IDIR_C"*|*"$SUP_STATE"*|*"$SUP_C"*|*.claude/supervisor*|*supervisor/instances*|\
+    *'$IDIR'*|*'${IDIR'*|*SUP_STATE*|*SUPERVISOR_STATE_DIR*) _reaches_state=1 ;;
   esac
+  # Distinctive names — but only in a command that reaches into that state. The name alone used to
+  # be enough, and the engine then refused to be worked on from its own repository: a script that
+  # edited a TEST about `codex-owed.json` was denied as though it were forging one, and a pure
+  # `grep -rln` for the same name was refused too. Nothing in a product repository IS one of these
+  # files; plenty of the engine's own code and tests talk about them.
+  _touches_control=0
+  if [ "$_reaches_state" = 1 ]; then
+    case "$command" in
+      *codex-decision-answer.json*|*codex-fallback.json*|*codex-decision.json*|*codex-owed.json*|\
+      *codex-away.json*|*codex-gaps.jsonl*|\
+      *consult-unanswered.jsonl*|*paused-for-limit.json*|*review-pending*|*review-off*|\
+      *ask-user.json*|*resume-refused*|*decision-key.pem*|\
+      *writable-dirs*|*writable-directories*) _touches_control=1 ;;
+    esac
+  fi
   # And the ones whose names are ordinary. `answer.json` and `outcome.json` could plausibly belong
   # to the repository being worked on, so for these the command has to be reaching into the run's
   # own folder before it counts as touching control state at all.
@@ -69,9 +82,7 @@ if [ -n "$command" ]; then
   # could call itself a job with no git, whose word the gate takes about how it ended.
   case "$command" in
     *answer.json*|*outcome.json*|*plain-folder*|*run-env*)
-      case "$command" in
-        *"$IDIR"*|*.claude/supervisor*) _touches_control=1 ;;
-      esac ;;
+      [ "$_reaches_state" = 1 ] && _touches_control=1 ;;
   esac
   # Stderr goes to /dev/null in half the reads this engine's own handles make, and `2>/dev/null`
   # contains a `>`. Matching on that raw would have denied `jq -r .id "$IDIR/codex-decision.json"
@@ -86,11 +97,15 @@ if [ -n "$command" ]; then
   # "open(f,'w')"` modifies with no redirection at all — at the price of refusing a read written
   # the same way, which costs one retry with `cat`.
   _probe="$(printf '%s' "$command" | sed -e 's/2>>[^ ]*//g' -e 's/2>[^ ]*//g')"
+  #
+  # The verbs are matched as words. As substrings they caught `grep -rln` as `ln ` and `add ` as
+  # `dd ` — reads refused for containing the letters of a write.
   _modifies=0
   case "$_probe" in
-    *">"*|*"|"*tee*|*rm\ *|*mv\ *|*cp\ *|*touch\ *|*truncate*|*"sed -i"*|*ln\ *|\
-    *install\ *|*dd\ *|*chmod\ *|*python*|*perl*|*ruby*|*node*) _modifies=1 ;;
+    *">"*|*truncate*|*"sed -i"*|*python*|*perl*|*ruby*|*node*) _modifies=1 ;;
   esac
+  printf '%s' "$_probe" \
+    | grep -qE '(^|[[:space:];&|(`])(tee|rm|mv|cp|touch|ln|install|dd|chmod)([[:space:]]|$)' && _modifies=1
   # There is deliberately no "but this command mentions report-finding, so let it through" clause.
   # It was written and then removed: naming the sanctioned handles as an exemption turns them into
   # a password — `echo x > $IDIR/codex-fallback.json # report-finding` walks straight past it. They
@@ -116,6 +131,13 @@ broad_fence() {
       case "$abs/" in "${_w%/}"/*) exit 0 ;; esac
     done < "$IDIR/writable-dirs"
   fi
+  # Claude Code's own memory for THIS project — the folder it is told to keep notes in, named after
+  # the project's path with every other character as `-`. Refusing it made the worker write its
+  # memory through a heredoc instead, which no gate looks at: the deny protected nothing and only
+  # forced the detour. Another project's memory stays outside.
+  local _mem
+  _mem="$HOME/.claude/projects/$(printf '%s' "$PROJ" | sed 's/[^A-Za-z0-9]/-/g')/memory"
+  case "$abs/" in "$_mem"/*) exit 0 ;; esac
   case "$abs/" in /tmp/*|/private/tmp/*|/var/folders/*|/private/var/folders/*) exit 0 ;; esac
   [ -n "${TMPDIR:-}" ] && case "$abs/" in "${TMPDIR%/}"/*) exit 0 ;; esac
   deny "запис поза межами репозиторію задачі ($abs) — по інших файлах передай через report-finding, не редагуй напряму"

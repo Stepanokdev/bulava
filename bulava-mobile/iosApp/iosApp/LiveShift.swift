@@ -150,7 +150,9 @@ final class LiveShift {
         let hex = token.map { $0.map { String(format: "%02x", $0) }.joined() } ?? ""
         DispatchQueue.main.async {
             MainViewControllerKt.setActivityToken(kind: kind, token: hex, environment: BulavaHost.apnsEnvironment)
-            if UIApplication.shared.applicationState != .active { self.deliverInBackground() }
+            // Only a launch in the background needs the Mac asked now. Inactive is the app being
+            // opened — or a permission prompt over its first screen — and the open app hands it over.
+            if UIApplication.shared.applicationState == .background { self.deliverInBackground() }
         }
     }
 

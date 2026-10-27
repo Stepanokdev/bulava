@@ -105,6 +105,8 @@ fun setForeground(foreground: Boolean) {
  */
 fun backgroundCheck(host: IosHost, done: (Boolean) -> Unit) {
     val c = controller(host)
+    // With no Mac paired there is nobody to ask.
+    if (c.link.paired == null) { done(false); return }
     scope.launch {
         val before = c.homeCount.value
         c.link.connect()

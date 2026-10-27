@@ -378,6 +378,7 @@ $_git_how
           # object store at all. `.git/info/exclude`, not the director's `.gitignore` — our
           # checkpoint's housekeeping must not show up as a change in their project.
           seed_heavy_excludes "$PROJECT_DIR"
+          exclude_nested_repos "$PROJECT_DIR"
           echo "$(date '+%F %T') [start] '$PROJECT_DIR' had no git of its own — created one, with the director's recorded consent" >> "$SUP_STATE/supervisor.log"
         else
           refuse_start "$PROJECT_DIR" "Не вдалося створити git-репозиторій у цій теці — без нього нічній зміні нема куди відкочуватись."
@@ -973,7 +974,11 @@ $gone}"
     if [ -n "$_stores" ]; then echo "kind=storage"
     elif [ "$_n" -gt 0 ]; then
       # A repository with its own history and one nested checkout is a project, not a collection.
-      if [ "$_top" = "$_d" ] && [ "$_n" -lt 2 ]; then echo "kind=repo"; else echo "kind=container"; fi
+      # So is a folder with no git yet, seen whole, holding exactly one — the engine asks about git
+      # there (`workspace_container_reason`), and the app must not split it into its repository.
+      if [ "$_top" = "$_d" ] && [ "$_n" -lt 2 ]; then echo "kind=repo"
+      elif [ -z "$_top" ] && [ "$_n" -lt 2 ] && [ "$_rc" != 3 ]; then echo "kind=plain"
+      else echo "kind=container"; fi
     elif [ "$_rc" = 3 ]; then echo "kind=unknown"
     else echo "kind=plain"
     fi

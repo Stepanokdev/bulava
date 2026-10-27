@@ -710,6 +710,89 @@ text_is_utf8() {
   '
 }
 
+# The same text with every byte that is not part of a well-formed character written out as `\xHH`.
+#
+# For the review prompt, which is assembled from what the run produced — a build log, a file name,
+# a plan on disk — and is not the place to stop over one bad byte in somebody else's output: a run
+# blocked on that is a run Codex did not review, which is the failure being fixed. Not U+FFFD:
+# every bad byte would become the same character, so `file-\xFF` and `file-\xFE` would read as one
+# name and the reviewer could not tell what it was looking at. Escaped, nothing is lost and the
+# damage is plain to see. The caller says which part carried it. Same table as above.
+utf8_repair() {
+  perl -e '
+    use strict;
+    binmode(STDIN); binmode(STDOUT);
+    my $s = do { local $/; <STDIN> };
+    $s = "" unless defined $s;
+    my $out = "";
+    pos($s) = 0;
+    while ((pos($s) // 0) < length($s)) {
+      if ($s =~ m{\G((?:
+            [\x00-\x7F]
+          | [\xC2-\xDF][\x80-\xBF]
+          | \xE0[\xA0-\xBF][\x80-\xBF]
+          | [\xE1-\xEC][\x80-\xBF]{2}
+          | \xED[\x80-\x9F][\x80-\xBF]
+          | [\xEE-\xEF][\x80-\xBF]{2}
+          | \xF0[\x90-\xBF][\x80-\xBF]{2}
+          | [\xF1-\xF3][\x80-\xBF]{3}
+          | \xF4[\x80-\x8F][\x80-\xBF]{2}
+        ){1,4096})}gcx) {
+        $out .= $1;
+      } else {
+        $s =~ m{\G(.)}gcs;
+        $out .= sprintf("\\x%02X", ord($1));
+      }
+    }
+    print $out;
+  '
+}
+
+# Which of the named shell variables hold text that is not UTF-8, by name, one per line.
+utf8_bad_vars() {   # $@ = variable names
+  local _v
+  for _v in "$@"; do
+    printf '%s' "${!_v:-}" | text_is_utf8 || printf '%s\n' "$_v"
+  done
+}
+
+# The line of a CLI's stderr that says why, not the usage block printed after it.
+#
+# A refusal names its cause on line 1 and then prints five lines of usage, so the last lines of
+# stderr were "Usage: codex exec [OPTIONS] … try '--help'" — which is what the review gate's
+# "зупинився з кодом 2" was standing in front of for a whole morning. The rule `consult-codex.sh`
+# and `preflight.sh` already apply, for a file.
+stderr_cause() {   # $1=stderr file → one line, at most 300 characters
+  local f="${1:-}" clean note
+  [ -s "$f" ] || return 0
+  clean="$(grep -v -e '^[[:space:]]*$' -e 'Reading additional input from stdin' "$f" 2>/dev/null)"
+  [ -n "$clean" ] || return 0
+  note="$(printf '%s\n' "$clean" \
+    | awk 'BEGIN { seen = 0 }
+           !seen && /^([[:space:]]*)(error|Error|ERROR)[:[:space:]]|invalid|[Nn]ot logged in|[Uu]nauthorized|401|403|quota|rate limit/ { seen = 1 }
+           seen { print; if (++n == 3) exit }' \
+    | grep -v -E "^Usage:|^For more information|^Options:|^Commands:|^Arguments:|try .--help.")"
+  [ -n "$note" ] || note="$(printf '%s\n' "$clean" \
+      | grep -v -E "^Usage:|^For more information|^Options:|^Commands:|^Arguments:|try .--help." \
+      | tail -3)"
+  [ -n "$note" ] || note="$(printf '%s\n' "$clean" | tail -3)"
+  printf '%s' "$note" | tr '\n' ' ' | sed 's/[[:space:]]\{2,\}/ /g' | clip_utf8 300
+}
+
+# Did the CLI refuse the invocation itself — in its argument parser, before any session opened?
+#
+# That is exit 2 with clap's own words on stderr: broken UTF-8 in an argument, a flag this version
+# no longer knows. Neither is Codex being away, and waiting does not cure either one: the gate
+# used to park such a run as "reviewer unreachable", the watchdog saw a healthy meter and woke it,
+# the same call was refused again, and five rounds later the run stopped for the operator with
+# nothing but "код 2" to go on.
+cli_refused_call() {   # $1=exit code $2=stderr file
+  [ "${1:-}" = 2 ] || return 1
+  [ -s "${2:-}" ] || return 1
+  grep -qE '^error: (invalid UTF-8|unexpected argument|unrecognized subcommand|invalid value|a value is required|the argument)' "$2" 2>/dev/null \
+    || grep -q '^Usage: codex' "$2" 2>/dev/null
+}
+
 TASK_PREFIX_SCOPED="Пиши тільки в межах write_paths цього RunSpec; помічене поза ними — через report-finding, не редагуй. Саму задачу виконай ПОВНІСТЮ (acceptance — це як її перевірятимуть, а не менша версія задачі). Задача:"
 
 TASK_PREFIX_BROAD="Працюй за стандартами якості (дизайн-скіли для візуального, humanizer лише для user-facing тексту, без AI-slop, без заглушок). Задача:"
@@ -3688,6 +3771,66 @@ codex_owed() {   # $1=idir → 0 when Codex was positively out earlier in THIS r
   return 0
 }
 
+# Every place Codex was meant to take part in this piece of work and did not, kept to the end.
+#
+# Each of those places already carried on without him, on purpose — a plan from Claude's position
+# alone, a consultation answered with "continue on the evidence", a question Claude decided itself,
+# a review read by Claude after the director allowed it. What none of them did was leave a trace
+# on the RESULT: the note went into `degraded.md`, which the Mac app shows while the run is live
+# and nothing reads once it is over, and on a server nobody sees even that. A night could pass
+# review with Codex absent from everything before it, and the task said "done" like any other.
+#
+# Stamped with the run and the message, so a later message's result is not charged with an
+# earlier one's gap. `codex_participation` reads it into the receipt and the task record.
+codex_gap_file() { printf '%s/codex-gaps.jsonl' "${1:-}"; }
+codex_gap() {   # $1=idir $2=stage (preflight|align|consultation|part|question|review) $3=reason [$4=who stood in]
+  local idir="${1:-}" stage="${2:-}" why="${3:-}" by="${4:-claude}" own rid did
+  [ -n "$idir" ] && [ -d "$idir" ] && [ -n "$stage" ] || return 1
+  own="$(_codex_owner "$idir")"; rid="${own%% *}"; did="${own##* }"
+  jq -nc --arg s "$stage" --arg w "$(printf '%s' "$why" | tr '\n' ' ' | clip_utf8 400)" --arg by "$by" \
+     --arg rid "$rid" --arg did "$did" --argjson at "$(date +%s)" \
+     '{stage:$s, reason:$w, by:$by, at:$at, run_id:$rid, dispatch_id:$did}' \
+     >> "$(codex_gap_file "$idir")" 2>/dev/null || return 1
+  journal_event "$idir" codex-gap "Codex не брав участі ($stage)" \
+    "$(jq -nc --arg s "$stage" --arg by "$by" '{source:"engine", stage:$s, by:$by}')" 2>/dev/null || true
+  return 0
+}
+
+# What Codex's part in THIS piece of work came to, as JSON:
+#   {"status":"full"}                              — nothing was missed
+#   {"status":"partial","gaps":[…]}                — he missed a step before the review
+#   {"status":"review_by_claude","gaps":[…]}       — the final review was not his
+# Each gap is {stage, reason, by, count}: the same step for the same reason is counted, not repeated.
+codex_participation() {   # $1=idir
+  local idir="${1:-}" f own rid did
+  f="$(codex_gap_file "$idir")"
+  own="$(_codex_owner "$idir")"; rid="${own%% *}"; did="${own##* }"
+  if [ ! -s "$f" ]; then printf '{"status":"full"}'; return 0; fi
+  jq -sc --arg rid "$rid" --arg did "$did" '
+    [ .[] | select(type == "object")
+          | select(($rid == "" or (.run_id // "") == $rid) and ($did == "" or (.dispatch_id // "") == $did)) ]
+    | group_by([.stage, .reason]) | sort_by(.[0].at)
+    | map(.[0] + {count: length} | {stage, reason, by, count})
+    | if length == 0 then {status: "full"}
+      else {status: (if any(.[]; .stage == "review") then "review_by_claude" else "partial" end), gaps: .}
+      end' "$f" 2>/dev/null || printf '{"status":"full"}'
+}
+
+# The same, in one sentence a person reads. Empty when Codex took part in everything.
+codex_participation_note() {   # $1=participation JSON
+  printf '%s' "${1:-}" | jq -r '
+    def stage_uk: {preflight:"підготовка", align:"звірка позицій", consultation:"консультація",
+                   part:"частина Codex", question:"питання воркера", review:"фінальне ревʼю"}[.] // .;
+    if (.status // "full") == "full" then empty
+    else (if .status == "review_by_claude" then "Фінальне ревʼю виконав Claude замість Codex. "
+          else "Codex брав участь не в усьому. " end)
+         + "Без Codex: "
+         + ([.gaps[:4][]? | (.stage | stage_uk) + (if .count > 1 then " ×\(.count)" else "" end)
+                      + (if (.reason // "") != "" then " — " + .reason else "" end)] | join("; "))
+         + (if (.gaps | length) > 4 then "; і ще \((.gaps | length) - 4)" else "" end)
+    end' 2>/dev/null
+}
+
 # ---------------------------------------------------------- one engine, or two pretending to be one
 #
 # The engine is installed by copying a directory, and the worker is launched with a settings file
@@ -4483,16 +4626,21 @@ record_writable_dirs() {   # $1=instance dir
 # or the base when none has passed yet. Either one is used only while it is an ancestor of HEAD.
 record_extra_repos() {   # $1=instance dir
   local idir="$1" file dir top base digest dirty head tf tbase acc empty
+  local nested seen=$'\n'
   file="${SUPERVISOR_EXTRA_DIRS_FILE:-}"
   [ -n "$idir" ] && [ -d "$idir" ] || return 0
   rm -f "$idir/extra-repos" 2>/dev/null
-  [ -n "$file" ] && [ -s "$file" ] || return 0
+  nested=""; [ -n "${PROJECT_DIR:-}" ] && nested="$(nested_repos_file "$PROJECT_DIR")"
+  { [ -n "$file" ] && [ -s "$file" ]; } || [ -s "$nested" ] || return 0
   command -v git >/dev/null 2>&1 || return 0
 
   while IFS= read -r dir || [ -n "$dir" ]; do
     [ -n "$dir" ] || continue
     dir="$(canon_path "$dir")"
     [ -d "$dir" ] || continue
+    # The app may hand over a nested repository the engine already measures; once is enough.
+    case "$seen" in *$'\n'"$dir"$'\n'*) continue ;; esac
+    seen="$seen$dir"$'\n'
     top="$(cd "$dir" && git rev-parse --show-toplevel 2>/dev/null || true)"
     # Only a repository of its own can be measured. A plain folder handed to the worker has no
     # base to compare against, and inventing one is how this whole class of bug started.
@@ -4518,7 +4666,7 @@ record_extra_repos() {   # $1=instance dir
     # empty field silently shifts every field after it — the base would be read as the digest and
     # the digest as a flag. Nothing here can contain \037.
     printf '%s\037%s\037%s\037%s\037%s\n' "$dir" "$base" "$digest" "$dirty" "$acc" >> "$idir/extra-repos"
-  done < "$file"
+  done < <({ [ -n "$file" ] && cat "$file" 2>/dev/null; [ -s "$nested" ] && cat "$nested"; } || true)
 }
 
 # Whether a connected repository has work for the review: its working tree is not what it was at
@@ -4885,7 +5033,14 @@ workspace_container_reason() {   # $1=dir → reason on stdout; 0 = refuse, 1 = 
   fi
 
   if [ "$n" -gt 0 ]; then
-    if [ "$top" = "$d" ] && [ "$n" -lt 2 ]; then return 1; fi   # a project with one sub-checkout
+    # A project with one sub-checkout — with its own git, or with none yet and seen whole. The
+    # second is a game's folder: its spec, its assets and the one repository the code lives in.
+    # Refusing it sent the director to connect the repository alone, which cuts the chat off from
+    # everything around it; the start asks about git instead (76), and the checkpoint leaves the
+    # repository out (`exclude_nested_repos`). Two or more stay a workspace.
+    if [ "$n" -lt 2 ] && { [ "$top" = "$d" ] || { [ -z "$top" ] && [ "$scan_rc" != 3 ]; }; }; then
+      return 1
+    fi
     printf 'У цій теці %s %s. Це робоча тека, а не репозиторій — Bulava не робить git поверх чужих репозиторіїв.\n' \
       "$n" "$(_plural_repos "$n")"
     while IFS= read -r repo; do
@@ -5041,6 +5196,36 @@ checkpoint_heavy_file() {   # $1=dir → the last «too big» list for this fold
 }
 checkpoint_excludes_file() {   # $1=dir → the rules the director chose for checkpoints here
   printf '%s/checkpoint-excludes/%s\n' "$SUP_STATE" "$(slug_for "$1")"
+}
+
+# The repositories inside a folder the engine made git in. Each keeps its own history, so the outer
+# checkpoint leaves them out — and since a gitlink is all the outer repository would ever see of
+# them, they are measured for the review as repositories of their own (`record_extra_repos`).
+nested_repos_file() {   # $1=dir → the nested repositories excluded from its created git
+  printf '%s/nested-repos/%s\n' "$SUP_STATE" "$(slug_for "$1")"
+}
+# Written before the first `git add`: `git add -A` would record a committed nested repository as a
+# gitlink (the uncommitted ones it refuses outright, see `exclude_uncommitted_nested`). Anchored, in
+# `.git/info/exclude` and not the director's `.gitignore`, like `seed_heavy_excludes`.
+#
+# Found by the same walk that let the folder start (`nested_repos_in`), not by asking git: git does
+# not list what an ignore rule already hides, and a repository his `.gitignore` leaves out is still
+# a repository the work may happen in — the review has to see it all the same.
+exclude_nested_repos() {   # $1=dir
+  local d="$1" ex store r rel
+  ex="$(git_exclude_file "$d")" || return 0
+  store="$(nested_repos_file "$d")"
+  mkdir -p "$(dirname "$store")" 2>/dev/null || true
+  : > "$store" 2>/dev/null || true
+  while IFS= read -r r; do
+    case "$r" in "$d"/?*) ;; *) continue ;; esac
+    rel="${r#"$d"/}"
+    # As a pattern, not a path: `\ * ? [` are git's wildcards, and a leading `!` or `#` would turn
+    # the line into something else.
+    rel="/$(printf '%s' "$rel" | sed 's/[][\\*?]/\\&/g')/"
+    grep -qxF -- "$rel" "$ex" 2>/dev/null || printf '%s\n' "$rel" >> "$ex" 2>/dev/null || true
+    printf '%s\n' "$r" >> "$store" 2>/dev/null || true
+  done < <(nested_repos_in "$d" | grep '^/')
 }
 
 # The files that put a checkpoint over budget, biggest first, as JSON:

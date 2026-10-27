@@ -141,6 +141,25 @@ is created to the moment its first attempt is written, inside one `dispatch.sh` 
 `state_reason` is the outcome's `reason` when the engine wrote one (`codex_unavailable`), `stalled`
 when the watchdog parked the run, otherwise the gate's disposition.
 
+**Did Codex take part.** `codex` on the task and on every attempt (and in `last_receipt.codex`) says
+whether Codex did every step he was meant to do in that attempt:
+
+```json
+{"status": "partial",
+ "gaps": [{"stage": "preflight", "reason": "codex зупинився з помилкою (код 1) …", "by": "claude", "count": 1}]}
+```
+
+`status` is `full` (nothing missed), `partial` (a step before the review went ahead with Claude
+alone — `preflight`, `align`, `consultation`, `part`, `question`) or `review_by_claude` (the final
+review itself was Claude's, which on a server never happens without a signed answer from the app). A
+`waiting_review` or `done` task with `status` other than `full` is still a pass — Codex reviewed the
+result — but put the gaps on the ticket next to it, so nobody reads it as an ordinary run.
+
+A review call the Codex CLI refuses outright (exit 2 from its argument parser: an argument that is
+not UTF-8, a flag this version no longer knows) is not treated as Codex being away. Waiting cannot fix
+it, so there is no pause and no retry loop: the attempt ends `failed` once, with the CLI's own words
+in `last_receipt.review_why`.
+
 **Stalled.** The watchdog parks a run that sits at its prompt for `SUPERVISOR_STALL_PARK_SECS`
 (900 s) with no turn running and nothing settled; its task becomes `failed`, `state_reason: stalled`.
 "No turn running" is the Claude CLI's own busy/idle status, so a long build or test is never idle.

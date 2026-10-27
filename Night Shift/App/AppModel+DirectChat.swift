@@ -643,9 +643,18 @@ extension AppModel {
     /// and only if the folder is fit for it. The engine checks that again itself, so the button
     /// cannot allow git where it is forbidden — in a store, in someone else's repository, in a
     func allowGitIn(_ folder: String, thenRetry entryID: UUID?, in chatID: UUID?) {
+        // Consumed before the engine is asked. The row stayed up for the whole `allow-git` call, so
+        // a second press — on the Mac, or a phone tap delivered twice — passed the same check and
+        // sent the message again.
+        if let chatID {
+            guard gitConsentBlocked[chatID] == folder else { return }
+            gitConsentBlocked[chatID] = nil
+        }
         Task {
             let r = await client.allowGit(projectPath: folder)
             guard r.ok else {
+                // The question still stands: the row comes back, so the answer can be given again.
+                if let chatID, gitConsentBlocked[chatID] == nil { gitConsentBlocked[chatID] = folder }
                 let why = r.combined.split(whereSeparator: \.isNewline).first.map(String.init)
                 toast = ToastMessage(text: why ?? String(localized: "Could not record the answer."),
                                      kind: .error)

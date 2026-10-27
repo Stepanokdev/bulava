@@ -39,12 +39,21 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         LiveShift.shared.start()
         // iOS cannot keep a socket open for a closed app. It can wake the app now and then, and
         // each wake is a chance to hear what the Mac is waiting on.
-        BGTaskScheduler.shared.register(forTaskWithIdentifier: BulavaHost.refreshTask, using: nil) { task in
+        // On the main queue: the shared Kotlin session is made and used there, and a wake that
+        // comes while the app is being opened must not build a second one beside it.
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: BulavaHost.refreshTask, using: .main) { task in
             BulavaHost.shared.scheduleRefresh(active: true)
-            MainViewControllerKt.backgroundCheck(host: BulavaHost.shared) { heard in
-                task.setTaskCompleted(success: heard.boolValue)
+            // Completed once: by the check, or by iOS running out of time — whichever comes first.
+            var completed = false
+            let complete = { (success: Bool) in
+                guard !completed else { return }
+                completed = true
+                task.setTaskCompleted(success: success)
             }
-            task.expirationHandler = { task.setTaskCompleted(success: false) }
+            task.expirationHandler = { DispatchQueue.main.async { complete(false) } }
+            MainViewControllerKt.backgroundCheck(host: BulavaHost.shared) { heard in
+                DispatchQueue.main.async { complete(heard.boolValue) }
+            }
         }
         return true
     }
