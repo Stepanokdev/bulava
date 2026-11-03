@@ -230,6 +230,19 @@ case "$found" in *readme.txt*) bad "an ordinary file was called a secret" ;;
   *) ok "ordinary files are left alone" ;; esac
 
 echo
+echo "===== a folder that is gone is refused with the same marker ====="
+# 30 Oct, 1.16.3: a chat whose folder had been moved met «Проєкт не знайдено» on every send, and
+# each one reached us as `chat.start_failed` with a repair offered for it.
+out="$(start "$TMP/moved-away")"
+case "$out" in *"Проєкт не знайдено"*) ok "the refusal says the folder is not there" ;;
+  *) bad "no refusal for a missing folder — got: $(printf '%s' "$out" | head -2)" ;; esac
+printf '%s\n' "$out" | grep -qx "start-refused=folder" \
+  && ok "a missing folder carries the marker the app reads as 'yours to change'" \
+  || bad "no start-refused=folder line — the app reports a missing folder as a bug"
+[ -e "$TMP/moved-away" ] && bad "the start made the folder it was told is gone" \
+                         || ok "nothing was created in its place"
+
+echo
 [ "$fails" = 0 ] && echo "✅ workspace: a folder of repositories never becomes one" \
                  || echo "❌ workspace: $fails problem(s)"
 exit "$fails"

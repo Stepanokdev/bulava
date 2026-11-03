@@ -769,6 +769,10 @@ extension AppModel {
                 refuseStart(chat.id, refusal)
                 return
             }
+            if stopOnFolderTheyMustClear(chatID: chat.id, entryID: entryID,
+                                         path: primary.path, name: product.name) {
+                return
+            }
             // Git-optional. A chat he is sitting at, in a folder that is not a committed git
             // repository, runs in a plain folder — no git, no checkpoint, no .gitignore — the way
             // Codex and Claude Code already work in a folder of recordings or documents. The engine
@@ -1682,6 +1686,18 @@ extension AppModel {
             return true
         }
         return false
+    }
+
+    /// The chat's folder is gone or closed to Bulava. Asked before the engine, which can only say
+    /// «Проєкт не знайдено» — and that came back as a breakage offered for repair, every retry
+    /// another report (30 Oct, 1.16.3). The folder is the person's to bring back or reconnect.
+    /// Internal for tests.
+    @discardableResult
+    func stopOnFolderTheyMustClear(chatID: UUID, entryID: UUID, path: String, name: String) -> Bool {
+        guard let problem = StartRefusal.folderProblem(path: path, name: name) else { return false }
+        conversations.updateDelivery(entryID: entryID, .failed)
+        failChat(chatID, problem, .needsYou)
+        return true
     }
 
     /// Where the sign-in panel belongs in this chat: beside the message the notice failed to
