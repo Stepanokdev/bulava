@@ -246,7 +246,10 @@ case "$cmd" in
       *) echo "❌ --dirty: «${DIRTY_CHOICE}» — можна keep, commit або fail" >&2; exit 2 ;;
     esac
     PROJECT_DIR="$(canon_path "${DIRARG:-$PWD}")"
-    [ -d "$PROJECT_DIR" ] || { echo "❌ Проєкт не знайдено: ${DIRARG:-$PWD}" >&2; exit 1; }
+    # The marker for the app, as for a workspace below: a folder that is gone is the director's to
+    # bring back, and 1.16.3 sent each retry of it to us as an anonymous report (30 Oct).
+    [ -d "$PROJECT_DIR" ] || { echo "❌ Проєкт не знайдено: ${DIRARG:-$PWD}" >&2
+                               echo "start-refused=folder" >&2; exit 1; }
     if [ -n "$BASE_REF" ]; then
       case "$BASE_REF" in -*) echo "❌ --base: «${BASE_REF}» — не ref" >&2; exit 2 ;; esac
       ( cd "$PROJECT_DIR" && git rev-parse --verify --quiet "$BASE_REF^{commit}" >/dev/null 2>&1 ) \

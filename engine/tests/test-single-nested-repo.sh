@@ -2,7 +2,7 @@
 # A folder with no git of its own and exactly one repository inside is a project, not a workspace.
 #
 # 27 Oct: the director's game folder — the spec, `artifacts/`, an unpacked dependency and one
-# repository, `bulava-world`, where the code lives. Every message to its chat came back «У цій теці
+# repository, where the code lives. Every message to its chat came back «У цій теці
 # 1 репозиторій… Підключи кожен репозиторій окремо», on the phone with nothing to press. Connecting
 # the repository alone would cut the chat off from the spec beside it. The start asks about git
 # instead (76, a button), and once he agrees the repository stays out of the outer history and is

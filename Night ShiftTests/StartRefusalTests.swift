@@ -84,6 +84,64 @@ nonisolated final class StartRefusalTests: XCTestCase {
         XCTAssertTrue(m.toast?.actions.isEmpty == true, "and no Fix it button")
     }
 
+    /// 30 Oct, 1.16.3: a chat whose folder was gone sent «Проєкт не знайдено» to us five times in a
+    /// minute, each with a repair that could not bring a folder back. Now it is asked before the start.
+    @MainActor
+    func testAFolderThatIsGoneIsSaidBeforeTheStartAndNotRepaired() {
+        let (m, chat, entry) = model()
+        let gone = FileManager.default.temporaryDirectory
+            .appendingPathComponent("bulava-moved-away-\(UUID().uuidString)").path
+        XCTAssertTrue(m.stopOnFolderTheyMustClear(chatID: chat, entryID: entry, path: gone, name: "pocket-ledger"))
+        XCTAssertNil(m.repairs[chat], "a folder that is gone is not ours to repair or report")
+        XCTAssertTrue(m.chatErrors[chat]?.contains(gone) == true, "the person is told which folder")
+        XCTAssertTrue(m.chatErrors[chat]?.contains("pocket-ledger") == true)
+        XCTAssertTrue(m.toast?.actions.isEmpty == true, "and no Fix it button")
+    }
+
+    /// A folder macOS keeps Bulava out of is there: saying it is gone would send the person looking
+    /// for something right where they left it.
+    func testAFolderBulavaCannotEnterIsNotCalledGone() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("bulava-closed-\(UUID().uuidString)")
+        let inner = root.appendingPathComponent("project")
+        try FileManager.default.createDirectory(at: inner, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: root.path)
+        addTeardownBlock {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path)
+            try? FileManager.default.removeItem(at: root)
+        }
+        let closed = try XCTUnwrap(StartRefusal.folderProblem(path: inner.path, name: "p"))
+        XCTAssertEqual(closed, String(format: String(localized: "I cannot read the folder of “%@” (%@). Give Bulava access to it in System Settings, or connect another path."), "p", inner.path))
+    }
+
+    func testAFolderThatIsThereIsNoProblem() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("bulava-here-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        XCTAssertNil(StartRefusal.folderProblem(path: dir.path, name: "p"))
+        // Enterable but not listable is enough for the engine, so it is enough here.
+        let enterOnly = dir.appendingPathComponent("enter-only")
+        try FileManager.default.createDirectory(at: enterOnly, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o300], ofItemAtPath: enterOnly.path)
+        addTeardownBlock { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: enterOnly.path) }
+        XCTAssertNil(StartRefusal.folderProblem(path: enterOnly.path, name: "p"), "the engine can cd into it")
+        let file = dir.appendingPathComponent("not-a-folder")
+        FileManager.default.createFile(atPath: file.path, contents: Data())
+        XCTAssertNotNil(StartRefusal.folderProblem(path: file.path, name: "p"), "a file where the folder was is not one")
+    }
+
+    /// The engine's own refusal of a missing folder carries the marker too, for a folder that goes
+    /// between the check above and the start (`engine/tests/test-workspace-container.sh`).
+    @MainActor
+    func testTheEnginesMissingFolderRefusalIsNotRepaired() {
+        let (m, chat, entry) = model()
+        let out = "❌ Проєкт не знайдено: /Users/someone/Projects/app\nstart-refused=folder"
+        XCTAssertTrue(m.stopOnStartTheyMustClear(chatID: chat, entryID: entry, output: out))
+        XCTAssertNil(m.repairs[chat])
+        XCTAssertEqual(m.chatErrors[chat], "❌ Проєкт не знайдено: /Users/someone/Projects/app")
+    }
+
     @MainActor
     func testAnyOtherFailedStartIsLeftToTheRepair() {
         let (m, chat, entry) = model()
