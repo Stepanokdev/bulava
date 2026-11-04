@@ -6,7 +6,7 @@
     <string name="onboarding_title">Bulava, on your phone</string>
     <string name="onboarding_lede">Your Mac keeps doing the work. From here you can start a chat, answer a question or stop a run, and pick up at the desk where you left off.</string>
     <string name="step_install_title">Install Bulava on your Mac</string>
-    <string name="step_install_body">It is a free download from bulava.app. The phone does nothing by itself: every task runs on the Mac.</string>
+    <string name="step_install_body">Download it from bulava.app. The phone does nothing by itself: every task runs on the Mac.</string>
     <string name="step_wifi_title">Use the same Wi‑Fi</string>
     <string name="step_wifi_body">The phone talks to the Mac directly over your local network. It cannot connect from another network, and that is deliberate: your work never goes through the internet.</string>
     <string name="step_scan_title">Scan the code on the Mac</string>

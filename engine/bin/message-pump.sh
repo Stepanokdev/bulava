@@ -37,7 +37,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 POLL="${SUPERVISOR_PUMP_POLL:-5}"
-MAX_WAIT="${SUPERVISOR_PUMP_IDLE_WAIT:-28800}"
+MAX_WAIT="${SUPERVISOR_PUMP_IDLE_WAIT:-0}"
 
 # Idle means the WORKER is not mid-turn, not being reviewed, and not out of its own window.
 #
@@ -154,7 +154,7 @@ while :; do
                            '{"source":"pump"}' 2>/dev/null || true ;;
       esac
     fi
-    if [ "$waited" -ge "$MAX_WAIT" ]; then
+    if [ "$MAX_WAIT" -gt 0 ] && [ "$waited" -ge "$MAX_WAIT" ]; then
       log "message $seq: gave up waiting ${waited}s for an idle worker — it stays queued"
       break
     fi

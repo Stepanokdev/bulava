@@ -96,6 +96,20 @@ check "the review ran and passed"                         'done_is passed'
 check "nothing was parked as an unreachable reviewer"     '[ ! -e "$(pause_file "$IDIR")" ] && [ ! -e "$IDIR/codex-owed.json" ]'
 check "the letter that would have been cut is gone, not half of it" '! grep -q "Жовтень" "$CODEX_CALLED.prompt" && grep -q "$(ascii 3999)" "$CODEX_CALLED.prompt"'
 
+echo "===== Claude's final report reaches the reviewer, on Linux too ====="
+# 4 Nov, a server on Ubuntu: the gate read the last message with `tail -r`, which uutils and GNU
+# refuse; stderr went to /dev/null, the report came through empty, and with the verifier inconclusive
+# Codex answered HANDOFF three rounds running — the run parked as needs-user, three commits done.
+mkcase "Виправ форму"; work
+{ jq -nc '{type:"user", message:{role:"user", content:"Виправ форму"}}'
+  jq -nc '{type:"assistant", message:{role:"assistant", content:[{type:"text", text:"Дивлюся форму."}]}}'
+  jq -nc '{type:"assistant", message:{role:"assistant", content:[{type:"text", text:"Готово: поле email перевіряється, три коміти."}]}}'
+} > "$TR"
+out="$(rungate s-r)"
+check "the last message is in the prompt"                 'grep -q "Готово: поле email перевіряється, три коміти." "$CODEX_CALLED.prompt"'
+check "…ahead of the earlier one"                        '[ "$(grep -n "три коміти\|Дивлюся форму" "$CODEX_CALLED.prompt" | head -1 | grep -c "три коміти")" = 1 ]'
+check "and nothing says it was not captured"              '! grep -q "no final message captured" "$CODEX_CALLED.prompt"'
+
 echo "===== a byte broken at the source is escaped and named, and the review still happens ====="
 mkcase "Виправ форму"; work
 printf 'План: зроби форму \377\376 і перевір\n' > "$IDIR/plan.md"

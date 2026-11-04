@@ -209,6 +209,57 @@ out3="$(rungate)"
 done_is needs-user && ok "nothing after two asks: parked for the director" || bad "third stop: done=$(cat "$GIDIR/done" 2>/dev/null) out=$out3"
 [ -s "$CODEX_CALLED" ] && bad "Codex was asked" || ok "Codex never asked"
 
+echo "===== a plain folder with code in repositories inside it is reviewed ====="
+# The robotics workspace: a plain folder, and inside it the apps and the site, each a repository.
+reviewed() { [ -s "$CODEX_CALLED" ]; }
+UP="$TMP/upstream.git"; rm -rf "$UP" "$TMP/up-src"; mkdir -p "$TMP/up-src"
+( cd "$TMP/up-src" && git init -q -b develop && git config user.email t@t && git config user.name t \
+    && echo app > app.swift && git add -A && git commit -qm upstream && git clone -q --bare . "$UP" )
+
+mkcase; declare_outcome succeeded_changes
+( cd "$G" && git clone -q -b develop "$UP" app-ios )
+out="$(rungate)"
+reviewed && bad "a clone with nothing of the run's in it was sent to review" || ok "an untouched clone inside: still a job, no review"
+done_is passed && ok "and passed as before" || bad "untouched clone → $(cat "$GIDIR/done" 2>/dev/null)"
+
+mkcase; declare_outcome succeeded_changes
+( cd "$G" && git clone -q -b develop "$UP" app-ios && cd app-ios && git config user.email t@t && git config user.name t \
+    && echo brand > theme.swift && git add -A && git commit -qm brand )
+out="$(rungate)"
+reviewed && ok "a clone the run committed to: reviewed" || bad "the run's commit in a clone was not reviewed: $out"
+grep -q "reviewed like any run" "$SUPERVISOR_STATE_DIR/supervisor.log" && ok "the log says why" || bad "no log line"
+diffstat="$(extra_repos_diffstat "$GIDIR")"
+printf '%s' "$diffstat" | grep -q "theme.swift" && ok "the review is shown the run's file" || bad "the run's file is not in the diff: $diffstat"
+printf '%s' "$diffstat" | grep -q "app.swift" && bad "the upstream project was shown as the run's work" || ok "the upstream project is not shown as the run's"
+
+mkcase; declare_outcome succeeded_changes
+mkdir -p "$G/library" && ( cd "$G/library" && git init -q && git config user.email t@t && git config user.name t \
+    && echo site > site.py && git add -A && git commit -qm site )
+out="$(rungate)"
+reviewed && ok "a repository the run made from nothing: reviewed" || bad "a new repository was not reviewed: $out"
+
+mkcase; declare_outcome succeeded_changes
+mkdir -p "$G/group" && ( cd "$G/group" && git clone -q -b develop "$UP" app-android && cd app-android \
+    && echo x >> app.swift )
+out="$(rungate)"
+reviewed && ok "two levels down, uncommitted work: reviewed" || bad "a nested change two levels down was not reviewed"
+
+mkcase; declare_outcome succeeded_changes
+( cd "$G" && git clone -q -b develop "$UP" app-ios )
+record_extra_repos "$GIDIR"
+( cd "$G/app-ios" && git config user.email t@t && git config user.name t && echo y > new.swift && git add -A && git commit -qm y )
+out="$(rungate)"
+reviewed && ok "a repository there at the start and changed since: reviewed" || bad "a recorded repository's change was not reviewed"
+
+mkcase; declare_outcome succeeded_changes
+rm -f "$(plain_folder_file "$(slug_for "$(canon_path "$G")")")"
+mkdir -p "$G/library" && ( cd "$G/library" && git init -q && git config user.email t@t && git config user.name t \
+    && echo site > site.py && git add -A && git commit -qm site )
+out="$(rungate)"
+reviewed && grep -q "library" "$GIDIR/extra-repos" 2>/dev/null \
+  && ok "a folder no job signed: a repository made in it mid-run is picked up and reviewed" \
+  || bad "unsigned folder: the new repository was not picked up ($(cat "$GIDIR/extra-repos" 2>/dev/null | tr '\037' ' '))"
+
 echo "===== he answers a parked run, and it finishes ====="
 # Still parked (`done` = needs-user, its digest beside it): a plain folder's tree never looks changed,
 # so the verdict must not be kept on that ground.
@@ -217,6 +268,30 @@ declare_outcome succeeded_changes
 rungate >/dev/null
 done_is passed && ok "the run that went on after his answer ends with its own verdict: passed" \
   || bad "kept the old verdict: $(cat "$GIDIR/done" 2>/dev/null)"
+
+echo "===== the run makes the folder a repository and clones beside its own files ====="
+mkcase; declare_outcome succeeded_changes
+( cd "$G" && git init -q && git config user.email t@t && git config user.name t \
+    && printf 'app-ios/\n' > .gitignore && git add -A && git commit -qm workspace )
+( cd "$G" && git clone -q -b develop "$UP" app-ios && cd app-ios && git config user.email t@t && git config user.name t \
+    && echo brand > theme.swift && git add -A && git commit -qm brand )
+out="$(rungate)"
+grep -q "app-ios" "$GIDIR/extra-repos" 2>/dev/null \
+  && ok "the run made the folder a repository and cloned an app beside it: the app is picked up" \
+  || bad "a clone inside a repository the run made was not picked up ($(cat "$GIDIR/extra-repos" 2>/dev/null | tr '\037' ' '))"
+printf '%s' "$(extra_repos_diffstat "$GIDIR")" | grep -q "theme.swift" \
+  && ok "and the review is shown the app's file" || bad "the app's file is not in the diff"
+
+mkcase; declare_outcome succeeded_changes
+( cd "$G" && git init -q && git config user.email t@t && git config user.name t \
+    && printf 'app-ios/\n' > .gitignore && git add -A && git commit -qm workspace \
+    && git clone -q -b develop "$UP" app-ios )
+record_extra_repos "$GIDIR"
+before="$(cat "$GIDIR/extra-repos" 2>/dev/null)"
+out="$(rungate)"
+[ "$before" = "$(cat "$GIDIR/extra-repos" 2>/dev/null)" ] \
+  && ok "a checkout already inside a repository at the start keeps the base it was recorded with" \
+  || bad "a recorded checkout was re-adopted with a new base"
 
 echo "===== a spent Codex window does not hold a plain run ====="
 mkcase

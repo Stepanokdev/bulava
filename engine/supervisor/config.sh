@@ -33,7 +33,8 @@ export SUPERVISOR_CLAUDE_CHECKS
 : "${SUPERVISOR_MAX_ROUNDS:=3}"          # base patience: always allow at least this many FAIL rounds
 : "${SUPERVISOR_MAX_ROUNDS_HARD:=12}"    # absolute ceiling per session (runaway protection)
 : "${SUPERVISOR_STALL_LIMIT:=2}"         # consecutive no-progress FAIL rounds → park as genuinely stuck
-: "${SUPERVISOR_MAX_RUN_SECONDS:=28800}" # 8h of review rounds → park for a person (0 disables)
+: "${SUPERVISOR_MAX_RUN_SECONDS:=28800}" # 8h of review rounds → park for a person (0 disables). A long
+                                         # project (a plan of pieces) has none: rounds and stalls bound it
 # Quota is bought to be used, and these two numbers are how much of it the engine used to refuse to
 # touch. A reserve sounds prudent and costs a whole capability: at 90 the last half hour of every
 # five-hour window went unused, and the weekly guard cost days — Codex stood down at 91% with five
@@ -81,7 +82,7 @@ fi
 
 : "${SUPERVISOR_QUEUE_POLL:=30}"
 : "${SUPERVISOR_PROMPT_WAIT:=90}"
-: "${SUPERVISOR_MAX_PROJECT_SECONDS:=28800}"   # 8h per-project safety cap
+: "${SUPERVISOR_MAX_PROJECT_SECONDS:=28800}"   # queue: 8h per project (0 disables); a long project has none
 : "${SUPERVISOR_INJECT_CONFIRM_WAIT:=20}"      # s to confirm a task injection landed (fail-fast)
 
 : "${SUPERVISOR_HANDSHAKE_WAIT:=5}"            # s the launcher waits for the SessionStart run-id handshake
@@ -93,8 +94,13 @@ fi
 : "${SUPERVISOR_REQUIRE_HANDSHAKE:=1}"         # 1 = abort/rollback the start when the hooks do not
 
 : "${SUPERVISOR_VERIFIER_ENABLED:=1}"
-: "${SUPERVISOR_VERIFY_STEP_TIMEOUT:=600}"     # per verification step (s)
-: "${SUPERVISOR_VERIFY_TOTAL_TIMEOUT:=1500}"   # whole verifier wall-clock (s)
+# A step that passes ends when it passes, so these only decide how long a hung one is waited for —
+# and a game's end-to-end walk in a browser without a GPU took longer than the old 600 s just to
+# load: all three walks of one long run were cut off mid-way and the review could only call them
+# unproven. The whole verifier and the review after it run inside the Stop hook, whose own limit
+# (install.sh, 3h) is set above the verifier's total so the hook is never killed first.
+: "${SUPERVISOR_VERIFY_STEP_TIMEOUT:=1800}"    # per verification step (s)
+: "${SUPERVISOR_VERIFY_TOTAL_TIMEOUT:=7200}"   # whole verifier wall-clock (s)
 # Skipping the check that proves the work is the last thing to trade for quota: it turns a verified
 # night into an unverified one to save something nobody asked to save.
 : "${SUPERVISOR_VERIFY_GUARD:=100}"             # skip verify above this % window
@@ -119,7 +125,7 @@ fi
 : "${SUPERVISOR_PREFLIGHT_LOCK_WAIT:=1800}"     # legacy name for the one below
 : "${SUPERVISOR_PIPELINE_LOCK_WAIT:=3600}"      # how long a message waits for the run to be free (s)
 : "${SUPERVISOR_PUMP_POLL:=5}"                  # message pump: how often it re-checks for an idle worker (s)
-: "${SUPERVISOR_PUMP_IDLE_WAIT:=28800}"         # message pump: max wait for an idle worker (s)
+: "${SUPERVISOR_PUMP_IDLE_WAIT:=0}"             # message pump: max wait for an idle worker (s); 0 = until free
 : "${SUPERVISOR_KEEP_MESSAGE_ARTIFACTS:=12}"    # per-message artifact folders kept on an instance
 
 : "${SUPERVISOR_SKILL_SCOPE:=project}"   # project (default) | user

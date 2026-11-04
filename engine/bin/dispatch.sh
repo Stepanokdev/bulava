@@ -201,6 +201,10 @@ ln -sf "$BIN_DIR/worker-outcome.sh" "$idir/report-outcome" 2>/dev/null \
   || cp -f "$BIN_DIR/worker-outcome.sh" "$idir/report-outcome" 2>/dev/null || true
 ln -sf "$BIN_DIR/add-check.sh" "$idir/add-check" 2>/dev/null \
   || cp -f "$BIN_DIR/add-check.sh" "$idir/add-check" 2>/dev/null || true
+ln -sf "$BIN_DIR/show-reviewer.sh" "$idir/show-reviewer" 2>/dev/null \
+  || cp -f "$BIN_DIR/show-reviewer.sh" "$idir/show-reviewer" 2>/dev/null || true
+ln -sf "$BIN_DIR/piece.sh" "$idir/piece" 2>/dev/null \
+  || cp -f "$BIN_DIR/piece.sh" "$idir/piece" 2>/dev/null || true
 ln -sf "$BIN_DIR/consult-codex.sh" "$idir/consult-codex" 2>/dev/null \
   || cp -f "$BIN_DIR/consult-codex.sh" "$idir/consult-codex" 2>/dev/null || true
 for _h in web-shot:web-shot.py web-video:web-video.py artifact:artifact.sh; do

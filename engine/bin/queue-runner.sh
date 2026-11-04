@@ -2,12 +2,13 @@
 set -u
 BIN_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$BIN_DIR/supervisor-lib.sh"
+. "$BIN_DIR/lib/pieces.sh"
 QDIR="$SUP_STATE/queue"; PEND="$QDIR/pending"; DONE="$QDIR/done"; NEEDS="$QDIR/needs-user"
 LOG="$QDIR/runner.log"; STOP_FLAG="$QDIR/stop"; CURRENT="$QDIR/current"
 NS="${SUPERVISOR_NS_CMD:-$BIN_DIR/night-shift.sh}"   # overridable for tests
 POLL=$SUPERVISOR_QUEUE_POLL                       # from supervisor/config.sh
 PROMPT_WAIT=$SUPERVISOR_PROMPT_WAIT               # "
-MAX_PROJECT_SECONDS=$SUPERVISOR_MAX_PROJECT_SECONDS   # 8h safety cap (config.sh)
+MAX_PROJECT_SECONDS=$SUPERVISOR_MAX_PROJECT_SECONDS   # 8h, none for a long project (config.sh)
 export INJECT_LOG="$LOG"                              # inject_task logs send errors here
 
 log() { echo "$(date '+%F %T') [queue] $*" >> "$LOG"; }
@@ -122,7 +123,8 @@ while :; do
     [ -f "$idir/stalled.json" ] && { result="needs-user"; break; }
     [ -f "$STOP_FLAG" ] && { result="interrupted"; break; }
     [ -d "$idir" ] || { result="vanished"; break; }        # stopped manually
-    if [ $(( $(ts) - start_ts )) -ge "$MAX_PROJECT_SECONDS" ]; then result="timeout"; break; fi
+    if [ "$MAX_PROJECT_SECONDS" -gt 0 ] && ! pieces_present "$idir" \
+       && [ $(( $(ts) - start_ts )) -ge "$MAX_PROJECT_SECONDS" ]; then result="timeout"; break; fi
     sleep "$POLL"
   done
   log "project finished ($result): $proj"

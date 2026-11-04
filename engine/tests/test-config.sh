@@ -36,7 +36,9 @@ check "OUTCOME_PROTOCOL=1"           '[ "$(read_default SUPERVISOR_OUTCOME_PROTO
 check "COLLABORATION_MODE=adaptive_peer" '[ "$(read_default SUPERVISOR_COLLABORATION_MODE)" = adaptive_peer ]'
 check "CONSULT_TIMEOUT=900"          '[ "$(read_default SUPERVISOR_CONSULT_TIMEOUT)" = 900 ]'
 check "PREFLIGHT_TOTAL_TIMEOUT=2400"  '[ "$(read_default SUPERVISOR_PREFLIGHT_TOTAL_TIMEOUT)" = 2400 ]'
-check "PUMP_IDLE_WAIT=28800"          '[ "$(read_default SUPERVISOR_PUMP_IDLE_WAIT)" = 28800 ]'
+check "PUMP_IDLE_WAIT=0 (no cap)"     '[ "$(read_default SUPERVISOR_PUMP_IDLE_WAIT)" = 0 ]'
+check "MAX_RUN_SECONDS=28800 (8h; none for a long project)" '[ "$(read_default SUPERVISOR_MAX_RUN_SECONDS)" = 28800 ]'
+check "MAX_PROJECT_SECONDS=28800 (8h; none for a long project)" '[ "$(read_default SUPERVISOR_MAX_PROJECT_SECONDS)" = 28800 ]'
 check "KEEP_MESSAGE_ARTIFACTS=12"     '[ "$(read_default SUPERVISOR_KEEP_MESSAGE_ARTIFACTS)" = 12 ]'
 check "no automatic audit tuning remains" \
                                      '! grep -q "SUPERVISOR_AUDIT_GUARD\|SUPERVISOR_AUDIT_MAX_ATTEMPTS" "$ROOT/supervisor/config.sh"'

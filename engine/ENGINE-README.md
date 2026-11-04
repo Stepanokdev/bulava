@@ -429,8 +429,11 @@ Every default lives in **one file** — `supervisor/config.sh` (the single sourc
   the number of consultations is deliberately not limited
 - `SUPERVISOR_PREFLIGHT_TOTAL_TIMEOUT` — the ceiling on ALL preparation of one message, in seconds
   (default 2400): classification, design, research, two positions and the reconciliation together
-- `SUPERVISOR_PUMP_IDLE_WAIT` — how long the pump waits for the worker to become free
-  (default 28800)
+- `SUPERVISOR_PUMP_IDLE_WAIT` — how long the pump waits for the worker to become free, in seconds
+  (default 0: until it is free; the message stays queued either way)
+- `SUPERVISOR_MAX_RUN_SECONDS` / `SUPERVISOR_MAX_PROJECT_SECONDS` — optional wall-clock caps on one
+  run's review rounds and on one queued project (default 0: none). Long work is bounded by rounds,
+  stalls and quota, not by a clock
 - `SUPERVISOR_KEEP_MESSAGE_ARTIFACTS` — how many `messages/<id>` directories to keep per instance
   (default 12)
 - `SUPERVISOR_IDLE_KILL_HOURS` — the watchdog kills a LIVE session whose screen has not changed for

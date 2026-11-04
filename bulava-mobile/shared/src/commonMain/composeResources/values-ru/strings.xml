@@ -4,7 +4,7 @@
     <string name="onboarding_title">Bulava на телефоне</string>
     <string name="onboarding_lede">Работу по-прежнему делает Mac. Отсюда можно начать чат, ответить на вопрос или остановить прогон, а потом продолжить за столом с того же места.</string>
     <string name="step_install_title">Установите Bulava на Mac</string>
-    <string name="step_install_body">Её можно бесплатно скачать с bulava.app. Сам телефон ничего не выполняет: каждая задача работает на Mac.</string>
+    <string name="step_install_body">Её можно скачать с bulava.app. Сам телефон ничего не выполняет: каждая задача работает на Mac.</string>
     <string name="step_wifi_title">Одна сеть Wi‑Fi</string>
     <string name="step_wifi_body">Телефон говорит с Mac напрямую, через вашу локальную сеть. Из другой сети он не подключится, и это сделано намеренно: ваша работа никогда не идёт через интернет.</string>
     <string name="step_scan_title">Отсканируйте код на Mac</string>
