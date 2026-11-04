@@ -96,6 +96,16 @@ id_ed25519*
 # folders were open on this Mac.
 .claude/settings.local.json
 .claude/plans/
+
+# The director's own notes on this disk, never the product's: access to the machines he works with
+# (hosts, ports, tunnels — no keys) and the memex codebook that Claude loads at the start of a
+# session here. DECISIONS.md is not among them: it was in the repository long before, and stays.
+/.local/
+/CLAUDE.md
+/CONTEXT.md
+/EXPERIMENTS.md
+/BACKLOG.md
+/ROADMAP.md
 .vscode/
 .idea/
 *.log

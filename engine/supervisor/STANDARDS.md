@@ -137,6 +137,58 @@ Bulava takes it — it is the process macOS allows to record the screen — and 
 fails it says why and produces NOTHING: report the absence, never a placeholder image. The commonest
 reason is that Bulava is not running, and then there is no screenshot to be had.
 
+## Showing the reviewer what a person sees — `$IDIR/show-reviewer`
+
+The review reads your diff. A diff does not show a button pushed off the screen, text drawn over a
+picture or a model standing inside a wall, and work like that used to pass. When what you changed
+is something a person sees — a screen, a game, a page, an animation — show it:
+
+    $IDIR/show-reviewer evidence/login-error.png "1. неправильний пароль: помилка під полем, кнопка видна"
+    $IDIR/show-reviewer evidence/clips/menu.mp4 "2. меню відкривається поверх сторінки й закривається свайпом"
+
+The frames are attached to the reviewer's message; a clip arrives as a few frames taken from it.
+Say in the caption which criterion it proves. Use it when it helps the reviewer see what the code
+cannot show — how a thing looks, moves or reads — and show the states the task names, not only the
+good angle. It is a tool, not a ritual: a change whose result is plain from the code needs no
+frames. Get the frames by driving the product with ordinary controls
+(`$IDIR/web-shot`, `$IDIR/web-video`, the project's own Playwright scripts, `$IDIR/capture`), never
+by drawing them. When the product runs locally the reviewer may also open it in a browser of its
+own and look for itself — say in your report where it runs.
+
+## A big task — one piece at a time — `$IDIR/piece`
+
+A task too big to finish well in one pass — a game, an app, a site of many screens: several things a
+person would look at separately — comes out thin when it is built all at once. Every part exists and
+none is finished. Build it the way a careful person would hand it out: the sign-in first, and the
+screens behind it only once signing in is good.
+
+    $IDIR/piece plan "Вхід: email, пароль, помилки, відновлення" "Стрічка: картки, оновлення, порожній стан" …
+    $IDIR/piece start -- "неправильний пароль показує помилку під полем" "після входу відкривається стрічка" …
+    $IDIR/piece status
+
+Whether a task is one of these is yours to decide before you write code, whether or not the request
+says "in parts". Plan pieces when the result is several things a person would accept separately AND
+building them well will take you more than one sitting: a new product, several screens or systems
+that each need their own polish, work spread over more than one repository. Do NOT plan pieces for a
+fix, a feature, a screen, a refactor or a question, however many files it touches: one pass and one
+review is cheaper and better there, and a plan of one piece is not a plan. When unsure, start in one
+pass; if it turns out bigger than one review can judge, plan the rest as pieces then.
+
+You choose the pieces and their order — what the next one stands on comes first. A piece is the
+right size when one look can accept or reject it: one thing a person sees, 3 to 10 criteria a
+reviewer could fail by looking. If you cannot write such criteria, it is too big — plan it as two.
+Write the criteria before the code, and quote the task where it names something ("календар" stays a
+calendar; a substitution is a question to him, not a decision).
+
+Then work on that piece only, to a finished standard, show the reviewer its frames
+(`show-reviewer`), commit, and declare the outcome. The review starts only on that declaration —
+a stop without one, while a piece is open, sends you back to work, so wait for a long run with a
+blocking command rather than by ending your turn. After a failed review, fix and declare again. The
+review judges that piece and its own diff. When it
+passes, the gate accepts the piece and sends you to the next one with a fresh review budget; the
+job is done when the plan is empty. A new piece cannot be opened while one is not yet accepted. A
+defect found later in an accepted piece is a new piece of its own («Вхід: виправити …»).
+
 ## Showing a result on his phone — `$IDIR/phone-link`
 
 He often reads your answer on his phone, and a path to a file on the Mac is only text there. When

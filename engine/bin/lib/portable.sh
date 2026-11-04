@@ -17,6 +17,39 @@
 # substitutions and subshells of the shell that sourced this; a separate `bash -c` sources it again.
 
 case "${OSTYPE:-}" in darwin*) return 0 2>/dev/null || exit 0 ;; esac
+
+# `tail -r` — the file backwards — is BSD's alone. GNU coreutils and uutils (Ubuntu) refuse the flag,
+# and every caller hides tail's stderr, so the failure reads as an empty file: the review gate took
+# the worker's last message from `tail -r "$transcript"`, got nothing, and Codex, shown "no final
+# message captured", answered HANDOFF until the run parked as needs-user with the work committed.
+# Checked by asking tail itself, not by the stat test below: a userland may be GNU in one tool and
+# not another, and busybox has no `stat --version` yet lacks `-r` too.
+if ! command tail -r </dev/null >/dev/null 2>&1; then
+  tail() {
+    local a n="" rev=0
+    local -a files=()
+    for a in "$@"; do [ "$a" = -r ] && rev=1; done
+    [ "$rev" = 1 ] || { command tail "$@"; return; }
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -r) ;;
+        -n) n="${2:-}"; shift ;;
+        -n*) n="${1#-n}" ;;
+        -[0-9]*) n="${1#-}" ;;
+        --) shift; files+=("$@"); break ;;
+        -*) command tail "$@"; return ;;
+        *) files+=("$1") ;;
+      esac
+      shift
+    done
+    # BSD `tail -r -n N` is the last N lines, last first: the first N of the reversed whole.
+    if command -v tac >/dev/null 2>&1; then
+      command tac ${files[@]+"${files[@]}"}
+    else
+      awk '{ l[NR] = $0 } END { for (i = NR; i > 0; i--) print l[i] }' ${files[@]+"${files[@]}"}
+    fi | if [ -n "$n" ]; then command head -n "$n"; else cat; fi
+  }
+fi
 # Only GNU tools need translating. A BSD userland that is not macOS (FreeBSD) speaks these already.
 command stat --version >/dev/null 2>&1 || { return 0 2>/dev/null || exit 0; }
 

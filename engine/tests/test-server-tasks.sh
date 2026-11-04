@@ -139,10 +139,14 @@ check "…and the task outlives it"                   '[ "$(task_get PRJ-9 .stat
 out="$(bash "$BIN/worker-send.sh" --task-id PRJ-9 --relation continue --message-id c-2 --source mr --author alice \
         --answers q-none "$PROJ" - - - "поправ назву" 2>&1)"; rc=$?
 check "an answer to a question that is not open is a conflict" '[ "$rc" = 4 ]'
+# The worker the network took mid-piece left its work uncommitted on the task's branch.
+printf 'half done\n' > "$PROJ/h.txt"
 out="$(bash "$BIN/worker-send.sh" --task-id PRJ-9 --relation continue --message-id c-2 --source mr --author alice \
         "$PROJ" - - - "поправ назву" 2>&1)"; rc=$?
 check "a follow-up starts the next attempt"          '[ "$rc" = 0 ] && printf "%s" "$out" | grep -q "^TIER=dispatched" && [ "$(task_get PRJ-9 ".attempts | length")" = 2 ]'
 check "…marked as a continuation"                    '[ "$(task_get PRJ-9 ".attempts[-1].kind")" = continue ]'
+check "…even with the task's own unfinished work in the tree, which is kept as it was" '[ "$(cat "$PROJ/h.txt")" = "half done" ]'
+check "…and that work is the task's to be reviewed, not a draft hidden behind a snapshot" '[ ! -e "$I9/snapshot-ref" ] && git -C "$PROJ" diff "$(cat "$I9/base-sha")" --name-only | grep -qx h.txt'
 check "…in a fresh session on the same branch"       'tmux has-session -t "$SES" 2>/dev/null && [ "$(git -C "$PROJ" symbolic-ref --short HEAD)" = agent/PRJ-9-x ]'
 check "…reviewed from where the task began"          '[ "$(cat "$I9/base-sha")" = "$(task_get PRJ-9 .base_sha)" ]'
 check "…briefed with the task's goal, not the comment" 'jq -r .task "$I9/dispatch.json" | head -3 | grep -q "ПРОДОВЖЕННЯ ЗАДАЧІ PRJ-9" && jq -r .task "$I9/dispatch.json" | grep -q "Зроби PRJ-9"'

@@ -12,6 +12,7 @@ SELF="${BASH_SOURCE[0]}"; while [ -L "$SELF" ]; do d="$(cd -P "$(dirname "$SELF"
 BIN_DIR="$(cd -P "$(dirname "$SELF")" && pwd)"
 ROOT="$(cd "$BIN_DIR/.." && pwd)"
 . "$BIN_DIR/supervisor-lib.sh"
+. "$BIN_DIR/lib/pieces.sh"
 
 IDIR="${1:?usage: pipeline.sh <instance-dir> <envelope.json>}"
 ENVELOPE="${2:?usage: pipeline.sh <instance-dir> <envelope.json>}"
@@ -159,6 +160,16 @@ record_dispatch() {
     mv -f "$IDIR/checks.jsonl" "$IDIR/dispatches/${_prev_did:-previous}.checks.jsonl" 2>/dev/null \
       || rm -f "$IDIR/checks.jsonl" 2>/dev/null || true
     plog "registered checks of the previous task set aside (dispatches/${_prev_did:-previous}.checks.jsonl)"
+  fi
+  # So does the plan of a long project kept with the run: a new request is not its next piece. (A
+  # task a bridge named keeps its plan with the task record, and a new task is a new record.)
+  [ "${RELATION:-}" != continue ] && pieces_set_aside "$IDIR"
+  # The frames shown to the reviewer belong to the task they were shown for, exactly like its checks.
+  if [ "${RELATION:-}" != continue ] && [ -s "$IDIR/review-frames.jsonl" ]; then
+    _prev_did="$(jq -r '.id // empty' "$IDIR/dispatch.json" 2>/dev/null || true)"
+    mkdir -p "$IDIR/dispatches" 2>/dev/null || true
+    mv -f "$IDIR/review-frames.jsonl" "$IDIR/dispatches/${_prev_did:-previous}.review-frames.jsonl" 2>/dev/null \
+      || rm -f "$IDIR/review-frames.jsonl" 2>/dev/null || true
   fi
   rk="$(printf '%s' "$DISPATCH_ID" | tr 'A-Z' 'a-z' | tr -cd 'a-f0-9' | cut -c1-8)"
   # A turn of a conversation, not a task somebody filed. The backlog adopts finished dispatches

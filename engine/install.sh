@@ -168,14 +168,15 @@ if not WORKER_ONLY:
 
 # Worker-only hooks: passed to each worker by night-shift.sh via `claude --settings`.
 # 6h answer-question: may hold a question until Codex's 5h window resets.
-# 1h review-gate: targeted review plus deterministic build/test verification.
+# 3h review-gate: targeted review plus deterministic build/test verification (the verifier alone
+# may take SUPERVISOR_VERIFY_TOTAL_TIMEOUT, 2h).
 # The state folder the engine itself uses (SUPERVISOR_STATE_DIR, else ~/.claude/supervisor): the
 # worker settings are read from there by `worker_settings_for`.
 sup = pathlib.Path(os.environ.get("SUPERVISOR_STATE_DIR") or (pathlib.Path.home() / ".claude" / "supervisor"))
 sup.mkdir(parents=True, exist_ok=True)
 worker = {"hooks": {
     "Stop": [{"matcher": "", "hooks": [
-        {"type": "command", "command": cmd("hooks/review-gate.sh"), "timeout": 3600}]}],
+        {"type": "command", "command": cmd("hooks/review-gate.sh"), "timeout": 10800}]}],
     "SessionStart": [{"matcher": "", "hooks": [
         {"type": "command", "command": cmd("hooks/safety-check.sh"), "timeout": 15}]}],
     "PreToolUse": [

@@ -22,6 +22,8 @@ for pair in "report-outcome:worker-outcome.sh" \
             "report-finding:report-finding.sh" \
             "capture:worker-capture.sh" \
             "add-check:add-check.sh" \
+            "show-reviewer:show-reviewer.sh" \
+            "piece:piece.sh" \
             "history:history.sh"; do
   name="${pair%%:*}"; script="${pair#*:}"
   case "$launcher" in

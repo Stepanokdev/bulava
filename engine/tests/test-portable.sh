@@ -15,10 +15,32 @@ trap 'rm -rf "$TMP"' EXIT
 export SUPERVISOR_STATE_DIR="$TMP/state"; mkdir -p "$SUPERVISOR_STATE_DIR"
 . "$BIN_DIR/supervisor-lib.sh"
 
+echo "===== tail -r where tail has no -r ====="
+# GNU coreutils and uutils refuse the flag outright; a stand-in that does the same proves the layer on
+# any machine, macOS included, and its own section below proves it against the real tools.
+NOR="$TMP/no-r"; mkdir -p "$NOR"
+cat > "$NOR/tail" <<'EOF2'
+#!/bin/bash
+for a in "$@"; do [ "$a" = -r ] && { echo "error: unexpected argument '-r' found" >&2; exit 1; }; done
+exec /usr/bin/tail "$@"
+EOF2
+chmod +x "$NOR/tail"
+printf 'a\nb\nc\n' > "$TMP/lines"
+shim(){ ( PATH="$NOR:$PATH"; OSTYPE=linux-gnu; . "$BIN_DIR/lib/portable.sh"; eval "$1" ) 2>/dev/null | tr '\n' ' '; }
+[ "$(shim 'tail -r "$TMP/lines"')" = "c b a " ] && ok "tail -r FILE is the file backwards" || bad "tail -r FILE → $(shim 'tail -r "$TMP/lines"')"
+[ "$(shim 'printf "a\nb\n" | tail -r')" = "b a " ] && ok "tail -r reads stdin too" || bad "tail -r stdin → $(shim 'printf "a\nb\n" | tail -r')"
+[ "$(shim 'tail -r -n 2 "$TMP/lines"')" = "c b " ] && ok "tail -r -n 2 is the last two, last first" || bad "tail -r -n 2 → $(shim 'tail -r -n 2 "$TMP/lines"')"
+[ "$(shim 'tail -n 1 "$TMP/lines"')" = "c " ] && ok "tail without -r is tail" || bad "tail -n 1 → $(shim 'tail -n 1 "$TMP/lines"')"
+[ "$(shim 'type -t tail')" = "function " ] && ok "the stand-in is defined only because tail refused" || bad "no tail function"
+if command tail -r </dev/null >/dev/null 2>&1; then
+  [ "$( ( OSTYPE=linux-gnu; . "$BIN_DIR/lib/portable.sh"; type -t tail ) 2>/dev/null)" = file ] \
+    && ok "a tail that speaks -r keeps its own" || bad "tail shadowed although it has -r"
+fi
+
 case "${OSTYPE:-}" in
   darwin*)
     echo "===== macOS: nothing is redefined ====="
-    for f in stat date mktemp ps cut; do
+    for f in stat date mktemp ps cut tail; do
       [ "$(type -t "$f")" = file ] && ok "$f is the system's own" || bad "$f is shadowed by a $(type -t "$f")"
     done
     printf '\n%s\n' "failures: $fails"; [ "$fails" -eq 0 ]; exit

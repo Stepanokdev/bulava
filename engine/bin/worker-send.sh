@@ -101,8 +101,13 @@ if [ "${SUPERVISOR_PROFILE:-}" = server ] || [ -n "$TASK_ID" ]; then
   _brief="$(task_brief "$TASK_ID" "$MSG" "${SOURCE:-other}" "${AUTHOR:-unknown}" "$ANSWERS")"
   _rs=(); [ -s "$(task_dir "$TASK_ID")/material/runspec.json" ] && _rs=(--runspec "$(task_dir "$TASK_ID")/material/runspec.json")
   # The message id is recorded against the message as it came, not against the brief built around it.
+  # Uncommitted changes on the task's own branch are the run's unfinished work — left there by a
+  # worker the network or a crash took mid-piece. Continuing the task continues them, and the review
+  # still reads them as the task's. On any other branch they are somebody else's.
+  _dirty=fail
+  [ -n "$_branch" ] && [ "$(git -C "$PROJ" symbolic-ref --short -q HEAD 2>/dev/null)" = "$_branch" ] && _dirty=own
   _out="$(SUPERVISOR_TASK_RAW_MESSAGE="$MSG" "$BIN_DIR/dispatch.sh" --continue "${_fwd[@]}" ${_branch:+--branch "$_branch"} \
-           ${_base:+--review-base "$_base"} --dirty fail ${_rs[@]+"${_rs[@]}"} "$PROJ" "$_brief" 2>&1)"; _rc=$?
+           ${_base:+--review-base "$_base"} --dirty "$_dirty" ${_rs[@]+"${_rs[@]}"} "$PROJ" "$_brief" 2>&1)"; _rc=$?
   printf '%s\n' "$_out"
   exit "$_rc"
 fi

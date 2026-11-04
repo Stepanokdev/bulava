@@ -385,6 +385,31 @@ SUPERVISOR_HUNG_TURN_SECS=1 hung_turn_check "$IDIR" "$SESSION" 99999 RUN-1 \
 rm -f "$(hung_file "$IDIR")"
 printf '{"type":"assistant","uuid":"a-6","isApiErrorMessage":true,"apiErrorStatus":400,"message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"bad request"}]}}\n' >> "$TX"
 not_a_hang "a turn ended by a 4xx the retry cannot fix"
+printf '{"type":"assistant","uuid":"a-7","isApiErrorMessage":true,"apiErrorStatus":null,"error":"rate_limit","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"usage limit"}]}}\n' >> "$TX"
+not_a_hang "a status-less error that is a limit, not the network"
+
+echo "===== the network drops mid-turn, and comes back ====="
+# What happened (4 Nov): Wi-Fi went at 08:56 mid-piece. Claude Code wrote "Connection lost
+# mid-response" with no HTTP status, the worker sat at its prompt, and fifteen minutes later the
+# stall watch parked the run and failed the task. Restarted, its first call met "ENOTFOUND", and the
+# same again. Both are the service failing, and a nudge once it answers is all either needed.
+for msg in "API Error: Connection lost mid-response. The response above may be incomplete." \
+           "API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)"; do
+  new_instance; start_worker answer
+  printf '{"type":"user","uuid":"u-1","message":{"role":"user","content":"зроби це"}}\n' >> "$TX"
+  printf '{"type":"assistant","uuid":"%s","isApiErrorMessage":true,"apiErrorStatus":null,"error":"server_error","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"%s"}]}}\n' "$(uuidgen)" "$msg" >> "$TX"
+  [ "$(hung_turn_kind "$TX" | cut -d' ' -f1)" = api-error ] && ok "«${msg:11:24}…» is read as the service failing" \
+    || bad "«${msg}» was not recognised: $(transcript_last_word "$TX")"
+  make_still
+  SUPERVISOR_CLAUDE_REACHABLE_CMD=/usr/bin/false not_a_hang "while the service is still out of reach, nothing is typed"
+  make_still
+  SUPERVISOR_HUNG_TURN_SECS=99999 SUPERVISOR_HUNG_ERROR_SECS=1 hung_turn_check "$IDIR" "$SESSION" 99999 RUN-1 \
+    && grep -q "nudged the worker to carry on (api-error)" "$SUP_STATE/watchdog.log" \
+    && ok "once it answers, the worker is told to carry on — without the ten minutes a hang needs" \
+    || bad "no nudge after the connection came back: $(tail -3 "$SUP_STATE/watchdog.log")"
+  hung_recovery_open "$IDIR" && ok "and the episode holds the stall watch off while it works" \
+    || bad "no open episode: the stall watch would park the run"
+done
 
 echo "===== a compaction's summary is not a question ====="
 # What happened (13 Oct): the answer was finished at 20:24, and at 21:20 Claude Code compacted the

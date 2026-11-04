@@ -242,8 +242,8 @@ case "$cmd" in
       case "${NS_SETS[$i]}" in "@pair="*) NS_SETS[$i]="${NS_SETS[$i]#@pair=}" ;; esac
     done
     case "$DIRTY_CHOICE" in
-      ""|keep|commit|fail) ;;
-      *) echo "❌ --dirty: «${DIRTY_CHOICE}» — можна keep, commit або fail" >&2; exit 2 ;;
+      ""|keep|commit|fail|own) ;;
+      *) echo "❌ --dirty: «${DIRTY_CHOICE}» — можна keep, commit, own або fail" >&2; exit 2 ;;
     esac
     PROJECT_DIR="$(canon_path "${DIRARG:-$PWD}")"
     # The marker for the app, as for a workspace below: a folder that is gone is the director's to
@@ -700,6 +700,13 @@ $gone}"
         printf '%s\n' "$_why"
       elif ( cd "$PROJECT_DIR" && worktree_dirty . ); then
         case "$DIRTY_CHOICE" in
+          own)
+            # The task's own unfinished work, on its own branch: what the worker had written when
+            # the network or a crash took it mid-piece. It is the run's, not the director's — so no
+            # snapshot to measure from (that would hide it from the review); the run is measured
+            # from where the task began, and this work is part of what gets reviewed.
+            echo "$(date '+%F %T') [start] '$PROJECT_DIR' — the task's own uncommitted work carried into its next attempt" >> "$SUP_STATE/supervisor.log"
+            ;;
           commit)
             seen_is_current || ask_about_dirty_tree "Поки ти вирішував, зміни в теці стали іншими — ось вони зараз."
             _why="$(cd "$PROJECT_DIR" && director_commit "$DIRTY_MESSAGE" 2>&1)"; _rc=$?
@@ -855,6 +862,10 @@ $gone}"
       || cp -f "$BIN_DIR/challenge-criterion.sh" "$IDIR/challenge-criterion" 2>/dev/null || true
     ln -sf "$BIN_DIR/add-check.sh" "$IDIR/add-check" 2>/dev/null \
       || cp -f "$BIN_DIR/add-check.sh" "$IDIR/add-check" 2>/dev/null || true
+    ln -sf "$BIN_DIR/show-reviewer.sh" "$IDIR/show-reviewer" 2>/dev/null \
+      || cp -f "$BIN_DIR/show-reviewer.sh" "$IDIR/show-reviewer" 2>/dev/null || true
+    ln -sf "$BIN_DIR/piece.sh" "$IDIR/piece" 2>/dev/null \
+      || cp -f "$BIN_DIR/piece.sh" "$IDIR/piece" 2>/dev/null || true
     ln -sf "$BIN_DIR/consult-codex.sh" "$IDIR/consult-codex" 2>/dev/null \
       || cp -f "$BIN_DIR/consult-codex.sh" "$IDIR/consult-codex" 2>/dev/null || true
     ln -sf "$BIN_DIR/worker-task-boundary.sh" "$IDIR/task-boundary" 2>/dev/null \
@@ -1355,6 +1366,10 @@ $gone}"
       || cp -f "$BIN_DIR/challenge-criterion.sh" "$IDIR/challenge-criterion" 2>/dev/null || true
     ln -sf "$BIN_DIR/add-check.sh" "$IDIR/add-check" 2>/dev/null \
       || cp -f "$BIN_DIR/add-check.sh" "$IDIR/add-check" 2>/dev/null || true
+    ln -sf "$BIN_DIR/show-reviewer.sh" "$IDIR/show-reviewer" 2>/dev/null \
+      || cp -f "$BIN_DIR/show-reviewer.sh" "$IDIR/show-reviewer" 2>/dev/null || true
+    ln -sf "$BIN_DIR/piece.sh" "$IDIR/piece" 2>/dev/null \
+      || cp -f "$BIN_DIR/piece.sh" "$IDIR/piece" 2>/dev/null || true
     ln -sf "$BIN_DIR/consult-codex.sh" "$IDIR/consult-codex" 2>/dev/null \
       || cp -f "$BIN_DIR/consult-codex.sh" "$IDIR/consult-codex" 2>/dev/null || true
     ln -sf "$BIN_DIR/worker-task-boundary.sh" "$IDIR/task-boundary" 2>/dev/null \

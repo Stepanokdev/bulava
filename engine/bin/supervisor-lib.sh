@@ -1189,7 +1189,8 @@ transcript_last_word() {   # $1=transcript
                 | last // empty
                 | [ ($_TRANSCRIPT_KIND), (.uuid // \"-\"),
                     ((.apiErrorStatus // \"-\") | tostring),
-                    ((.timestamp // \"\") | (sub(\"\\\\.[0-9]+\";\"\") | fromdateiso8601? // 0) | tostring) ]
+                    ((.timestamp // \"\") | (sub(\"\\\\.[0-9]+\";\"\") | fromdateiso8601? // 0) | tostring),
+                    ((.error // \"-\") | tostring) ]
                 | join(\" \")" 2>/dev/null
 }
 
@@ -1222,7 +1223,7 @@ transcript_last_word() {   # $1=transcript
 : "${SUPERVISOR_HUNG_RECOVERIES:=3}"      # actions per episode: restarts and the nudges after them
 
 HUNG_RELAUNCH_PROMPT="Сесію Claude Code перезапущено: попередній хід завис і не дав жодної відповіді. Нічого не втрачено — продовжуй роботу над поточною задачею з того місця, де вона обірвалася. Якщо останнє повідомлення вище ще не виконане, виконай його повністю."
-HUNG_ERROR_PROMPT="Попередній хід обірвала помилка сервісу Claude. Продовжуй роботу над поточною задачею з того місця, де вона обірвалася; якщо останнє повідомлення вище ще не виконане, виконай його повністю."
+HUNG_ERROR_PROMPT="Попередній хід обірвала помилка сервісу Claude або мережі. Продовжуй роботу над поточною задачею з того місця, де вона обірвалася; якщо останнє повідомлення вище ще не виконане, виконай його повністю."
 
 hung_file() { printf '%s/hung-recovery.json' "${1:-}"; }
 
@@ -1267,16 +1268,24 @@ queued_message_fingerprint() {   # $1=idir
 }
 
 hung_turn_kind() {   # $1=transcript → "unanswered <uuid> <epoch>" | "api-error <uuid> <epoch>", or fails
-  local word kind uuid status at
+  local word kind uuid status at err
   word="$(transcript_last_word "${1:-}")" || return 1
-  read -r kind uuid status at <<< "$word"
+  read -r kind uuid status at err <<< "$word"
   case "$at" in ''|*[!0-9]*) at=0 ;; esac
   case "$kind" in
     prompt|tool-result)
       transcript_tools_outstanding "$1" && return 1
       printf 'unanswered %s %s' "$uuid" "$at" ;;
     api-error)
-      case "$status" in 5[0-9][0-9]) printf 'api-error %s %s' "$uuid" "$at" ;; *) return 1 ;; esac ;;
+      # A 5xx, or no HTTP answer at all: "Connection lost mid-response", "Can't reach the API
+      # server (ENOTFOUND)". Claude Code writes those with no status and `server_error`, and the
+      # worker sits at its prompt with the task half done until somebody types "continue". A
+      # status-less error of any other kind — a limit, a refused login — is not this.
+      case "$status" in
+        5[0-9][0-9]) printf 'api-error %s %s' "$uuid" "$at" ;;
+        -|null) case "${err:--}" in server_error|unknown|-) printf 'api-error %s %s' "$uuid" "$at" ;; *) return 1 ;; esac ;;
+        *) return 1 ;;
+      esac ;;
     *) return 1 ;;
   esac
 }
@@ -1698,12 +1707,16 @@ _hung_due() {   # $1=idir $2=session $3=stillness $4=transcript $5=now
     _turn_running "$session" && return 1
     HUNG_DUE_KIND="nudge"; HUNG_DUE_ENTRY="$(jq -r '.entry // "-"' "$f" 2>/dev/null)"
   else
+    found="$(hung_turn_kind "$tx")" || return 1
+    # A turn the service ended says so itself; a question with no answer only shows by the time
+    # nothing has moved. The error waits a couple of minutes, so a connection that is still flapping
+    # has a moment to settle, then the same doubling as a hang.
+    case "$found" in api-error\ *) base="${SUPERVISOR_HUNG_ERROR_SECS:-120}" ;; esac
     need=$(( base << (attempts > 2 ? 2 : attempts) ))
     [ "$(jq -r '.retry_now // false' "$f" 2>/dev/null)" = true ] && need=0
     [ "$still" -ge "$need" ] || return 1
     tx_age=$(( now - $(stat -f %m "$tx" 2>/dev/null || echo "$now") ))
     [ "$tx_age" -ge "$need" ] || return 1
-    found="$(hung_turn_kind "$tx")" || return 1
     read -r HUNG_DUE_KIND HUNG_DUE_ENTRY _ <<< "$found"
   fi
   claude_reachable || return 1                 # offline: the offline state owns this
@@ -2501,8 +2514,8 @@ pipeline_running() {  # $1=instance dir
   kill -0 "$pid" 2>/dev/null
 }
 
-reset_review_budget() {  # $1=instance dir
-  local idir="${1:-}" key=""
+reset_review_budget() {  # $1=instance dir [$2=why, for the log]
+  local idir="${1:-}" why="${2:-новий запит директора}" key=""
   [ -n "$idir" ] && [ -d "$idir" ] || return 0
   [ -r "$idir/run-id" ] && key="$(tr -d '[:space:]' < "$idir/run-id")"
   if [ -z "$key" ] && [ -r "$idir/claude-session-id" ]; then
@@ -2510,11 +2523,11 @@ reset_review_budget() {  # $1=instance dir
   fi
   [ -n "$key" ] || return 0
   rm -f "$SUP_STATE/remediations-$key" "$SUP_STATE/rounds-$key" \
-        "$SUP_STATE/rounds-meta-$key" "$SUP_STATE/harness-$key" \
+        "$SUP_STATE/rounds-meta-$key" "$SUP_STATE/rounds-findings-$key" "$SUP_STATE/harness-$key" \
         "$SUP_STATE/handoffs-$key" "$SUP_STATE/misdeclared-$key" 2>/dev/null || true
   : > "$idir/started-at" 2>/dev/null || true
-  printf '%s [review-budget] новий запит директора — бюджет виправлень і годинник прогону обнулено (%s)\n' \
-    "$(date '+%F %T')" "$key" >> "$SUP_STATE/supervisor.log" 2>/dev/null || true
+  printf '%s [review-budget] %s — бюджет виправлень і годинник прогону обнулено (%s)\n' \
+    "$(date '+%F %T')" "$why" "$key" >> "$SUP_STATE/supervisor.log" 2>/dev/null || true
   return 0
 }
 
@@ -4631,10 +4644,13 @@ record_extra_repos() {   # $1=instance dir
   [ -n "$idir" ] && [ -d "$idir" ] || return 0
   rm -f "$idir/extra-repos" 2>/dev/null
   nested=""; [ -n "${PROJECT_DIR:-}" ] && nested="$(nested_repos_file "$PROJECT_DIR")"
-  { [ -n "$file" ] && [ -s "$file" ]; } || [ -s "$nested" ] || return 0
   command -v git >/dev/null 2>&1 || return 0
-
-  while IFS= read -r dir || [ -n "$dir" ]; do
+  # A plain folder holding repositories — an app, its server, its site, each a checkout of its own —
+  # is a product of several repositories, and the code in them is work like any other.
+  # The ones the engine left out of the git it made here are listed already (`exclude_nested_repos`).
+  { [ -n "$file" ] && [ -s "$file" ] && cat "$file"; [ -n "$nested" ] && [ -s "$nested" ] && cat "$nested"
+    nested_repos "$(cat "$idir/project" 2>/dev/null)"; } \
+    | awk 'NF && !seen[$0]++' | while IFS= read -r dir || [ -n "$dir" ]; do
     [ -n "$dir" ] || continue
     dir="$(canon_path "$dir")"
     [ -d "$dir" ] || continue
@@ -4666,13 +4682,64 @@ record_extra_repos() {   # $1=instance dir
     # empty field silently shifts every field after it — the base would be read as the digest and
     # the digest as a flag. Nothing here can contain \037.
     printf '%s\037%s\037%s\037%s\037%s\n' "$dir" "$base" "$digest" "$dirty" "$acc" >> "$idir/extra-repos"
-  done < <({ [ -n "$file" ] && cat "$file" 2>/dev/null; [ -s "$nested" ] && cat "$nested"; } || true)
+  done
+}
+
+# The repositories inside a folder, two levels down (an app's checkout, or a workspace's group folder
+# of checkouts). Hidden folders and dependency trees are not product code. Inside a repository only a
+# checkout of its own counts: the outer diff never shows a line of it. A submodule (its .git a file)
+# is the outer repository's to show.
+nested_repos() {   # $1=folder → one repository root per line
+  local d="${1:-}" g inrepo=0
+  [ -n "$d" ] && [ -d "$d" ] || return 0
+  git -C "$d" rev-parse --git-dir >/dev/null 2>&1 && inrepo=1
+  for g in "$d"/*/.git "$d"/*/*/.git; do
+    [ -e "$g" ] || continue
+    [ "$inrepo" = 1 ] && [ ! -d "$g" ] && continue
+    case "$g" in */node_modules/*|*/Pods/*|*/vendor/*) continue ;; esac
+    canon_path "$(dirname "$g")"
+  done
+}
+
+# A repository the worker brought into a plain folder during the run — cloned it, or made it — was
+# not there to be recorded at the start. It joins the list measured from where it began: a clone
+# from the commit it shares with its remote, so the upstream project is not mistaken for the run's
+# work; a repository made here from nothing, so all of it is.
+adopt_nested_repos() {   # $1=instance dir
+  local idir="${1:-}" proj dir base up r m
+  [ -n "$idir" ] && [ -d "$idir" ] || return 0
+  proj="$(cat "$idir/project" 2>/dev/null)"; [ -n "$proj" ] || return 0
+  nested_repos "$proj" | while IFS= read -r dir; do
+    [ -n "$dir" ] || continue
+    grep -q "^$dir"$'\037' "$idir/extra-repos" 2>/dev/null && continue
+    base=""
+    up="$(git -C "$dir" rev-parse --verify --quiet '@{upstream}' 2>/dev/null || true)"
+    if [ -n "$up" ]; then
+      base="$(git -C "$dir" merge-base HEAD "$up" 2>/dev/null || true)"
+    else
+      for r in $(git -C "$dir" for-each-ref --format='%(objectname)' refs/remotes 2>/dev/null); do
+        m="$(git -C "$dir" merge-base HEAD "$r" 2>/dev/null || true)"
+        [ -n "$m" ] && { base="$m"; break; }
+      done
+    fi
+    [ -n "$base" ] || base="$(git -C "$dir" hash-object -t tree /dev/null 2>/dev/null)"
+    # "new" is never a digest, so anything the repository holds beyond its base is work.
+    printf '%s\037%s\037%s\037%s\037%s\n' "$dir" "$base" new 0 "" >> "$idir/extra-repos"
+  done
 }
 
 # Whether a connected repository has work for the review: its working tree is not what it was at
 # the start of the run, or — on a task — its HEAD is not the commit the last passing review saw.
 extra_repo_has_work() {   # $1=dir $2=base $3=digest at the start $4=accepted commit (may be empty)
   local head
+  # A repository adopted mid-run (`adopt_nested_repos`) has no digest from the start: it has work
+  # when it moved off its base or holds anything not committed.
+  if [ "$3" = new ]; then
+    head="$(git -C "$1" rev-parse --verify --quiet HEAD 2>/dev/null || true)"
+    [ -n "$head" ] && [ "$head" != "$2" ] && return 0
+    [ -n "$(git -C "$1" status --porcelain 2>/dev/null | head -1)" ] && return 0
+    return 1
+  fi
   [ "$(repo_work_digest "$1" "$2")" != "$3" ] && return 0
   [ -n "${4:-}" ] || return 1
   head="$(git -C "$1" rev-parse --verify --quiet HEAD 2>/dev/null || true)"

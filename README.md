@@ -74,8 +74,8 @@ flowchart TD
 ```
 
 The loop has limits, and they are the point: three rounds of patience, two rounds without progress
-parks the run for a person, a ceiling of twelve rounds becomes review debt, eight hours of rounds
-parks it too. Nothing is accepted because an agent said it was done.
+parks the run for a person, a ceiling of twelve rounds becomes review debt. There is no clock: long
+work is bounded by progress and quota, not by hours. Nothing is accepted because an agent said it was done.
 
 The three arrangements this one replaced — and what each of them got wrong — are drawn out at
 [bulava.app/pipeline/](https://bulava.app/pipeline/).
