@@ -205,7 +205,12 @@ fi
 
 if echo " $STACKS " | grep -q ' backend-python '; then
   ran_any=1
-  run_step "python compiles" "$STEP_TO" python3 -m compileall -q .
+  # The project's own files only — never its .venv (lib/py-compile-project.py says why).
+  if [ "$(python3 "$BIN_DIR/lib/py-compile-project.py" "$PROJ" --count 2>/dev/null || echo 0)" -gt 0 ]; then
+    run_step "python compiles" "$STEP_TO" python3 "$BIN_DIR/lib/py-compile-project.py" "$PROJ"
+  else
+    add_criterion "python compiles" "python3 lib/py-compile-project.py" 0 "" skipped "no project Python files"
+  fi
   command -v pytest >/dev/null 2>&1 && run_step "pytest passes" "$STEP_TO" pytest -q
 fi
 

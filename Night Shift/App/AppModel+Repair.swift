@@ -138,6 +138,7 @@ extension AppModel {
     /// A row under the message is already asking the person something only they can answer.
     func chatHasAQuestionForYou(_ chatID: UUID) -> Bool {
         trustBlocked[chatID] != nil || setupBlocked.contains(chatID) || gitConsentBlocked[chatID] != nil
+            || toolBlocked[chatID] != nil
             || mcpBlocked[chatID] != nil || dirtyTreeBlocked[chatID] != nil
             || heavyFilesBlocked[chatID] != nil || handoffBlocked[chatID] != nil
             || signInBlocked[chatID] != nil

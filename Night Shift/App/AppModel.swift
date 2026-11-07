@@ -793,6 +793,14 @@ final class AppModel {
     /// worker would sit on the theme picker where nobody can answer it (`ClaudeOnboarding`).
     var setupBlocked: Set<UUID> = []
 
+    /// Chats whose send stopped because a command-line tool the engine runs on is not on this Mac
+    /// (`StartRefusal.missingTool`): the tool's name, for the row under the message that installs it.
+    var toolBlocked: [UUID: String] = [:]
+
+    /// Where a command meant for Terminal goes instead, when set — a test's way of seeing what a
+    /// button would have typed without opening Terminal on the Mac it runs on. Nil in the app.
+    var terminalRunner: ((String) -> Void)?
+
     /// A folder with no git where the run stopped to ask: create git here or not.
     ///
     /// Connecting a folder is not consent to change it. The engine no longer runs `git init`

@@ -75,6 +75,7 @@ You have hit your usage limit. Try again later.
 Stop and wait for limit to reset
 Ask your admin for more usage
 You are out of messages until the window resets
+Your organization has disabled Claude subscription access for Claude Code · Use an Anthropic API key instead, or ask your admin to enable access
 MSGS
 
 echo

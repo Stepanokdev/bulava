@@ -161,6 +161,13 @@ prepared_send() {   # $1 = instance dir ; echoes the tier and exits
   exit 5
 }
 
+# Every way on from here — a live session, a revive, a resume — runs in tmux. Without it the
+# `has-session` below only says "no session", the revive and the resume fail into the log, and the
+# app is left with a broken delivery to repair and report. Refused before trying, with the marker
+# the app reads as a tool the director has to install (`start-refused=tool:`, as `start` says it).
+command -v tmux >/dev/null 2>&1 || { echo "start-refused=tool:tmux"
+                                     echo "❌ tmux не встановлено (brew install tmux)" >&2; exit 1; }
+
 if tmux has-session -t "$session" 2>/dev/null; then
   inst_rid="$(tr -d '[:space:]' < "$SUP_INSTANCES/$slug/run-id" 2>/dev/null)"
   want_rid="$(printf '%s' "$RID" | tr -d '[:space:]')"

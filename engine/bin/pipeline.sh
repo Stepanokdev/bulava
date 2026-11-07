@@ -81,6 +81,16 @@ if ! pipeline_lock_acquire "$IDIR" "$PIPE/${SEQ}" "${SUPERVISOR_PIPELINE_LOCK_WA
   exit 75
 fi
 trap 'pipeline_lock_release "$IDIR"' EXIT INT TERM
+# The envelope was read before the lock was ours, and the review gate hands a follow-up over at the
+# worker's stop by running this pipeline itself (stop_followup_head); its delivery removes the
+# envelope while still holding this lock. If that happened while this waited, the
+# message has reached the worker already: preparing it again would deliver it twice and overwrite
+# the dispatch it was recorded on. The envelope is what tells: the gate removes it under this lock.
+# (Not the delivered mark by id — a message re-sent under the same id was delivered once before.)
+if [ ! -s "$ENVELOPE" ]; then
+  echo "$(date '+%F %T') [pipeline/$PIPE] message $SEQ was handed over at the worker's stop meanwhile — nothing to prepare" >> "$LOG"
+  exit 8
+fi
 ART="$IDIR/messages/$SEQ-$(printf '%s' "${MSG_ID:-$DISPATCH_ID}" | tr -cd 'A-Za-z0-9-')"
 mkdir -p "$ART" 2>/dev/null || true
 # Each message keeps its own reasoning, and an instance lives for days. Keep the recent ones — the
@@ -125,7 +135,12 @@ withdrawn() {
   # The whole run being torn down counts, and it is asked first: everything below reads files
   # inside a folder that may no longer exist.
   [ -d "$IDIR" ] || { plog "message $SEQ abandoned — the run is gone"; return 0; }
-  [ -s "$ENVELOPE" ] || { plog "message $SEQ withdrawn — envelope gone"; return 0; }
+  if [ ! -s "$ENVELOPE" ]; then
+    # Prepared for the gate at a stop, the delivery stage takes the envelope out of the queue itself
+    # once the prompt is written (pipeline-deliver.sh): gone, then, means delivered, not taken back.
+    [ -n "${SUPERVISOR_DELIVER_TO_FILE:-}" ] && [ -s "$SUPERVISOR_DELIVER_TO_FILE" ] && return 1
+    plog "message $SEQ withdrawn — envelope gone"; return 0
+  fi
   if [ -n "$MSG_ID" ] && message_cancelled "$IDIR" "$MSG_ID"; then
     plog "message $SEQ cancelled by the director"
     return 0
@@ -135,7 +150,9 @@ withdrawn() {
     plog "message $SEQ abandoned — run changed ($WANT_RID → $have)"
     return 0
   fi
-  tmux has-session -t "$SESSION" 2>/dev/null || { plog "message $SEQ abandoned — session $SESSION is gone"; return 0; }
+  # Prepared for the gate at the worker's stop: the worker is the one asking, from its Stop hook.
+  [ -n "${SUPERVISOR_DELIVER_TO_FILE:-}" ] \
+    || tmux has-session -t "$SESSION" 2>/dev/null || { plog "message $SEQ abandoned — session $SESSION is gone"; return 0; }
   if [ -n "$GUARD_DISPATCH" ]; then
     local cur; cur="$(jq -r '.id // empty' "$IDIR/dispatch.json" 2>/dev/null || true)"
     if [ "$cur" != "$GUARD_DISPATCH" ]; then

@@ -60,6 +60,55 @@ nonisolated final class ErrorSurfacesSnapshotTests: XCTestCase {
         }
     }
 
+    /// A Mac without tmux (5 Nov, 1.17): the message that did not go, the row that installs tmux
+    /// under it, and the corner card — reached through the same call a start makes with the
+    /// engine's refusal (`engine/tests/test-missing-tool.sh` pins that output). Run once per app
+    /// language: `xcodebuild … -testLanguage uk`.
+    @MainActor
+    func testRenderTheMissingToolRow() throws {
+        guard let out = ProcessInfo.processInfo.environment["BULAVA_SNAPSHOT_DIR"], !out.isEmpty else {
+            throw XCTSkip("set BULAVA_SNAPSHOT_DIR to write the pictures")
+        }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("snap-\(UUID().uuidString)")
+        setenv("BULAVA_STATE_DIR", dir.path, 1)
+        defer { try? FileManager.default.removeItem(at: dir); unsetenv("BULAVA_STATE_DIR") }
+        let m = AppModel()
+        m.settings.shareErrorReports = false
+        let product = m.products.add(name: "pocket-ledger")
+        let chat = m.conversations.newChat(for: product.id)
+        let sent = m.conversations.appendUser("Add a CSV export to the monthly report",
+                                              productID: product.id, chatID: chat.id)
+        m.conversations.updateDelivery(entryID: sent.id, .failed)
+        XCTAssertTrue(m.stopOnStartTheyMustClear(
+            chatID: chat.id, entryID: sent.id,
+            output: "❌ tmux не встановлено (brew install tmux)\nstart-refused=tool:tmux"))
+        XCTAssertNil(m.repairs[chat.id])
+        let entry = try XCTUnwrap(m.conversations.entries(inChat: chat.id).first { $0.id == sent.id })
+        let language = Bundle.main.preferredLocalizations.first ?? "en"
+
+        for scheme in [ColorScheme.light, .dark] {
+            let name = "\(language)-\(scheme == .dark ? "dark" : "light")"
+            let thread = VStack(alignment: .trailing, spacing: 16) {
+                EntryView(entry: entry, productID: product.id)
+                ForEach(m.toasts.reversed()) { ToastCard(toast: $0) }
+            }
+            .frame(width: 760)
+            .padding(24)
+            .background(Palette.content)
+            .environment(m)
+            .environment(\.colorScheme, scheme)
+            try write(thread, to: "\(out)/missing-tool-\(name).png")
+
+            // A tool Bulava has no formula for: the row says what to do, and no button guesses.
+            m.toolBlocked[chat.id] = "some-tool"
+            let bare = EntryView(entry: entry, productID: product.id)
+                .frame(width: 760).padding(24).background(Palette.content)
+                .environment(m).environment(\.colorScheme, scheme)
+            try write(bare, to: "\(out)/missing-tool-unknown-\(name).png")
+            m.toolBlocked[chat.id] = "tmux"
+        }
+    }
+
     @MainActor
     private func write(_ view: some View, to path: String) throws {
         let renderer = ImageRenderer(content: view)

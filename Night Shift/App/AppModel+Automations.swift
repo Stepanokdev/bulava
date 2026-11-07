@@ -82,7 +82,8 @@ extension AppModel {
 
     /// Apply an edit. A new brief is a new version; a new trigger starts its watch from what is
     /// there now and its schedule from now, so an edit never runs the nights before it.
-    func editAutomation(_ id: UUID, to edited: Automation) {
+    @discardableResult
+    func editAutomation(_ id: UUID, to edited: Automation) -> Bool {
         automations.update(id) { a in
             if a.brief != edited.brief { a.briefRevision += 1 }
             if a.trigger != edited.trigger {
@@ -179,6 +180,42 @@ extension AppModel {
         }
     }
 
+    /// The earlier run that holds the next one back — on a question, unfinished, with changes
+    /// waiting, or still working in a job's folder — or nil when nothing of its own does. The same
+    /// conditions as the first three reasons of `reasonNotToStart`, so a skip can be said where he
+    /// will act on it: in that run's chat.
+    func runHoldingBack(_ automation: Automation) -> AutomationRun? {
+        let mine = automations.runs(for: automation.id)
+        if let r = mine.first(where: { !$0.state.isTerminal || ($0.state == .finished && $0.result == .needsYou) }) {
+            return r
+        }
+        if let r = mine.first(where: { $0.state == .finished && $0.result == .changes && $0.handoff == .waiting }) {
+            return r
+        }
+        if automation.doesJob {
+            return mine.first(where: { r in r.chatID.map { directPhase(for: $0).isActive || sendingChatIDs.contains($0) } ?? false })
+        }
+        return nil
+    }
+
+    /// A scheduled run was skipped: said where he will see it. Skips used to be written only into
+    /// the automation's history, folded away under "N skipped" — a question left unanswered on
+    /// 5 Nov quietly cost the next day's run, and a folder disconnected in October cost eighteen.
+    ///   • held back by an earlier run: a line in that run's chat, on the Mac and the phone, saying
+    ///     what to do there for the next run to happen;
+    ///   • every skip whose reason is new: a notification, once — not one per day for the same wall.
+    func announceSkip(_ automation: Automation, why: String, at now: Date, previous: AutomationRun?) {
+        let when = Fmt.stamp(now)
+        if let holder = runHoldingBack(automation), let chat = holder.chatID {
+            let text = String(format: String(localized: "Automation «%@» did not start on schedule (%@): %@ The next run happens once this one is settled."),
+                              automation.name, when, why)
+            conversations.postNotice(text, productID: automation.productID, chatID: chat)
+        }
+        if !(previous?.state == .skipped && previous?.note == why) {
+            notify(title: String(format: String(localized: "Automation «%@» skipped a run"), automation.name), body: why)
+        }
+    }
+
     /// Why a run cannot start right now, or nil. Each reason is something he can act on or wait out.
     func reasonNotToStart(_ automation: Automation, now: Date) -> String? {
         let mine = automations.runs(for: automation.id)
@@ -229,12 +266,14 @@ extension AppModel {
             if byHand { toast = ToastMessage(text: why, kind: .info); return .refused }
             // What a watch found stays gathered for the next chance instead of being lost to a skip.
             if !items.isEmpty { return .refused }
+            let previous = automations.runs(for: automation.id).first
             var run = AutomationRun(automationID: automation.id, occurrence: occurrence, reason: reason,
                                     state: .skipped, briefRevision: automation.briefRevision, createdAt: now)
             run.note = why
             run.finishedAt = now
             run.seen = true
             automations.record(run)
+            announceSkip(automation, why: why, at: now, previous: previous)
             return .refused
         }
         let state: AutomationRun.State

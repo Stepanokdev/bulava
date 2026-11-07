@@ -701,6 +701,18 @@ final class ConversationStore {
         append(entry)
     }
 
+    /// A line from the app that the person must see in that chat, on the Mac and on the phone
+    /// (`ConversationEntry.shown`). Never twice with the same words in one chat.
+    func postNotice(_ text: String, productID: UUID, chatID: UUID,
+                    tone: ConversationEntry.Tone = .attention) {
+        guard !entries.contains(where: {
+            $0.chatID == chatID && $0.kind == .event && $0.text == text
+        }) else { return }
+        var entry = ConversationEntry(productID: productID, kind: .event, text: text, tone: tone, shown: true)
+        entry.chatID = chatID
+        append(entry)
+    }
+
     func detach(taskID: UUID, keepingIn productID: UUID) {
         var changed = false
         entries.removeAll { entry in

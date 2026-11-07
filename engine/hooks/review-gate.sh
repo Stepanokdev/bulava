@@ -188,6 +188,15 @@ piece_after_pass() {
   declare -F claude_checks_home >/dev/null && rm -f "$(claude_checks_home "$IDIR_SCOPE")/rounds" 2>/dev/null
   gate_event gate.piece accepted "Шматок $n «${title}» прийнято — далі «${next}»"
   journal_event "$IDIR_SCOPE" piece "accepted $n: $title; next: $next" '{"source":"gate"}' 2>/dev/null || true
+  # The director has sent a new task meanwhile. Opening the next piece would keep this turn — and his
+  # message — going until the whole plan is done (Tenders, 5 Nov: three and a half hours). The piece
+  # just accepted stays accepted; the turn ends here, and his message is prepared and delivered the
+  # usual way, as the new task it is (the rest of this plan is set aside with the old dispatch).
+  if new_task_waiting "$IDIR_SCOPE"; then
+    log "long project: piece $n «${title}» accepted; the director sent a new task — yielding to it instead of opening «${next}»"
+    gate_event gate.piece accepted "Шматок $n «${title}» прийнято. Ти надіслав нову задачу — беруся за неї замість «${next}»"
+    return 1
+  fi
   local _spec_note; _spec_note="$(piece_spec_note "$IDIR_SCOPE" "$cwd")"
   log "long project: piece $n «${title}» accepted at $(git -C "$cwd" rev-parse --short HEAD 2>/dev/null); next «${next}»"
   jq -n --arg reason "✅ Шматок $n «${title}» прийнято рев'ю. Не повертайся до нього, якщо не знайдеш у ньому дефект.
@@ -531,6 +540,37 @@ if [ "$PLAIN_RUN" = 1 ]; then
   fi
 fi
 
+# The director wrote while the worker was busy: at this stop his follow-up is handed over, before
+# the work is reviewed against the instruction it had before (`stop_followup_head` says why and
+# which message). It is prepared by the same pipeline as always and handed over as this stop's
+# reason. No review is spent on this stop — the work is about to change — and the outcome declared
+# before the message no longer stands: the worker declares again once it has taken it in. If it
+# cannot be prepared here (the pipeline is busy with it, it was taken back, a step failed), it is
+# left to the pump exactly as before.
+if [ -n "${IDIR_SCOPE:-}" ] && _stop_env="$(stop_followup_head "$IDIR_SCOPE")"; then
+  _stop_mid="$(jq -r '.message_id // empty' "$_stop_env" 2>/dev/null)"
+  _stop_msg="$(jq -r '.message // empty' "$_stop_env" 2>/dev/null)"
+  _stop_out="$(mktemp 2>/dev/null || printf '%s/stop-delivery.%s' "${TMPDIR:-/tmp}" "$$")"
+  SUPERVISOR_DELIVER_TO_FILE="$_stop_out" SUPERVISOR_PIPELINE_LOCK_WAIT=0 \
+    "$BIN_DIR/pipeline.sh" "$IDIR_SCOPE" "$_stop_env" >>"$LOG" 2>&1; _stop_rc=$?
+  if [ "$_stop_rc" = 0 ] && [ -s "$_stop_out" ] && was_delivered "$IDIR_SCOPE" "$_stop_mid"; then
+    _stop_prompt="$(cat "$_stop_out")"
+    rm -f "$_stop_out" "$_stop_env" "$(pipeline_active_file "$IDIR_SCOPE")" 2>/dev/null
+    jq -nc --arg t "$(jq -r '.thread_id // empty' "$IDIR_SCOPE/dispatch.json" 2>/dev/null)" --arg id "$_stop_mid" \
+       --arg m "$_stop_msg" --arg at "$(date '+%F %T')" '{thread_id:$t, message_id:$id, text:$m, at:$at}' \
+       >> "$(stop_followups_file "$IDIR_SCOPE")" 2>/dev/null
+    [ -s "$IDIR_SCOPE/outcome.json" ] && mv -f "$IDIR_SCOPE/outcome.json" "$IDIR_SCOPE/outcome.before-followup.json" 2>/dev/null
+    log "director's follow-up $_stop_mid handed over at the stop, prepared — no review this stop"
+    gate_event gate done "Передав агентові твоє уточнення — рев'ю після того, як він його врахує"
+    jq -n --arg r "📨 Поки ти працював, директор написав тобі. Це уточнення до поточної задачі — врахуй його зараз, у тій роботі, яку робиш; якщо воно змінює план чи критерії, зміни їх. Попередню заяву результату скасовано: коли врахуєш, заяви результат ще раз ($IDIR_SCOPE/report-outcome …).
+
+$_stop_prompt" '{decision: "block", reason: $r}'
+    exit 0
+  fi
+  rm -f "$_stop_out" 2>/dev/null
+  log "director's follow-up $_stop_mid could not be prepared at the stop (pipeline rc=$_stop_rc) — left to the pump"
+fi
+
 if [ "${SUPERVISOR_OUTCOME_PROTOCOL:-1}" = 1 ] && [ -n "${IDIR_SCOPE:-}" ] && [ -s "$IDIR_SCOPE/outcome.json" ]; then
   oc_result="$(jq -r '.result // empty' "$IDIR_SCOPE/outcome.json" 2>/dev/null)"
   oc_rid="$(jq -r '.run_id // empty' "$IDIR_SCOPE/outcome.json" 2>/dev/null)"
@@ -588,7 +628,23 @@ if [ "${SUPERVISOR_OUTCOME_PROTOCOL:-1}" = 1 ] && [ -n "${IDIR_SCOPE:-}" ] && [ 
             # once quota and the review-off switch have had their say like for any other review.
             REPORT_REVIEW=1
             log "outcome: succeeded_research with a report reviewer in the pipeline — reviewing the report"
+          elif [ "$oc_mode" = broad ] && [ "$oc_result" = succeeded_research ] \
+               && [ "${SUPERVISOR_PROFILE:-}" = server ] && [ "${SUPERVISOR_SERVER_RESEARCH_REVIEW:-1}" = 1 ]; then
+            # On a server a research task is published to the ticket as done, and some of them are
+            # production data fixes: EDCMP-7194 deleted 55 applications, 7201 created 8, and Codex read
+            # neither (3–5 Nov). So there the report is reviewed like any research pipeline's — the
+            # report the worker names, else its declared summary and last word, which is what the
+            # ticket gets — against criteria that ask what was changed and how it was checked.
+            REPORT_REVIEW=1; SERVER_RESEARCH=1
+            log "outcome: succeeded_research on a server — Codex reviews the report"
           elif [ "$oc_mode" = broad ]; then
+            # Settled here, by the gate: Codex never sees it. The record says so — review.json named
+            # Codex as the reviewer and the task record said he took full part, while on the factory
+            # four research and production data-fix tasks (EDCMP-7187/7194/7201/7208) were never
+            # read by anyone but the worker.
+            REVIEWER=gate
+            [ -n "${IDIR_SCOPE:-}" ] && codex_gap "$IDIR_SCOPE" review \
+              "заявлено «${oc_result}» без змін у коді — рушій прийняв це без рев'ю" nobody
             emit_review_json COMPLETE PASS debt "Declared '$oc_result' with an empty diff — no machine verification of a no-change/research claim is possible; needs human review."
             $oc_reset 2>/dev/null || true
             mark_done debt; log "outcome: $oc_result (broad, empty diff) → debt (human review, not auto-passed)"; exit 0
@@ -601,6 +657,95 @@ if [ "${SUPERVISOR_OUTCOME_PROTOCOL:-1}" = 1 ] && [ -n "${IDIR_SCOPE:-}" ] && [ 
           log "declared $oc_result but cannot CONFIRM empty diff (no valid base / git error) — NOT honoring, routing to review"
         fi ;;
     esac
+  fi
+fi
+
+# Subagents still at work: a stop is not a hand-in while they run.
+#
+# On 6 Nov a server worker handed the phone checks of a release to two background subagents, wrote
+# "waiting on the device agents" and ended its turn to wait for their reports. The gate took the
+# stop for a hand-in: the verifier and the independent checks ran while the Android subagent was
+# still changing its repository, the check saw the tree move under it and voided its result, and a
+# void required check parked the run for a person. The runner then stopped everything, the subagent
+# mid-way included, and committed its half-done stand override as the attempt's work. The worker
+# did nothing wrong by waiting; on a server there is nobody to wake it but this hook.
+#
+# So the hook waits for them itself (its timeout is hours), then sends the worker on to read their
+# reports. Only subagents count (`agentId:` in the transcript, settled by a task-notification with a
+# terminal status): a background shell may be a stand or a dev server that never ends. A subagent
+# whose own transcript has not moved for SUPERVISOR_BG_IDLE_SECONDS (an hour: one can sit silent
+# through a long build) is taken as gone. The waiting is bounded per run by SUPERVISOR_BG_WAIT_SECONDS;
+# when it runs out the worker is told so once, and the stop after that is judged as before. A
+# transcript that cannot be read counts as nothing live, which is the behaviour before this existed.
+background_agents_live() {  # $1 = transcript path → the ids of subagents still at work, one per line
+  [ -s "${1:-}" ] || return 0
+  python3 - "$1" "${SUPERVISOR_BG_IDLE_SECONDS:-3600}" <<'PY' 2>/dev/null || true
+import json, os, re, sys, time
+path, idle = sys.argv[1], int(sys.argv[2])
+launched, settled = [], set()
+done = re.compile(r"<task-id>([^<]+)</task-id>.*?<status>(completed|failed|killed|stopped|cancelled|canceled|error)</status>", re.S)
+for line in open(path, errors="replace"):
+    try:
+        r = json.loads(line)
+    except ValueError:
+        continue
+    kind = r.get("type")
+    if kind == "queue-operation":
+        text = r.get("content") or ""
+    elif kind == "user":
+        text = json.dumps((r.get("message") or {}).get("content"))
+    else:
+        continue
+    for tid, _ in done.findall(text.replace("\\n", "\n")):
+        settled.add(tid)
+    if kind == "user":
+        for aid in re.findall(r"agentId: (a[0-9a-f]{8,})", text):
+            if aid not in launched:
+                launched.append(aid)
+subdir = os.path.join(path[:-len(".jsonl")] if path.endswith(".jsonl") else path, "subagents")
+now = time.time()
+for aid in launched:
+    if aid in settled:
+        continue
+    own = os.path.join(subdir, "agent-%s.jsonl" % aid)
+    if os.path.exists(own) and now - os.path.getmtime(own) > idle:
+        continue
+    print(aid)
+PY
+}
+
+if [ "${SUPERVISOR_PROFILE:-}" = server ] && [ -n "${IDIR_SCOPE:-}" ] && [ "${PLAIN_RUN:-0}" = 0 ] \
+   && [ -n "${transcript:-}" ] && [ -s "$transcript" ]; then
+  _bg_live="$(background_agents_live "$transcript")"
+  if [ -n "$_bg_live" ]; then
+    _bg_f="$STATE_DIR/bg-wait-$RUN_KEY"
+    _bg_spent="$(cat "$_bg_f" 2>/dev/null || echo 0)"; case "$_bg_spent" in ''|*[!0-9]*) _bg_spent=0 ;; esac
+    _bg_max="${SUPERVISOR_BG_WAIT_SECONDS:-5400}"; _bg_poll="${SUPERVISOR_BG_POLL_SECONDS:-30}"
+    case "$_bg_max" in ''|*[!0-9]*) _bg_max=5400 ;; esac
+    case "$_bg_poll" in ''|*[!0-9]*) _bg_poll=30 ;; esac
+    [ "$_bg_poll" -ge 5 ] || _bg_poll=5
+    if [ "$_bg_spent" -lt "$_bg_max" ]; then
+      _bg_ids="$(printf '%s' "$_bg_live" | tr '\n' ' ')"
+      log "stop with subagents still at work ($_bg_ids) — waiting for them, not reviewing (waited ${_bg_spent}s of ${_bg_max}s)"
+      gate_event agent waiting "Агент чекає на своїх фонових помічників — перевірки почнуться після них" \
+        "$(jq -nc --arg ids "$_bg_ids" '{subagents:$ids}')"
+      while [ -n "$_bg_live" ] && [ "$_bg_spent" -lt "$_bg_max" ]; do
+        sleep "$_bg_poll"; _bg_spent=$((_bg_spent + _bg_poll)); printf '%s\n' "$_bg_spent" > "$_bg_f"
+        # Waiting here is the run at work: the watchdog's idle teardown reads this file.
+        touch "$IDIR_SCOPE/last-activity" 2>/dev/null || true
+        _bg_live="$(background_agents_live "$transcript")"
+      done
+      if [ -z "$_bg_live" ]; then
+        log "subagents finished after ${_bg_spent}s of waiting — sent the worker on to their reports"
+        _bg_r="🌙 Твої фонові агенти ($_bg_ids) завершили роботу, і їхні звіти зараз прийдуть тобі. Це ще не здача: прочитай їх, доведи роботу до кінця, закоміть її і тоді заяви результат ($IDIR_SCOPE/report-outcome succeeded_changes \"підсумок\"). Якщо знову доведеться чекати на фонову роботу, кінець ходу тут означає «чекаю», і рушій почекає разом із тобою."
+      else
+        log "subagents still at work after ${_bg_spent}s ($(printf '%s' "$_bg_live" | tr '\n' ' ')) — waiting budget spent"
+        _bg_r="🌙 Твої фонові агенти ($(printf '%s' "$_bg_live" | tr '\n' ' ')) працюють уже понад $((_bg_spent / 60)) хв. Рушій більше не чекатиме: зупини тих, що зависли, забери з їхньої роботи те, що є, доведи задачу до кінця й заяви результат. Наступна зупинка піде на перевірки як здача."
+      fi
+      jq -n --arg r "$_bg_r" '{decision: "block", reason: $r}'
+      exit 0
+    fi
+    log "subagents still at work ($(printf '%s' "$_bg_live" | tr '\n' ' ')) but the waiting budget is spent — judging the stop as before"
   fi
 fi
 
@@ -1096,6 +1241,22 @@ if [ "${REPORT_REVIEW:-0}" = 1 ] && [ -n "${IDIR_SCOPE:-}" ]; then
   _summary="$(jq -r '.summary // ""' "$IDIR_SCOPE/outcome.json" 2>/dev/null)"
   _since="$(jq -r '.at // empty' "$IDIR_SCOPE/dispatch.json" 2>/dev/null)"
   _report="$(python3 "$BIN_DIR/pipeline-tool.py" find-report --cwd "$cwd" --summary "$_summary" --since "$_since" 2>/dev/null || true)"
+  # A server's research answer goes to the ticket, not to a file: with no report file, what is read
+  # is what the ticket will say — the declared summary and the worker's own last words.
+  _rtext=""
+  if [ -z "$_report" ] && [ "${SERVER_RESEARCH:-0}" = 1 ]; then
+    _rlast=""
+    [ -f "$transcript" ] && _rlast="$(tail -r "$transcript" 2>/dev/null | jq -r 'select(.message.role=="assistant")
+      | .message.content[]? | select(.type=="text") | .text' 2>/dev/null | clip_utf8 20000)"
+    if [ -n "$_summary$_rlast" ]; then
+      _report="the declared summary and the worker's last message"
+      _rtext="SUMMARY (what the ticket gets):
+$_summary
+
+THE WORKER'S LAST MESSAGES (newest first):
+$_rlast"
+    fi
+  fi
   if [ -z "$_report" ]; then
     echo $((rounds + 1)) > "$rounds_file"
     if [ $((rounds + 1)) -ge "$_rmax" ]; then
@@ -1113,8 +1274,11 @@ if [ "${REPORT_REVIEW:-0}" = 1 ] && [ -n "${IDIR_SCOPE:-}" ]; then
   _cf="$(gate_opt .reportCriteria)"
   [ -n "$_cf" ] && [ -f "$_cf" ] && _crit="$(clip_utf8 8000 < "$_cf" 2>/dev/null)"
   [ -n "$_crit" ] || _crit="Every factual claim has a source, and the source really supports it. The report answers every question the task asked. Facts are kept apart from assumptions and recommendations."
+  [ "${SERVER_RESEARCH:-0}" = 1 ] && _crit="$_crit
+If the task changed data — in production or anywhere else — the report says exactly what was changed (which records, how many), by which command or script, that it is what the task asked for, how the result was checked afterwards, and how it would be undone. A data change the report does not account for, a count without its check, or a change the task did not ask for is grounds for FAIL."
   _task="$(jq -r '.task // ""' "$IDIR_SCOPE/dispatch.json" 2>/dev/null | clip_utf8 6000)"
-  _text="$(python3 "$BIN_DIR/pipeline-tool.py" report-text "$_report" --max 60000 2>/dev/null)"
+  if [ -n "$_rtext" ]; then _text="$(printf '%s' "$_rtext" | clip_utf8 60000)"
+  else _text="$(python3 "$BIN_DIR/pipeline-tool.py" report-text "$_report" --max 60000 2>/dev/null)"; fi
   rprompt="You are reviewing a RESEARCH REPORT, not code. The worker was asked to research a question and write
 a report; it changed no product code. Judge the report only. Round $((rounds + 1)) of at most $_rmax.
 
@@ -1213,6 +1377,17 @@ if [ -f "$transcript" ]; then
       | select(($content | startswith("Stop hook feedback:")) | not)
       | $content' "$transcript" 2>/dev/null | tail -n 6 | clip_utf8 8000)
 fi
+# A follow-up handed over at a stop reached the worker as Stop-hook feedback, which the turns above
+# leave out on purpose; it is the director's word all the same, and the newest one.
+if [ -n "${IDIR_SCOPE:-}" ] && [ -s "$(stop_followups_file "$IDIR_SCOPE")" ]; then
+  _fu_tid="$(jq -r '.thread_id // empty' "$IDIR_SCOPE/dispatch.json" 2>/dev/null)"
+  _fu_turns="$(jq -r --arg t "$_fu_tid" 'select(.thread_id == $t) | .text' "$(stop_followups_file "$IDIR_SCOPE")" 2>/dev/null \
+    | tail -n 40 | clip_utf8 6000)"
+  [ -n "$_fu_turns" ] && recent_user_turns="${recent_user_turns:+$recent_user_turns
+}
+(The director's follow-ups, handed to the worker at its stops while it worked — the newest requests:)
+$_fu_turns"
+fi
 
 # The run's work is not only what is in `cwd`.
 #
@@ -1256,6 +1431,47 @@ if git -C "$cwd" rev-parse --git-dir >/dev/null 2>&1; then
 fi
 
 rm -f "$STATE_DIR/outcome-nudge-$RUN_KEY" 2>/dev/null || true
+
+# A server worker that stops with work in the tree but without handing it in is not handing in. On a
+# Mac someone reads the stop; on a server the stop is the only way a worker has to wait, and OPP-495
+# (6 Nov) shows what it costs to take it for a hand-in: a worker wrote a summary marked «DRAFT —
+# mobile results pending», ended its turn, and the verifier, the independent checks and a Codex
+# review were spent on work it had said was unfinished. So, as for an open piece: a stop with no
+# succeeded_* outcome of this run, or with one whose summary says DRAFT, goes back with no verifier
+# and no review — a bounded number of times (SUPERVISOR_SERVER_UNDECLARED_MAX), after which it is
+# judged as before. A stop with nothing in the tree never gets here: the outcome protocol above asks
+# and then parks it. An open piece has its own rule, above.
+server_undeclared_reason() {   # → why this stop is not a hand-in, or nothing when it is one
+  local f="$IDIR_SCOPE/outcome.json" r rid cur
+  [ -s "$f" ] || { printf 'no outcome declared'; return 0; }
+  rid="$(jq -r '.run_id // empty' "$f" 2>/dev/null)"; cur="$(cat "$IDIR_SCOPE/run-id" 2>/dev/null || true)"
+  [ -z "$cur" ] || [ "$rid" = "$cur" ] || { printf 'the outcome on disk is from another run'; return 0; }
+  r="$(jq -r '.result // empty' "$f" 2>/dev/null)"
+  case "$r" in succeeded_*) ;; *) printf 'no outcome declared'; return 0 ;; esac
+  jq -r '.summary // ""' "$f" 2>/dev/null | grep -Eq '(^|[^[:alpha:]])(DRAFT|ЧЕРНЕТКА|ЧЕРНОВИК)([^[:alpha:]]|$)' \
+    && printf 'the declared summary is marked DRAFT'
+  return 0
+}
+if [ "${SUPERVISOR_PROFILE:-}" = server ] && [ -n "${IDIR_SCOPE:-}" ] && [ "${PLAIN_RUN:-0}" = 0 ] \
+   && [ "${SUPERVISOR_OUTCOME_PROTOCOL:-1}" = 1 ] && [ -z "$(piece_open "$IDIR_SCOPE")" ]; then
+  _su_f="$STATE_DIR/server-undeclared-$RUN_KEY"
+  _su_why="$(server_undeclared_reason)"
+  if [ -n "$_su_why" ]; then
+    _su="$(cat "$_su_f" 2>/dev/null || echo 0)"; case "$_su" in ''|*[!0-9]*) _su=0 ;; esac
+    _su=$((_su + 1)); printf '%s\n' "$_su" > "$_su_f"
+    if [ "$_su" -le "${SUPERVISOR_SERVER_UNDECLARED_MAX:-4}" ]; then
+      log "server: stop is not a hand-in ($_su_why, $_su) — no verifier, no review spent"
+      gate_event outcome nudged "Агент зупинився, але роботу не здав ($_su_why) — повернув без перевірок" \
+        "$(jq -nc --argjson n "$_su" --arg why "$_su_why" '{attempt:$n, why:$why}')"
+      jq -n --arg r "🌙 Зупинка без заяви результату — не здача ($_su_why), тому ні перевірки, ні рев'ю не запускаю. Якщо чекаєш на довгу команду — чекай блокуючою командою, а не завершенням ходу (на своїх фонових агентів рушій почекає сам). Коли робота справді готова й закомічена — заяви: $IDIR_SCOPE/report-outcome succeeded_changes \"підсумок\" (без позначки DRAFT). Не можеш закінчити — $IDIR_SCOPE/report-outcome blocked|needs_input \"що саме потрібно\". (Зупинка $_su/${SUPERVISOR_SERVER_UNDECLARED_MAX:-4}; після цього рев'ю піде й без заяви.)" \
+        '{decision: "block", reason: $r}'
+      exit 0
+    fi
+    log "server: $_su stops without a hand-in ($_su_why) — reviewing anyway"
+  else
+    rm -f "$_su_f" 2>/dev/null || true
+  fi
+fi
 
 if [ -n "${IDIR_SCOPE:-}" ]; then
   "$BIN_DIR/scope-gate.sh" "$cwd" "$IDIR_SCOPE" "$BASE_SHA" >/dev/null 2>&1 || true
@@ -1777,10 +1993,17 @@ if [ "$verdict" = "FAIL" ]; then
   harness=$(printf '%s\n' "$review" | grep -cE '\[harness_failure\]')
 
   nonharness=$(printf '%s\n' "$review" | grep -E '^[[:space:]]*[0-9]+[.)]' | grep -vcE '\[harness_failure\]')
-  if [ "$harness" -gt 0 ] && [ "${nonharness:-0}" -eq 0 ] && [ "$BOUNDED" != 1 ]; then
+  # Banked as debt and finished — except while a long project has a piece open. There "finished"
+  # stranded the job: the piece stayed unaccepted, the worker was told nothing, and the director saw
+  # an hour of silence (Tenders automation, 5 Nov: a verifier that compiled the project's .venv).
+  # A piece goes the bounded way below instead: the worker gets a round to get round the tool, and
+  # then the run is parked for the director with the reason in words.
+  if [ "$harness" -gt 0 ] && [ "${nonharness:-0}" -eq 0 ] && [ "$BOUNDED" != 1 ] \
+     && [ -z "$(piece_open "${IDIR_SCOPE:-}" 2>/dev/null)" ]; then
     emit_review_json COMPLETE FAIL debt "$review"
     log "harness_failure is the sole finding (broad) — banking debt, not looping (not a worker defect)"
-    mark_done debt; exit 0
+    mark_done debt "Робота прийнята із зауваженням: перевірку зупинив сам інструмент перевірки, а не робота — $(review_reason "$review")"
+    exit 0
   fi
 
   if [ "$harness" -gt 0 ] && [ "$BOUNDED" != 1 ]; then
@@ -1793,7 +2016,8 @@ if [ "$verdict" = "FAIL" ]; then
         echo ""; echo "$review"; } | legacy_note "$BLOCKED_OUT" BLOCKED.md
       emit_review_json COMPLETE FAIL needs-user "$review"
       log "harness_failure persisted $harness_rounds rounds — parking for the operator, not looping"
-      mark_done needs-user; exit 0
+      mark_done needs-user "Перевірка $harness_rounds рази поспіль упиралась у сам інструмент перевірки, а не в роботу: $(review_reason "$review")"
+      exit 0
     fi
     log "harness_failure round $harness_rounds/${SUPERVISOR_HARNESS_LIMIT:-2} — one more chance to produce evidence"
   else

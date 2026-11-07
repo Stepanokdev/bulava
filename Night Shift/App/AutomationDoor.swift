@@ -96,9 +96,10 @@ final class AutomationDoor {
 
     // MARK: Answering
 
-    /// `{"op": "list" | "create", "project", …}` from a run: `name`, `when`, `brief`, `mode`
-    /// ("branch" | "check" | "job"), `confirmFirst`, and for a job `reads` (folders), `tools` (MCP
-    /// servers) and `report`, for a new one. `turn` when it is from a Codex chat.
+    /// `{"op": "list" | "create" | "update", "project", …}` from a run: `name`, `when`, `brief`,
+    /// `mode` ("branch" | "check" | "job"), `confirmFirst`, and for a job `reads` (folders), `tools`
+    /// (MCP servers) and `report`, for a new one; `name` and `brief` to change an existing one's
+    /// brief. `turn` when it is from a Codex chat.
     func serve(_ request: URL) -> [String: Any] {
         guard let model, let data = try? Data(contentsOf: request),
               let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
@@ -123,6 +124,8 @@ final class AutomationDoor {
             return ["ok": true, "product": product.name, "automations": list(product)]
         case "create":
             return create(object, chat: chat, product: product, model: model)
+        case "update":
+            return update(object, chat: chat, product: product, model: model)
         default:
             return refusal("unknown op \(op)")
         }
@@ -138,6 +141,8 @@ final class AutomationDoor {
                 "when": AutomationPresentation.triggerLine(a.trigger),
                 "on": a.enabled,
                 "mode": a.doesJob ? "job" : a.checksOnly ? "check" : "branch",
+                // Which version of the brief is current: an agent that changed it can see it landed.
+                "revision": a.briefRevision,
             ]
             if let why = a.pausedReason { line["paused"] = why }
             if let last = model.automations.runs.filter({ $0.automationID == a.id }).map(\.createdAt).max() {
@@ -219,6 +224,57 @@ final class AutomationDoor {
             ])
         return ["ok": true, "id": id.uuidString, "name": name, "when": when, "folder": folder.name,
                 "mode": mode == .job ? "job" : mode == .checkOnly ? "check" : "branch"]
+    }
+
+    /// A new brief for an automation of this product, found by its name. Only the brief: the rest —
+    /// schedule, mode, folders, access — stays as he set it, and an agent that needs another kind of
+    /// automation makes a new one. Applied through the editor's own path (`editAutomation`), so a
+    /// new brief is a new revision exactly once, a run already under way keeps the brief it started
+    /// with, and the same brief again changes nothing. Said in the chat, where he sees it; and never
+    /// "updated" for a change that did not reach the disk.
+    private func update(_ object: [String: Any], chat: Chat, product: Product, model: AppModel) -> [String: Any] {
+        guard !chat.isAutomationRun else {
+            return refusal(String(localized: "An automation's own run does not change automations. Ask him in one of his chats."))
+        }
+        let name = (object["name"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let brief = (object["brief"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return refusal("--name: which automation") }
+        guard !brief.isEmpty, brief.count <= Self.maxBrief else {
+            return refusal("--brief-file: the brief is empty or longer than \(Self.maxBrief) characters")
+        }
+        let named = model.automations.automations.filter {
+            $0.productID == product.id && $0.name.caseInsensitiveCompare(name) == .orderedSame
+        }
+        guard let current = named.first else {
+            return refusal(String(format: String(localized: "“%@” has no automation called “%@”."), product.name, name))
+        }
+        guard named.count == 1 else {
+            return refusal(String(format: String(localized: "“%@” has more than one automation called “%@”; rename one in Bulava first."), product.name, name))
+        }
+        if current.brief == brief {
+            return ["ok": true, "name": current.name, "revision": current.briefRevision, "changed": false]
+        }
+        var edited = current
+        edited.brief = brief
+        guard model.editAutomation(current.id, to: edited),
+              let saved = model.automations.automation(id: current.id), saved.brief == brief else {
+            // Not on disk: put it back as it was in memory too, so the app, the next run and the disk
+            // all still hold the brief the agent was told is unchanged.
+            model.automations.update(current.id) { a in
+                a.brief = current.brief
+                a.briefRevision = current.briefRevision
+            }
+            return refusal(String(localized: "The new brief could not be saved. Nothing was changed."))
+        }
+        // The version is a label, not a count: passed as text, it needs no plural forms.
+        let said = String(format: String(localized: "Automation “%@”: its brief was changed in this chat (version %@). The next run follows it; a run already under way keeps the old one."),
+                          saved.name, String(saved.briefRevision))
+        model.conversations.postNotice(said, productID: product.id, chatID: chat.id, tone: .neutral)
+        let id = saved.id
+        model.toast = ToastMessage(
+            text: said, kind: .success, key: "automation-updated-\(id.uuidString)-\(saved.briefRevision)",
+            actions: [ToastAction(title: String(localized: "Open")) { [weak model] in model?.navigate(to: .automation(id)) }])
+        return ["ok": true, "name": saved.name, "revision": saved.briefRevision, "changed": true]
     }
 
     /// Whether a folder is in a git repository: it or a folder above it has a `.git`. Asked without

@@ -37,7 +37,10 @@ struct JSONFile<T: Codable> {
         return try? JSONDecoder.iso.decode(T.self, from: data)
     }
 
-    func save(_ value: T) {
+    /// True once it is on disk. Most callers carry on either way — the failure is logged — but one
+    /// that tells somebody "saved" must not say so for a write that never landed.
+    @discardableResult
+    func save(_ value: T) -> Bool {
         CoalescedWrites.shared.writeNow(url) { try? JSONEncoder.iso.encode(value) }
     }
 }
@@ -104,13 +107,15 @@ nonisolated final class CoalescedWrites: @unchecked Sendable {
 
     /// A synchronous save. It supersedes whatever was waiting, and holds the file's lock for the
     /// whole write so a background one cannot land an older value on top of it.
-    func writeNow(_ url: URL, encode: () -> Data?) {
+    @discardableResult
+    func writeNow(_ url: URL, encode: () -> Data?) -> Bool {
         let file = fileLock(url)
         file.lock(); defer { file.unlock() }
         lock.lock(); pending.removeValue(forKey: url); lock.unlock()
-        guard let data = encode() else { return }
-        do { try data.write(to: url, options: .atomic) } catch {
+        guard let data = encode() else { return false }
+        do { try data.write(to: url, options: .atomic); return true } catch {
             Log.lifecycle.error("could not save \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return false
         }
     }
 

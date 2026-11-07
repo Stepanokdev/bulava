@@ -199,6 +199,21 @@ check "(b) the gate refused although Codex said PASS"              'blocked "$ou
 check "(b) and it was the verifier that refused"                   'grep -q "VERIFIER OVERRIDE" "$SUPERVISOR_STATE_DIR/supervisor.log"'
 check "(b) the refusal quotes the failing test"                    'printf "%s" "$out" | grep -q "test-beta.sh"'
 
+echo "== 6. research with no change is settled by the gate, and the record says nobody reviewed it =="
+# The factory, 3–5 Nov: EDCMP-7187/7194/7201/7208 were settled here as debt, while review.json named
+# Codex as the reviewer and the task record said he took full part.
+mkcase
+declare_outcome succeeded_research "2026-11-05 17:11:00"
+rungate s-research >/dev/null 2>&1
+check "6. Codex was not called"                                   '[ ! -s "$CODEX_CALLED" ]'
+check "6. settled as debt"                                        'done_is debt'
+rj="$(find "$IDIR" -name review.json 2>/dev/null | head -1)"
+check "6. review.json names the gate, not Codex"                  '[ -z "$rj" ] || [ "$(jq -r .reviewer "$rj")" = gate ]'
+part="$(bash -c '. "$1/bin/supervisor-lib.sh"; codex_participation "$2"' _ "$ROOT" "$IDIR")"
+check "6. participation: unreviewed"                              '[ "$(jq -r .status <<<"$part")" = unreviewed ]'
+note="$(bash -c '. "$1/bin/supervisor-lib.sh"; codex_participation_note "$2"' _ "$ROOT" "$part")"
+check "6. and says so in words"                                   'grep -q "не проводилось" <<<"$note"'
+
 echo
 echo "passed=$pass failed=$fail"
 [ "$fail" = 0 ] || exit 1

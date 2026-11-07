@@ -27,6 +27,8 @@ nonisolated struct RelayResult: Sendable {
     var needsSignIn = false
     /// Claude Code no longer keeps the conversation, so no resume can bring it back.
     var conversationGone = false
+    /// A tool the engine runs on is not on this Mac (`start-refused=tool:`), so nothing was tried.
+    var missingTool: String?
 
     /// What `worker-send.sh` said, read into a result.
     ///
@@ -63,6 +65,7 @@ nonisolated struct RelayResult: Sendable {
         // `handshake_blocker`), which the last human line alone would lose.
         result.needsSignIn = StartRefusal.needsSignIn(out)
         result.conversationGone = StartRefusal.conversationGone(out)
+        result.missingTool = StartRefusal.missingTool(out)
         if tier == .error {
             result.undelivered = !launched || endedBy == .neverStarted
                 || (endedBy == .exited && marker == .error && exitCode == 1

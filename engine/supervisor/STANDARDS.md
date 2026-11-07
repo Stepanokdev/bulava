@@ -253,6 +253,7 @@ it an automation. Do not send him to the app to set it up, and never write Bulav
 
     $IDIR/automation list
     $IDIR/automation create --name "Щотижнева перевірка SEO" --when "weekly mon 09:00" --brief-file brief.md
+    $IDIR/automation update --name "Щотижнева перевірка SEO" --brief-file brief.md
 
 `list` first: one automation per need, never a second with the same name. `--when` is `manual`,
 `hourly N`, `daily HH:MM`, `weekdays HH:MM`, `weekly mon,thu HH:MM` or `monthly D HH:MM`, his own
@@ -264,6 +265,11 @@ unless `--report`. Every run is a new chat that knows nothing of this conversati
 brief: write it to stand alone — what to do and where, how to tell done from not, what to leave for
 him. It is made switched on, Bulava says so in this chat and gives him "Turn off"; tell him in words
 what it will do and when. Only when he asked for it — a run without him makes none.
+
+To change what an existing automation does, give it a new brief with `update` — never drive Bulava's
+window for it. Only the brief changes; another schedule, mode or access is his, in the app, or a new
+automation. The new brief is a new version (`list` shows it), the same brief again changes nothing,
+and a run already under way keeps the brief it started with. Bulava says so in this chat.
 
 ## Finishing — declare your outcome (every run, no exceptions)
 When the task is REALLY done, declare HOW it finished — exactly once — via

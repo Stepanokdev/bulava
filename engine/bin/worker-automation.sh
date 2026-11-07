@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# The product's automations, from a run in one of his chats: what there is, and making a new one
-# when he asks for it — through Bulava, which alone writes them.
+# The product's automations, from a run in one of his chats: what there is, making a new one when he
+# asks for it, and giving one a new brief — through Bulava, which alone writes them.
 #
 # An automation is a job Bulava starts by itself, on a schedule: each run is a new chat with no
 # memory of this one, given only the brief. Work on code runs in a fresh copy of the product's
@@ -14,6 +14,7 @@
 #   automation create --name "Weekly SEO check" --when "weekly mon 09:00" --brief-file brief.md \
 #                     [--check-only | --job [--reads FOLDER]… [--tools memex,…]] \
 #                     [--report | --no-report] [--confirm-first]
+#   automation update --name "Weekly SEO check" --brief-file brief.md
 #
 #   --when      manual | hourly N (1–12) | daily HH:MM | weekdays HH:MM |
 #               weekly mon,thu HH:MM | monthly D HH:MM — any schedule may end in "away": it then
@@ -35,6 +36,11 @@
 #   a second one with the same name. Exit 3: Bulava is not running. Exit 1: refused, with the reason.
 #   Exit 2: a missing or unknown argument.
 #
+#   update gives an existing automation of this product a new brief, found by its name — the brief
+#   and nothing else: its schedule, mode, folders and access stay as he set them (another kind of
+#   automation is a new one). The new brief is a new version; the same brief again changes nothing.
+#   A run already under way keeps the brief it started with. Bulava says so in this chat.
+#
 #   A run's chat is the one whose run folder it is called from ($IDIR/automation). A Codex chat has
 #   none: it calls this by its full path, and Bulava names the chat with BULAVA_CHAT_TURN.
 set -u
@@ -54,9 +60,9 @@ usage() { sed -n '/^# USAGE/,/^set -u/p' "$SELF" | sed 's/^# \{0,1\}//; $d'; }
 
 op="${1:-}"
 case "$op" in
-  list|create) shift ;;
+  list|create|update) shift ;;
   ""|-h|--help|help) usage; [ -n "$op" ]; exit $? ;;
-  *) echo "automation: невідома дія «${op}» (list або create)" >&2; exit 2 ;;
+  *) echo "automation: невідома дія «${op}» (list, create або update)" >&2; exit 2 ;;
 esac
 
 name=""; when=""; brief_file=""; mode="branch"; confirm=false; report=""; tools=""
@@ -91,6 +97,27 @@ if [ "$op" = create ]; then
   if [ "$mode" != job ] && { [ "${#reads[@]}" -gt 0 ] || [ -n "$tools" ]; }; then
     echo "automation: --reads і --tools — для завдання без коду (--job)" >&2; exit 2
   fi
+fi
+
+if [ "$op" = update ]; then
+  # Only what is given travels: a missing field is "unchanged", never a default — create's defaults
+  # (a branch, no confirmation) would quietly turn a job into work on code.
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --name|--brief-file)
+        if [ $# -lt 2 ] || [ -z "$2" ] || [ "${2#--}" != "$2" ]; then
+          echo "automation: $1 потребує значення" >&2; exit 2
+        fi
+        case "$1" in --name) name="$2" ;; --brief-file) brief_file="$2" ;; esac
+        shift 2 ;;
+      --when|--check-only|--job|--reads|--tools|--report|--no-report|--confirm-first)
+        echo "automation: update змінює лише завдання (--brief-file). Інший розклад, режим чи доступи — у редакторі Bulava або нова автоматизація." >&2
+        exit 2 ;;
+      *) echo "automation: невідомий параметр «$1»" >&2; exit 2 ;;
+    esac
+  done
+  [ -n "$name" ] || { echo "automation: потрібна --name — яку автоматизацію змінити" >&2; exit 2; }
+  [ -n "$brief_file" ] && [ -s "$brief_file" ] || { echo "automation: потрібна --brief-file з новим текстом завдання" >&2; exit 2; }
 fi
 
 project="$(cat "$IDIR_SELF/project" 2>/dev/null || true)"
@@ -137,6 +164,10 @@ if [ "$op" = create ]; then
          + (if ($reads | length) > 0 then {reads:$reads} else {} end)
          + (if ($tools | length) > 0 then {tools:$tools} else {} end)
          + (if $report == "" then {} else {report:($report == "true")} end) + '"$who" > "$req.tmp"
+elif [ "$op" = update ]; then
+  jq -n --arg op "$op" --arg project "$project" --arg turn "$turn" --arg run "$run" --arg name "$name" \
+        --rawfile brief "$brief_file" \
+        '{op:$op, project:$project, name:$name, brief:$brief} + '"$who" > "$req.tmp"
 else
   jq -n --arg op "$op" --arg project "$project" --arg turn "$turn" --arg run "$run" \
         '{op:$op, project:$project} + '"$who" > "$req.tmp"
@@ -162,7 +193,11 @@ case "$op" in
       (.automations[] | "- \(.name) · \(.when) · " + (if .on then "on" else "off" end)
          + (if .paused then " (\(.paused))" else "" end)
          + " · " + (if .mode == "check" then "only checks and reports" elif .mode == "job" then "does a job in a folder of its own, no code" else "changes code on a branch" end)
+         + (if .revision then " · brief v\(.revision)" else "" end)
          + (if .lastRun then " · last run \(.lastRun | strflocaltime("%Y-%m-%d %H:%M"))" else "" end))' "$done_file" ;;
+  update)
+    jq -r 'if .changed then "updated: «\(.name)» — brief v\(.revision). Bulava said so in this chat; the next run follows it."
+           else "unchanged: «\(.name)» already has this brief (v\(.revision))." end' "$done_file" ;;
   create)
     jq -r '"made: «\(.name)» — \(.when), " + (if .mode == "job" then "a job in a folder of its own, reading \(.folder)" else "in \(.folder)" end) + ". Bulava said so in this chat and offers him “Turn off”; tell him what it will do."' "$done_file" ;;
 esac

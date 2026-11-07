@@ -250,6 +250,20 @@ browser_mcp_flags() {   # $1=instance dir
   printf -- '--mcp-config %s ' "$(shq "$cfg")"
 }
 
+# Bulava Report (bin/bulava-report-mcp.py) for a worker on a server: an engine problem it runs into
+# is filed into that machine's private store, and the weekly pass pulls it from there. On a Mac the
+# server is registered for every project at user scope, so every chat has it already and a second
+# copy under the same name is not wanted; a server's accounts are the factory's, and its workers get
+# it from the engine they run instead of from anyone's settings. SUPERVISOR_BULAVA_REPORT=0 turns it off.
+report_mcp_flags() {   # $1=instance dir
+  [ "${SUPERVISOR_PROFILE:-}" = server ] || return 0
+  [ "${SUPERVISOR_BULAVA_REPORT:-1}" = 1 ] || return 0
+  local idir="$1" cfg="$1/bulava-report-mcp.json"
+  [ -f "$_SUP_BIN_DIR/bulava-report-mcp.py" ] && [ -d "$idir" ] || return 0
+  "$_SUP_BIN_DIR/bulava-report.sh" mcp-config > "$cfg.tmp" 2>/dev/null && mv -f "$cfg.tmp" "$cfg" || return 0
+  printf -- '--mcp-config %s ' "$(shq "$cfg")"
+}
+
 # ------------------------------------------------------------------ the run's choices, on disk
 #
 # The stamp above reaches only what tmux launches. Everything the APP spawns later — a preflight,
@@ -2514,6 +2528,67 @@ pipeline_running() {  # $1=instance dir
   kill -0 "$pid" 2>/dev/null
 }
 
+# ------------------------------------------------------- the director's words at the worker's stop
+#
+# A message waits for the worker to be free, and "free" means the Claude turn has ended. A stop the
+# review gate answers with a block does not end it: findings to fix, a handoff nudged back, the next
+# piece of a long project. A long project goes on like that until its whole plan is done. Tenders
+# automation, 5 Nov: a scope change sent at 23:54 reached the worker at 03:20, the follow-up to it at
+# 07:26, and three pieces were built on the plan the director had already changed.
+#
+# So the stop itself is where a waiting follow-up is handed over, before any review of the work
+# against the instruction it was given before. The message is prepared by the same pipeline as
+# always — its context, attachments and continuation brief — and its last stage hands the prompt
+# to the gate instead of typing it (pipeline-deliver.sh, SUPERVISOR_DELIVER_TO_FILE); the gate
+# gives it to the worker as the reason it is not done yet.
+#
+# Only a follow-up to the task being worked on: `relation=continue` on the active dispatch's
+# thread, decided when the message was accepted, at the HEAD of the queue (strict order). A new task
+# is not handed over mid-task — it waits for the turn to end, and a long project yields to it at the
+# end of the piece in hand (`new_task_waiting`). Anything this cannot account for — no id, taken
+# back, another run — is left to the pump, which knows how.
+stop_followup_head() {   # $1=instance dir → the envelope to prepare at this stop, or 1
+  local idir="${1:-}" tid have f mid rel etid rid
+  [ "${SUPERVISOR_STOP_DELIVERY:-1}" = 1 ] || return 1
+  [ -n "$idir" ] && [ -d "$idir" ] && [ -s "$idir/dispatch.json" ] || return 1
+  tid="$(jq -r '.thread_id // empty' "$idir/dispatch.json" 2>/dev/null)"
+  [ -n "$tid" ] || return 1
+  f="$(pending_head "$idir")" || return 1
+  mid="$(jq -r '.message_id // empty' "$f" 2>/dev/null)"
+  rel="$(jq -r '.relation // empty' "$f" 2>/dev/null)"
+  etid="$(jq -r '.thread_id // empty' "$f" 2>/dev/null)"
+  rid="$(jq -r '.run_id // empty' "$f" 2>/dev/null)"
+  have="$(tr -d '[:space:]' < "$idir/run-id" 2>/dev/null || true)"
+  [ -n "$mid" ] || return 1
+  message_cancelled "$idir" "$mid" && return 1
+  [ "$rel" = continue ] && [ "$etid" = "$tid" ] || return 1
+  [ -z "$rid" ] || [ -z "$have" ] || [ "$rid" = "$have" ] || return 1
+  printf '%s' "$f"
+}
+
+# What the director said through stop deliveries on this thread, for the review: it reached the
+# worker as Stop-hook feedback, which the review's "recent human turns" leave out on purpose.
+stop_followups_file() { printf '%s/stop-followups.jsonl' "${1:-}"; }
+
+# A new task the director sent while this one is still being worked on: it is not handed over at a
+# stop (`stop_followup_head` says why), so a long project yields to it at the end of the piece in
+# hand instead of opening the next one — or it would wait for the whole plan.
+new_task_waiting() {   # $1=instance dir → 0 when the queue holds one for this run
+  local idir="${1:-}" f mid rid have
+  [ -n "$idir" ] && [ "$(pending_count "$idir")" -gt 0 ] || return 1
+  have="$(tr -d '[:space:]' < "$idir/run-id" 2>/dev/null || true)"
+  for f in "$(pending_dir "$idir")"/[0-9]*.json; do
+    [ -f "$f" ] || continue
+    [ "$(jq -r '.relation // empty' "$f" 2>/dev/null)" = new ] || continue
+    mid="$(jq -r '.message_id // empty' "$f" 2>/dev/null)"
+    [ -n "$mid" ] && message_cancelled "$idir" "$mid" && continue
+    rid="$(jq -r '.run_id // empty' "$f" 2>/dev/null)"
+    [ -z "$rid" ] || [ -z "$have" ] || [ "$rid" = "$have" ] || continue
+    return 0
+  done
+  return 1
+}
+
 reset_review_budget() {  # $1=instance dir [$2=why, for the log]
   local idir="${1:-}" why="${2:-новий запит директора}" key=""
   [ -n "$idir" ] && [ -d "$idir" ] || return 0
@@ -2672,7 +2747,11 @@ usage_refresh() {   # $1=claude|codex
 #
 # A bare "usage limit" used to count as explicit, and it matches any sentence ABOUT limits —
 # including a bug report quoted into the pane.
-LIMIT_EXPLICIT='wait for limit to reset|ask your admin for more usage|(usage|session) limit reached|reached your [a-z ]*limit|hit your [a-z ]*limit|limit reached|(out of|run out of) (usage|messages)'
+# The organisation switching subscription access off is a refusal of the same kind: nothing the
+# worker can do, and it came back on its own within the hour on 5 Nov — while three chats and a
+# factory task (EDCMP-7201) were declared stalled and waited for the director to type "продовжуй".
+# Waiting and trying again, as for a limit, is the right answer to it too.
+LIMIT_EXPLICIT='wait for limit to reset|ask your admin for more usage|(usage|session) limit reached|reached your [a-z ]*limit|hit your [a-z ]*limit|limit reached|(out of|run out of) (usage|messages)|organi[sz]ation has disabled claude subscription access'
 LIMIT_AMBIGUOUS='resets? (at|in|today|tomorrow|[0-9])'
 
 # Our own status bar, removed from text before it is read as evidence. statusline.sh renders
@@ -3813,6 +3892,8 @@ codex_gap() {   # $1=idir $2=stage (preflight|align|consultation|part|question|r
 #   {"status":"full"}                              — nothing was missed
 #   {"status":"partial","gaps":[…]}                — he missed a step before the review
 #   {"status":"review_by_claude","gaps":[…]}       — the final review was not his
+#   {"status":"unreviewed","gaps":[…]}             — nobody reviewed it: the gate settled a claim it
+#                                                    cannot check (research or no change, empty diff)
 # Each gap is {stage, reason, by, count}: the same step for the same reason is counted, not repeated.
 codex_participation() {   # $1=idir
   local idir="${1:-}" f own rid did
@@ -3825,7 +3906,8 @@ codex_participation() {   # $1=idir
     | group_by([.stage, .reason]) | sort_by(.[0].at)
     | map(.[0] + {count: length} | {stage, reason, by, count})
     | if length == 0 then {status: "full"}
-      else {status: (if any(.[]; .stage == "review") then "review_by_claude" else "partial" end), gaps: .}
+      else {status: (if any(.[]; .stage == "review" and .by == "nobody") then "unreviewed"
+                     elif any(.[]; .stage == "review") then "review_by_claude" else "partial" end), gaps: .}
       end' "$f" 2>/dev/null || printf '{"status":"full"}'
 }
 
@@ -3835,7 +3917,8 @@ codex_participation_note() {   # $1=participation JSON
     def stage_uk: {preflight:"підготовка", align:"звірка позицій", consultation:"консультація",
                    part:"частина Codex", question:"питання воркера", review:"фінальне ревʼю"}[.] // .;
     if (.status // "full") == "full" then empty
-    else (if .status == "review_by_claude" then "Фінальне ревʼю виконав Claude замість Codex. "
+    else (if .status == "unreviewed" then "Фінальне ревʼю не проводилось. "
+          elif .status == "review_by_claude" then "Фінальне ревʼю виконав Claude замість Codex. "
           else "Codex брав участь не в усьому. " end)
          + "Без Codex: "
          + ([.gaps[:4][]? | (.stage | stage_uk) + (if .count > 1 then " ×\(.count)" else "" end)
@@ -4134,10 +4217,40 @@ thread_state() {   # $1=idir → open | settled | none
 #
 # Once a task has been settled the question is real, and only then does the free heuristic get a
 # vote — over DEPTH alone. It cannot stop either engine from reading the message.
+# The director saying in so many words that this is a new task. Tenders automation, 2026-11-05:
+# «це нова задача» arrived as the next step of a settled task, the stuck plan of that task stayed,
+# and nothing the director could type would move it.
+#
+# Only a DECLARATION counts: the words open the message, after nothing but an address or a filler
+# ("Так, братико, наступна задача: …", "а тепер окрема задача — …", "New task: …"), or they are said
+# as a statement there ("Це нова задача", "this is a new task"). The same words quoted or discussed
+# are not one — «нова задача:» in quotes, "the log says new task: failed", "як нова задача
+# відкривається" — and neither is a denial ("це не нова задача"). A follow-up read as a new task
+# loses the context it was a follow-up to, so when in doubt this says no.
+explicit_new_task() {   # $1=message → exit 0 when it declares a new task
+  printf '%s' "${1:-}" | perl -CSA -Mutf8 -e '
+    local $/; my $t = lc(<STDIN> // "");
+    $t = substr($t, 0, 400);
+    # Quoted text is somebody else'"'"'s words: removed before anything is read.
+    $t =~ s/«[^»]*»|“[^”]*”|„[^“”]*[“”]|"[^"]*"|`[^`]*`|(?<![[:alnum:]])\x27[^\x27]*\x27//g;
+    my $filler = qr/(?:так|ну|а|і|й|и|та|окей|ок|ok|okay|ну що ж|отже|далі|дальше|тепер|теперь|зараз|сейчас|добре|гаразд|хорошо|ладно|привіт|привет|so|now|then|and|also|alright|right|hey|next up|[^\s,.:;!?]+,)/;
+    my $kind = qr/(?:нова|новая|наступна|следующая|окрема|отдельная|інша|другая)\s+задача|(?:a\s+)?(?:new|next|separate|another|different)\s+task/;
+    my $say  = qr/(?:це|ось|это|вот|this\s+is|here\s+is|here\x27s)/;
+    exit 1 if $t =~ /^\s*(?:$filler\s+){0,5}$say?\s*(?:не|not)\s+/;
+    exit 0 if $t =~ /^\s*(?:$filler\s+){0,5}$kind\s*(?:[:.!—–-]|,|$)/;
+    my $sure = qr/(?:\s+(?:точно|справді|дійсно|реально|вже|уже|теж|definitely|really|actually|already|clearly))?/;
+    exit 0 if $t =~ /^\s*(?:$filler\s+){0,5}$say$sure\s+$kind(?![[:alnum:]])/;
+    exit 1;'
+}
+
 thread_relation() {   # $1=idir $2=message → continue|new
   local idir="${1:-}" msg="${2:-}" h last idle
   case "$(thread_state "$idir")" in
     none) printf 'new'; return 0 ;;
+  esac
+  # Said outright, it is not the engine's guess to overrule — open task or settled.
+  explicit_new_task "$msg" && { printf 'new'; return 0; }
+  case "$(thread_state "$idir")" in
     open)
       # "Open" is a claim about the director's attention as much as the code: they are looking at
       # work in progress, so the next thing they type belongs to it. A task nobody has said a word

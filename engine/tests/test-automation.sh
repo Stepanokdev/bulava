@@ -137,6 +137,46 @@ stop_fake
 "$IDIR/automation" create --name "X" --when "daily 20:00" --brief-file "$TMP/brief.md" --tools memex >/dev/null 2>&1; rc=$?
 [ "$rc" = 2 ] && ok "--tools on work with code: refused before Bulava is asked (2)" || bad "tools without --job: rc=$rc"
 
+echo "===== update: a new brief, and nothing else travels ====="
+# Refused before Bulava is asked.
+"$IDIR/automation" update --brief-file "$TMP/brief.md" >/dev/null 2>&1; rc=$?
+[ "$rc" = 2 ] && ok "no --name, exit 2" || bad "update without a name: rc=$rc"
+"$IDIR/automation" update --name "SEO" >/dev/null 2>&1; rc=$?
+[ "$rc" = 2 ] && ok "no brief, exit 2" || bad "update without a brief: rc=$rc"
+: > "$TMP/empty.md"
+"$IDIR/automation" update --name "SEO" --brief-file "$TMP/empty.md" >/dev/null 2>&1; rc=$?
+[ "$rc" = 2 ] && ok "an empty brief, exit 2" || bad "an empty brief: rc=$rc"
+for flag in --when --job --check-only --reads --tools --report --confirm-first; do
+  "$IDIR/automation" update --name "SEO" --brief-file "$TMP/brief.md" "$flag" x >/dev/null 2>&1; rc=$?
+  [ "$rc" = 2 ] || bad "update took $flag (rc=$rc): only the brief may change"
+done
+ok "schedule, mode, folders and access are not update's to change"
+bounded "$IDIR/automation" update --name; rc=$?
+[ "$rc" = 2 ] && ok "--name with no value: exit 2 at once" || bad "update --name with no value: rc=$rc"
+rm -f "$TMP/last-request.json"
+fake_bulava '{"ok":true,"name":"SEO","revision":3,"changed":true}'
+printf 'Новий текст завдання.\nДругий рядок.\n' > "$TMP/brief2.md"
+out="$("$IDIR/automation" update --name "SEO" --brief-file "$TMP/brief2.md" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && printf '%s' "$out" | grep -q "updated: «SEO» — brief v3" && ok "says it was updated, with the version" || bad "update: rc=$rc out=$out"
+jq -e '.op == "update" and .name == "SEO" and .brief == "Новий текст завдання.\nДругий рядок.\n" and .run == "RUN-7"' "$TMP/last-request.json" >/dev/null \
+  && ok "the request: its name, the brief whole, the run" || bad "update request: $(cat "$TMP/last-request.json")"
+jq -e 'has("mode") or has("when") or has("confirmFirst") or has("reads") or has("tools") or has("report") | not' "$TMP/last-request.json" >/dev/null \
+  && ok "and nothing else — no create defaults" || bad "update sent more than the brief: $(cat "$TMP/last-request.json")"
+[ -z "$(find "$REQ" -name '*.json' ! -name service.json)" ] && ok "and leaves no request behind" || bad "a request was left behind"
+stop_fake
+fake_bulava '{"ok":true,"name":"SEO","revision":3,"changed":false}'
+out="$("$IDIR/automation" update --name "SEO" --brief-file "$TMP/brief2.md" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && printf '%s' "$out" | grep -q "unchanged: «SEO» already has this brief (v3)" && ok "the same brief: unchanged" || bad "same brief: rc=$rc out=$out"
+stop_fake
+fake_bulava '{"ok":false,"error":"The new brief could not be saved. Nothing was changed."}'
+out="$("$IDIR/automation" update --name "SEO" --brief-file "$TMP/brief2.md" 2>&1)"; rc=$?
+[ "$rc" = 1 ] && printf '%s' "$out" | grep -q "could not be saved" && ok "a save that failed is a refusal, never 'updated'" || bad "failed save: rc=$rc out=$out"
+stop_fake
+fake_bulava '{"ok":true,"product":"Bulava","automations":[{"name":"SEO","when":"Щотижня","on":true,"mode":"job","revision":2}]}'
+out="$("$IDIR/automation" list 2>&1)"
+printf '%s' "$out" | grep -q "brief v2" && ok "list shows which brief version is current" || bad "list without the version: $out"
+stop_fake
+
 echo "===== refused: Bulava's reason ====="
 fake_bulava '{"ok":false,"error":"An automation'"'"'s own run does not make automations. Ask him in one of his chats."}'
 out="$("$IDIR/automation" create --name "Loop" --when "hourly 1" --brief-file "$TMP/brief.md" 2>&1)"; rc=$?
@@ -147,6 +187,7 @@ echo "===== every run has it ====="
 [ "$(grep -c 'ln -sf "$BIN_DIR/worker-automation.sh" "$IDIR/automation"' "$BIN_DIR/night-shift.sh")" = 2 ] \
   && ok "night-shift links it on a fresh start and on a resume" || bad "night-shift.sh does not link \$IDIR/automation in both places"
 grep -q '\$IDIR/automation create' "$ROOT/supervisor/STANDARDS.md" && ok "and the rules tell the run about it" || bad "STANDARDS.md says nothing"
+grep -q '\$IDIR/automation update' "$ROOT/supervisor/STANDARDS.md" && ok "update included" || bad "STANDARDS.md says nothing about update"
 
 echo
 [ "$fails" -eq 0 ] && echo "✅ automation: all checks pass" || echo "❌ automation: $fails failed"

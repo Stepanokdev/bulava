@@ -93,6 +93,10 @@ for f in "$SUP_STATE"/instances/*/project "$SUP_STATE"/runs/*/project; do
   [ -z "$b" ] && continue
   [ "$b" = "$own" ] && continue
   case " $names " in *" $b "*) continue ;; esac
+  # A folder named with an ordinary word names nobody (a project called "Everything" refused every
+  # export, Nov 2026). Hyphenated names are never skipped; without a word list nothing is.
+  if [ -r /usr/share/dict/words ] \
+     && grep -qxF -- "$(printf '%s' "$b" | tr 'A-Z' 'a-z')" /usr/share/dict/words; then continue; fi
   [ ${#b} -ge 5 ] && names="$names $b"
 done
 hits=""

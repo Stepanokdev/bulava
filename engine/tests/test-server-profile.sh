@@ -228,7 +228,9 @@ rm -f "$GI/outcome.json" "$GI/done" "$GI/done-digest"; rm -f "$SUPERVISOR_STATE_
 task_attempt_begin PRJ-5 "$GI" d-5 continue
 echo c > "$G/c.txt"
 jq -nc '{result:"", review:"pending"}' > "$GI/report/receipt.json"
-for _i in 1 2 3 4; do out="$(gate)"; [ -s "$GI/done" ] && break; done
+# A stop with nothing declared is first sent back without a review (SUPERVISOR_SERVER_UNDECLARED_MAX,
+# test-gate-server-handin.sh); only after those is it reviewed, which is the case this is about.
+for _i in 1 2 3 4 5 6 7 8; do out="$(gate)"; [ -s "$GI/done" ] && break; done
 check "a reviewer's pass over uncommitted work is never published as passed" '[ -s "$GI/done" ] && [ "$(cat "$GI/done")" != passed ] && [ "$(jq -r .review "$GI/report/receipt.json")" != passed ]'
 check "…because the pass itself was turned down, not because nothing was declared" 'grep -q "a pass over uncommitted work" "$SUPERVISOR_STATE_DIR/supervisor.log"'
 rm -f "$G/c.txt"

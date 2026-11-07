@@ -556,6 +556,7 @@ extension AppModel {
         chatErrors[chatID] = nil
         trustBlocked[chatID] = nil
         setupBlocked.remove(chatID)
+        toolBlocked[chatID] = nil
         gitConsentBlocked[chatID] = nil
         dirtyTreeBlocked[chatID] = nil
         stopDirtyTreeWatch("chat:\(chatID)")
@@ -1092,6 +1093,12 @@ extension AppModel {
                 conversations.updateDelivery(entryID: entryID, .failed)
 
                 failChat(chat.id, String(localized: "Another Night Shift run is working in this project. Wait for it to finish, or stop it, and send again."), .needsYou)
+            case .error where result.missingTool != nil, .none where result.missingTool != nil:
+                // worker-send refused before trying: tmux, which every way of delivering runs in,
+                // is not on this Mac. The person installs it — not a delivery to repair and report.
+                conversations.updateDelivery(entryID: entryID, .failed)
+                stopOnStartTheyMustClear(chatID: chat.id, entryID: entryID,
+                                         output: "start-refused=tool:\(result.missingTool ?? "")")
             case .none where result.needsSignIn, .error where result.needsSignIn:
                 // Claude asked for a sign-in and exited before the resume could see its screen —
                 // reported to us twice from 1.15.3 as "could not resume" (21.10). The sign-in row,
@@ -1382,8 +1389,9 @@ extension AppModel {
         \(Self.aboutBulava(answeredBy: "ты, Claude Code в папке продукта; Codex проверяет сделанное"))
 
         Что ты можешь сделать через Bulava сам (подробности — в правилах выше):
-        - `$IDIR/automation list` и `$IDIR/automation create …` — автоматизации продукта: посмотреть и
-          создать, когда он просит что-то делать регулярно или по расписанию;
+        - `$IDIR/automation list`, `$IDIR/automation create …` и `$IDIR/automation update …` — автоматизации
+          продукта: посмотреть, создать, когда он просит что-то делать регулярно или по расписанию, и дать
+          существующей новый текст задания;
         - `$IDIR/decide <отчёт>` — несколько решений сразу, с вариантами на Mac и телефоне;
         - `$IDIR/phone-link <файл или папка>` — показать результат на его телефоне;
         - `$IDIR/capture` — снимок экрана; `$IDIR/ui` — нажать в интерфейсе другого приложения;
@@ -1664,13 +1672,14 @@ extension AppModel {
     func visibleEntries(inChat chatID: UUID) -> [ConversationEntry] {
         conversations.entries(inChat: chatID).filter { entry in
             guard entry.kind == .user || entry.kind == .foreman
-                    || entry.kind == .codex || entry.kind == .question else { return false }
+                    || entry.kind == .codex || entry.kind == .question
+                    || (entry.kind == .event && entry.shown == true) else { return false }
             return entry.hiddenNotice != true
         }
     }
 
     /// A start the engine stopped for something only the person can clear: Claude Code waiting for
-    /// a sign-in, or a folder that is not a project. Said as that, with the sign-in row under the
+    /// a sign-in, a tool missing from this Mac, or a folder that is not a project. Said as that, with the sign-in row under the
     /// message where there is one — not as a breakage offered for repair and sent to us as a report.
     /// Internal for tests.
     @discardableResult
@@ -1678,6 +1687,11 @@ extension AppModel {
         if StartRefusal.needsSignIn(output) {
             signInBlocked[chatID] = SignInBlock(noticeEntryID: nil, askedEntryID: entryID)
             failChat(chatID, String(localized: "Claude Code is not signed in on this Mac, so this was not sent. Sign in and send it again."), .needsYou)
+            return true
+        }
+        if let tool = StartRefusal.missingTool(output) {
+            toolBlocked[chatID] = tool
+            failChat(chatID, StartRefusal.missingToolMessage(tool), .needsYou)
             return true
         }
         if StartRefusal.notAProject(output) {
@@ -1808,6 +1822,15 @@ extension AppModel {
         }
     }
 
+    /// The line that says a message which waited in the queue has reached the agent, or nil: it
+    /// did not wait (a few seconds needs no line), or it did not arrive (still queued, or failed).
+    nonisolated static func arrivalNotice(was: ConversationEntry.Delivery?, now: ConversationEntry.Delivery?,
+                                          sentAt: Date, at: Date) -> String? {
+        guard was == .queued, now == nil, at.timeIntervalSince(sentAt) >= 120 else { return nil }
+        return String(format: String(localized: "Your message from %@ reached the agent at %@."),
+                      Fmt.clock(sentAt), Fmt.clock(at))
+    }
+
     private func reconcileDelivery(in chatID: UUID, with instance: SupervisorInstance) {
         let queued = Set(instance.queuedMessageIDs)
         let failed = Set(instance.failedMessageIDs)
@@ -1818,6 +1841,12 @@ extension AppModel {
             guard entry.delivery != .replaced else { continue }
             let next: ConversationEntry.Delivery? = failed.contains(entry.id) ? .failed
                 : queued.contains(entry.id) ? .queued : nil
+            // A message that waited is said to have arrived. The "Queued" mark used to vanish
+            // without a word, and after hours in the queue (Tenders, 5 Nov) he could not tell
+            // whether the agent had it. A wait of a few seconds needs no line.
+            if let text = Self.arrivalNotice(was: entry.delivery, now: next, sentAt: entry.at, at: Date()) {
+                conversations.postNotice(text, productID: entry.productID, chatID: chatID, tone: .good)
+            }
             conversations.updateDelivery(entryID: entry.id, next)
         }
 
@@ -1884,7 +1913,9 @@ extension AppModel {
         case .reviewing, .verifying, .auditing:
             return String(localized: "Waiting for the review to finish")
         default:
-            return String(localized: "Waiting for the current answer to finish")
+            // The review gate hands a follow-up over at the agent's next stop, not at the end of a
+            // turn that a long project keeps going for hours.
+            return String(localized: "Reaches the agent at its next stop")
         }
     }
 

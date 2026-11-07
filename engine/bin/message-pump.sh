@@ -205,6 +205,8 @@ while :; do
        fi ;;
     # 143/137: the pipeline was killed rather than reaching its own cancellation check — Stop, or
     # a withdrawal on a message that carried no id. Either way the director asked for it to end.
+    # Handed over at the worker's stop by the review gate while the pipeline waited for its lock.
+    8) log "message $seq already reached the worker at its stop — not prepared again" ;;
     7|143|137) log "message $seq withdrawn during preparation — nothing was injected"
        [ -n "${mid:-}" ] && thread_cancelled "$IDIR" "$mid" ;;
     # A step he marked "Required" failed: the work must not start without it, so the worker gets

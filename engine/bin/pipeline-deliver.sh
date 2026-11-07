@@ -68,7 +68,14 @@ else
 fi
 # The same seam the watchdog and the launcher already have, for the same reason: the suite needs to
 # assert WHAT was handed over and WHEN, and typing into a real pane is proved by its own tests.
-if [ -n "${SUPERVISOR_INJECT_CMD:-}" ]; then
+#
+# Prepared for the review gate at the worker's stop (review-gate.sh, stop delivery): the worker is
+# not at a prompt to type into — it is inside its Stop hook, and the gate hands the prompt over as
+# the reason it is not done yet. So the prompt goes to the file the gate named, and everything a
+# delivery records afterwards is recorded the same way.
+if [ -n "${SUPERVISOR_DELIVER_TO_FILE:-}" ]; then
+  printf '%s\n' "$PROMPT" > "$SUPERVISOR_DELIVER_TO_FILE" 2>/dev/null; rc=$?
+elif [ -n "${SUPERVISOR_INJECT_CMD:-}" ]; then
   INJECT_PHASE_FILE="$PHASE" "$SUPERVISOR_INJECT_CMD" "$SESSION" "$ART/composed.txt"; rc=$?
 else
   INJECT_PHASE_FILE="$PHASE" INJECT_IDIR="$IDIR" inject_task "$SESSION" "$PROMPT"; rc=$?
@@ -80,6 +87,9 @@ case "$rc" in
     printf '%s outcome=delivered\n' "$(date '+%F %T.000')" >> "$PHASE.log" 2>/dev/null || true
     run_event "$IDIR" "${PIPE_STAGE:-deliver}" delivered "Сесія підтвердила, що отримала бриф" '{"node_role":"agent"}'
     [ -n "$MSG_ID" ] && { mark_delivered "$IDIR" "$MSG_ID"; thread_delivered "$IDIR" "$MSG_ID"; }
+    # Out of the queue while the pipeline lock is still held: a pump that read this envelope and is
+    # waiting for the lock finds it gone and does not prepare it a second time (pipeline.sh, exit 8).
+    [ -n "${SUPERVISOR_DELIVER_TO_FILE:-}" ] && [ -n "${PIPE_ENVELOPE:-}" ] && rm -f "$PIPE_ENVELOPE" 2>/dev/null
     # The director's own words just continued the work. A generic "carry on" behind them would
     # arrive as a second message about nothing.
     rm -f "$IDIR/resume-pending" "$IDIR/director-stopped" 2>/dev/null || true

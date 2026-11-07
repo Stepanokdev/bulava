@@ -29,7 +29,8 @@ final class AutomationStore {
         copies = (copyFile.load() ?? []).compactMap(\.value)
     }
 
-    private func saveAutomations() { automationFile.save(automations.map(Lossy.init)) }
+    @discardableResult
+    private func saveAutomations() -> Bool { automationFile.save(automations.map(Lossy.init)) }
     private func saveRuns() { runFile.save(runs.map(Lossy.init)) }
     private func saveCopies() { copyFile.save(copies.map(Lossy.init)) }
 
@@ -46,14 +47,19 @@ final class AutomationStore {
         saveAutomations()
     }
 
-    func update(_ id: UUID, _ change: (inout Automation) -> Void) {
-        guard let i = automations.firstIndex(where: { $0.id == id }) else { return }
+    /// True when the change is on disk, or there was nothing to change. A failed write keeps the
+    /// change in memory, as it always has — the next save writes the whole list again, and the
+    /// callers that pause, move or switch automations rely on that — so a caller that must not say
+    /// "saved" for it asks this, and undoes its own change if it has to.
+    @discardableResult
+    func update(_ id: UUID, _ change: (inout Automation) -> Void) -> Bool {
+        guard let i = automations.firstIndex(where: { $0.id == id }) else { return false }
         var a = automations[i]
         change(&a)
-        guard a != automations[i] else { return }
+        guard a != automations[i] else { return true }
         a.updatedAt = Date()
         automations[i] = a
-        saveAutomations()
+        return saveAutomations()
     }
 
     /// Moves how far the schedule has been looked at. That moves on every tick of the scheduler, and

@@ -298,6 +298,13 @@ extension AppModel {
         }
     }
 
+    /// The row under a message that stopped on a missing tool: the readiness screen's own install,
+    /// for a tool it knows the formula of. Nothing for any other name.
+    func installMissingTool(_ tool: String) {
+        guard let formula = StartRefusal.brewFormula(forTool: tool) else { return }
+        installWithHomebrew([formula])
+    }
+
     /// Runs Homebrew in a terminal the reader can watch. Installing packages silently, in the
     /// background, on someone's machine is not something this app does.
     func installWithHomebrew(_ names: [String], cask: Bool = false) {
@@ -358,6 +365,7 @@ extension AppModel {
     /// than not having the button. So a failure hands the command over instead, and it is on the
     /// clipboard by the time the message is read.
     private func runInTerminal(_ command: String) {
+        if let terminalRunner { terminalRunner(command); return }
         let escaped = command.replacingOccurrences(of: "\\", with: "\\\\")
                              .replacingOccurrences(of: "\"", with: "\\\"")
         let script = """

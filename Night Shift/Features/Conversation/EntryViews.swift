@@ -179,6 +179,14 @@ private struct MessageEntry: View {
             }
 
             if isUser, entry.delivery == .failed,
+               let chatID = entry.chatID, let tool = model.toolBlocked[chatID] {
+                toolRow(tool: tool)
+                    .disabled(readOnly)
+                    .padding(.leading, 37)
+                    .padding(.top, 4)
+            }
+
+            if isUser, entry.delivery == .failed,
                let chatID = entry.chatID, let folder = model.gitConsentBlocked[chatID] {
                 gitConsentRow(folder: folder, chatID: chatID)
                     .disabled(readOnly)
@@ -412,6 +420,36 @@ private struct MessageEntry: View {
                     .labelStyle(.titleAndIcon)
             }
             .buttonStyle(.bulava(.primary))
+        }
+        .padding(11)
+        .frame(maxWidth: 680, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: Metrics.radiusPanel, style: .continuous)
+            .fill(Palette.orangeSoft))
+    }
+
+    /// A tool the engine runs on is not on this Mac. Installed the way the readiness screen installs
+    /// it — Homebrew in a Terminal window — and the message is sent again with the button above.
+    @ViewBuilder private func toolRow(tool: String) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "shippingbox")
+                .font(.system(size: 12))
+                .foregroundStyle(Palette.orange)
+            let formula = StartRefusal.brewFormula(forTool: tool)
+            Text(formula != nil
+                 ? String(localized: "Homebrew installs it in a Terminal window. When it finishes, press Send again.")
+                 : String(format: String(localized: "Install %@, then press Send again."), tool))
+                .font(Typo.caption)
+                .foregroundStyle(Palette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            if formula != nil {
+                Button {
+                    model.installMissingTool(tool)
+                } label: {
+                    Text("Install with Homebrew")
+                }
+                .buttonStyle(.bulava(.primary))
+            }
         }
         .padding(11)
         .frame(maxWidth: 680, alignment: .leading)

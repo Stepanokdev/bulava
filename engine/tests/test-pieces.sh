@@ -33,7 +33,8 @@ if [ "${1:-}" = login ]; then echo "Logged in using ChatGPT"; exit 0; fi
 if echo "$*" | grep -q "HANDOFF | BLOCKED"; then
   : > "$CALLED"; printf '%s\n' "${@: -1}" > "$PROMPT"
   echo "STATE: COMPLETE"; echo "VERDICT: ${FAKE_VERDICT:-PASS}"
-  [ "${FAKE_VERDICT:-PASS}" = FAIL ] && echo "1. [acceptance_failure] ${FAKE_REPEAT:+[repeat] }src/a.ts — рука не тримає бластер"
+  if [ -n "${FAKE_HARNESS:-}" ]; then echo "1. [harness_failure] python compiles: .venv/olefile2.py — Python 2 syntax"
+  elif [ "${FAKE_VERDICT:-PASS}" = FAIL ]; then echo "1. [acceptance_failure] ${FAKE_REPEAT:+[repeat] }src/a.ts — рука не тримає бластер"; fi
   exit 0
 fi
 echo "VERDICT: PASS"
@@ -214,6 +215,44 @@ check "the next piece is sent with the spec" 'printf "%s" "$out" | jq -r .reason
 rm -f "$PROJ/SPEC.md" "$PROJ/docs/art-direction.md"; git -C "$PROJ" commit -qam nospec
 specs="$(bash -c '. "$1/bin/supervisor-lib.sh"; . "$1/bin/lib/pieces.sh"; piece_spec_files "$2" "$3"' _ "$ROOT" "$IDIR" "$PROJ")"
 check "a named file that is gone is not listed" '[ -z "$specs" ]'
+
+echo "===== a piece stopped only by the check tool itself is not silently finished ====="
+# Tenders automation, 5 Nov: a harness_failure as the sole finding was banked as debt and the run
+# finished — with the piece open, so the job stopped and nobody was told.
+mkcase
+piece plan "Документи" >/dev/null; piece start -- "документи видно" >/dev/null
+work docs a.ts; declare_done
+out="$(FAKE_VERDICT=FAIL FAKE_HARNESS=1 rungate s-h1)"
+check "not finished as debt"              '[ "$(cat "$IDIR/done" 2>/dev/null)" != debt ]'
+check "the worker hears about it"         'printf "%s" "$out" | jq -e ".decision == \"block\"" >/dev/null'
+check "the piece is still open"           '[ "$(state_of Документи)" = open ]'
+declare_done
+FAKE_VERDICT=FAIL FAKE_HARNESS=1 rungate s-h2 >/dev/null
+check "the second time: parked for the director" '[ "$(cat "$IDIR/done" 2>/dev/null)" = needs-user ]'
+check "…with the reason in words"         'grep -q "інструмент перевірки" "$IDIR/run-events.jsonl"'
+
+echo "===== a repository with no commits: refused, and nothing is written ====="
+# Tenders automation, 2026-11-05: `rev-parse HEAD` in an unborn repo printed the word HEAD, it was
+# stored as the piece's base, and the piece could never be accepted.
+RID="pieces-run-$RANDOM$RANDOM"
+PROJ="$(mktemp -d)"; REPOS+=("$PROJ")
+( cd "$PROJ" && git init -q && git config user.email t@t && git config user.name t && mkdir src && echo x > src/a.ts )
+IDIR="$(instance_dir "$(slug_for "$PROJ")")"; mkdir -p "$IDIR"
+printf '%s\n' "$(canon_path "$PROJ")" > "$IDIR/project"; printf '%s\n' "$RID" > "$IDIR/run-id"
+piece plan "Документи" >/dev/null
+before="$(shasum "$IDIR/pieces.json")"
+err="$(piece start -- "документ відкривається" 2>&1 >/dev/null)"; rc=$?
+check "piece start refuses"               '[ "$rc" -ne 0 ]'
+check "and says to commit first"          'grep -q "коміт" <<<"$err"'
+check "the plan is unchanged"             '[ "$(shasum "$IDIR/pieces.json")" = "$before" ]'
+git -C "$PROJ" add -A; git -C "$PROJ" commit -qm first
+piece start -- "документ відкривається" >/dev/null
+check "after the first commit: a full object id" '[[ "$(jq -r ".pieces[0].base_sha" "$IDIR/pieces.json")" =~ ^[0-9a-f]{40}$ ]]'
+
+echo "===== a stored base that is the word HEAD is not a base ====="
+jq '.pieces[0].base_sha = "HEAD"' "$IDIR/pieces.json" > "$IDIR/p.tmp" && mv "$IDIR/p.tmp" "$IDIR/pieces.json"
+pb="$(bash -c '. "$1/bin/supervisor-lib.sh"; . "$1/bin/lib/pieces.sh"; piece_base_sha "$2" "$3"' _ "$ROOT" "$IDIR" "$PROJ")"
+check "piece_base_sha gives nothing"      '[ -z "$pb" ]'
 
 echo "===== no plan: as before ====="
 mkcase; work plain a.ts; declare_done
