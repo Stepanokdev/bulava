@@ -759,6 +759,52 @@ nonisolated final class AutomationLifecycleTests: XCTestCase {
                         "a question he looked at but did not answer still waits")
     }
 
+    /// A skipped run used to be written only into the automation's history, folded under "N
+    /// skipped": the 5 Nov question left unanswered cost the next day's run without a word.
+    @MainActor
+    func testASkippedRunIsSaidInTheChatThatHoldsItBack() async {
+        let (m, _, project, product) = await world()
+        let a = Automation(productID: product.id, projectID: project.id, name: "Вечірній todo", brief: "x", trigger: .manual)
+        m.automations.add(a)
+        let chat = UUID()
+        var asked = AutomationRun(automationID: a.id, occurrence: "q", reason: .manual, state: .finished, briefRevision: 1)
+        asked.result = .needsYou
+        asked.chatID = chat
+        m.automations.record(asked)
+        XCTAssertEqual(m.runHoldingBack(m.automations.automation(id: a.id)!)?.id, asked.id)
+
+        let t0 = Date()
+        XCTAssertEqual(m.beginRun(m.automations.automation(id: a.id)!, occurrence: "slot:1", reason: .manual,
+                                  items: [], now: t0), .refused)
+        var said = m.visibleEntries(inChat: chat).filter { $0.kind == .event }
+        XCTAssertEqual(said.count, 1, "the skip is on screen in the chat that holds it back")
+        XCTAssertTrue(said.first?.text.contains("Вечірній todo") == true)
+        XCTAssertEqual(said.first?.shown, true)
+        XCTAssertEqual(m.automations.runs(for: a.id).first?.state, .skipped, "and still recorded as before")
+
+        m.beginRun(m.automations.automation(id: a.id)!, occurrence: "slot:2", reason: .manual,
+                   items: [], now: t0.addingTimeInterval(86_400))
+        said = m.visibleEntries(inChat: chat).filter { $0.kind == .event }
+        XCTAssertEqual(said.count, 2, "each skipped slot is said once")
+
+        // Bookkeeping events stay out of the conversation, as before.
+        m.conversations.postEventOnce("bookkeeping", productID: product.id, chatID: chat)
+        XCTAssertFalse(m.visibleEntries(inChat: chat).contains { $0.text == "bookkeeping" })
+    }
+
+    @MainActor
+    func testASkipNothingOfItsOwnHoldsBackPostsNoChatLine() async {
+        let (m, _, project, product) = await world()
+        let a = Automation(productID: product.id, projectID: project.id, name: "Gone", brief: "x", trigger: .manual)
+        m.automations.add(a)
+        try? FileManager.default.removeItem(atPath: project.path)
+        let before = m.conversations.entries.count
+        XCTAssertEqual(m.beginRun(m.automations.automation(id: a.id)!, occurrence: "slot:g", reason: .manual,
+                                  items: [], now: Date()), .refused)
+        XCTAssertNil(m.runHoldingBack(m.automations.automation(id: a.id)!))
+        XCTAssertEqual(m.conversations.entries.count, before, "no chat to say it in: a notification only")
+    }
+
     @MainActor
     func testAStopAndOneFailureDoNotSwitchItOff() async {
         let (m, _, project, product) = await world()

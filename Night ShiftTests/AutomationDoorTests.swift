@@ -332,12 +332,118 @@ nonisolated final class AutomationDoorTests: XCTestCase {
     /// Every chat's context says what Bulava is and which of its tools the run has — automations
     /// among them — so "make this run every week" is something any chat knows it can do.
     @MainActor
+    /// `automation update`: a new brief and nothing else, a new version exactly once, said in the chat.
+    /// On 7 Nov the weekly review's brief could only be changed by driving Bulava's window, and the
+    /// first try pasted it into the name.
+    func testAnAgentGivesAnAutomationANewBriefAndNothingElse() async throws {
+        let (model, door, _, _, chat) = try await ready()
+        let reads = state.path
+        let made = try ask(door, ["op": "create", "name": "Weekly review", "when": "weekly tue 09:00", "brief": brief,
+                                  "mode": "job", "reads": [reads], "confirmFirst": true, "report": true])
+        XCTAssertEqual(made["ok"] as? Bool, true, "\(made)")
+        let before = try XCTUnwrap(model.automations.automations.first)
+        model.setAutomationEnabled(before.id, false)
+        // A run already under way, with the brief it started from.
+        var running = AutomationRun(automationID: before.id, occurrence: "slot:now", reason: .manual, state: .running, briefRevision: 1)
+        running.brief = brief
+        model.automations.record(running)
+        let off = try XCTUnwrap(model.automations.automation(id: before.id))
+
+        let newBrief = "Read the week's chats by each message's own time.\nWrite the review."
+        let answer = try ask(door, ["op": "update", "name": "weekly REVIEW", "brief": newBrief])
+        XCTAssertEqual(answer["ok"] as? Bool, true, "\(answer)")
+        XCTAssertEqual(answer["changed"] as? Bool, true)
+        XCTAssertEqual(answer["revision"] as? Int, 2, "a new brief is the next version")
+        let after = try XCTUnwrap(model.automations.automation(id: before.id))
+        XCTAssertEqual(after.brief, newBrief.trimmingCharacters(in: .whitespacesAndNewlines))
+        XCTAssertEqual(after.briefRevision, 2)
+        XCTAssertEqual(after.id, off.id)
+        XCTAssertEqual(after.name, off.name, "the name is not touched by a differently cased lookup")
+        XCTAssertEqual(after.trigger, off.trigger)
+        XCTAssertEqual(after.workMode, off.workMode)
+        XCTAssertEqual(after.readFolders, off.readFolders)
+        XCTAssertEqual(after.allowedTools, off.allowedTools)
+        XCTAssertEqual(after.writesReport, off.writesReport)
+        XCTAssertEqual(after.confirmFirst, off.confirmFirst)
+        XCTAssertEqual(after.enabled, false, "an automation he switched off stays off")
+        XCTAssertEqual(after.evaluatedThrough, off.evaluatedThrough, "the schedule did not move: no catch-up, no skip")
+        XCTAssertEqual(model.automations.run(id: running.id)?.briefRevision, 1, "the run under way keeps its version")
+        XCTAssertEqual(model.automations.run(id: running.id)?.brief, brief, "and the text it was given")
+        let said = model.visibleEntries(inChat: chat.id).filter { $0.kind == .event && $0.text.contains("Weekly review") }
+        XCTAssertEqual(said.count, 1, "said in the chat, on screen")
+        XCTAssertTrue(model.toasts.contains { $0.key == "automation-updated-\(before.id.uuidString)-2" })
+
+        let again = try ask(door, ["op": "update", "name": "Weekly review", "brief": newBrief])
+        XCTAssertEqual(again["ok"] as? Bool, true)
+        XCTAssertEqual(again["changed"] as? Bool, false, "the same brief again changes nothing")
+        XCTAssertEqual(model.automations.automation(id: before.id)?.briefRevision, 2)
+
+        let list = try ask(door, ["op": "list"])
+        let line = try XCTUnwrap((list["automations"] as? [[String: Any]])?.first)
+        XCTAssertEqual(line["revision"] as? Int, 2, "list says which version is current")
+    }
+
+    @MainActor
+    func testAnUpdateIsRefusedWhenItCannotBeRightAndNeverSaysSavedForAWriteThatFailed() async throws {
+        let (model, door, product, _, chat) = try await ready()
+        _ = try ask(door, ["op": "create", "name": "Weekly review", "when": "weekly tue 09:00", "brief": brief, "mode": "branch"])
+        let a = try XCTUnwrap(model.automations.automations.first)
+        for bad: [String: Any] in [
+            ["op": "update", "name": "Nightly", "brief": "x"],
+            ["op": "update", "name": "Weekly review", "brief": "   "],
+            ["op": "update", "name": "", "brief": "x"],
+        ] {
+            XCTAssertEqual(try ask(door, bad)["ok"] as? Bool, false, "\(bad)")
+        }
+        // Two automations answering to one name: which one is not a guess.
+        var twin = Automation(productID: product.id, projectID: a.projectID, name: "WEEKLY REVIEW", brief: brief, trigger: .manual)
+        twin.workMode = .branch
+        model.automations.add(twin)
+        let ambiguous = try ask(door, ["op": "update", "name": "weekly review", "brief": "new"])
+        XCTAssertEqual(ambiguous["ok"] as? Bool, false)
+        XCTAssertTrue((ambiguous["error"] as? String)?.contains("more than one") == true, "\(ambiguous)")
+        model.automations.remove(twin.id)
+
+        // A write that does not reach the disk: refused, and nothing changed in memory either.
+        let dir = state.appendingPathComponent("app")
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir.path)
+        let failed = try ask(door, ["op": "update", "name": "Weekly review", "brief": "a brief that cannot be saved"])
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+        XCTAssertEqual(failed["ok"] as? Bool, false, "never 'updated' for a change that is not on disk")
+        XCTAssertEqual(model.automations.automation(id: a.id)?.brief, brief)
+        XCTAssertEqual(model.automations.automation(id: a.id)?.briefRevision, 1)
+
+        // An automation's own run does not rewrite automations.
+        let runChat = model.conversations.newAutomationChat(id: UUID(), for: product.id, runID: UUID(), copyID: UUID(), title: "Run")
+        let binding = try XCTUnwrap(model.conversations.chat(id: chat.id)?.session)
+        model.conversations.bindSession(ChatSessionBinding(primaryProjectID: nil, projectPath: project.path, activeRunID: "OTHER"), to: chat.id)
+        model.conversations.bindSession(binding, to: runChat.id)
+        let refused = try ask(door, ["op": "update", "name": "Weekly review", "brief": "rewrite myself"])
+        XCTAssertEqual(refused["ok"] as? Bool, false)
+        XCTAssertTrue((refused["error"] as? String)?.contains("own run") == true, "\(refused)")
+        XCTAssertEqual(model.automations.automation(id: a.id)?.brief, brief)
+    }
+
+    /// The edit form open while an agent changes the brief from a chat: Save must not put the old text back.
+    @MainActor
+    func testTheEditFormDoesNotPutAnOldBriefBack() {
+        var current = Automation(productID: UUID(), projectID: UUID(), name: "W", brief: "new from the chat", trigger: .manual)
+        current.briefRevision = 3
+        XCTAssertEqual(AutomationEditor.briefToSave(form: "old", opened: "old", openedRevision: 2, current: current), .current,
+                       "he did not touch the brief: the newer one stays")
+        XCTAssertEqual(AutomationEditor.briefToSave(form: "his own", opened: "old", openedRevision: 2, current: current), .conflict,
+                       "he changed it too: his to choose")
+        XCTAssertEqual(AutomationEditor.briefToSave(form: "his own", opened: "new from the chat", openedRevision: 3, current: current), .form,
+                       "nothing changed meanwhile: the form's")
+    }
+
+    @MainActor
     func testEveryChatIsToldWhatBulavaIsAndWhatItCanDo() async throws {
         let (model, _, product, folder, chat) = try await ready()
         let files = try XCTUnwrap(model.writeSessionContext(chatID: chat.id, product: product, primary: folder))
         let text = try String(contentsOf: files.context, encoding: .utf8)
         XCTAssertTrue(text.contains("## Bulava — где ты работаешь"), text)
-        for tool in ["$IDIR/automation list", "$IDIR/automation create", "$IDIR/decide", "$IDIR/phone-link",
+        for tool in ["$IDIR/automation list", "$IDIR/automation create", "$IDIR/automation update", "$IDIR/decide", "$IDIR/phone-link",
                      "$IDIR/capture", "$IDIR/browser", "$IDIR/history"] {
             XCTAssertTrue(text.contains(tool), "the chat is told about \(tool)")
         }

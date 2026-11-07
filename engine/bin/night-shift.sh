@@ -258,7 +258,10 @@ case "$cmd" in
     ns_apply_settings "$PROJECT_DIR" ${NS_SETS[@]+"${NS_SETS[@]}"} || exit 2
     server_profile_guard
     export SUPERVISOR_WORK_BRANCH
-    command -v tmux >/dev/null 2>&1 || { echo "❌ tmux не встановлено (brew install tmux)" >&2; exit 1; }
+    # The marker, as for a folder above: a Mac without tmux is the director's to equip, and 1.17
+    # sent this refusal to us as an anonymous `chat.start_failed` with a repair offered (5 Nov).
+    command -v tmux >/dev/null 2>&1 || { echo "❌ tmux не встановлено (brew install tmux)" >&2
+                                         echo "start-refused=tool:tmux" >&2; exit 1; }
     [ -s "$SUP_DIR/STANDARDS.md" ] || { echo "❌ нема/порожній $SUP_DIR/STANDARDS.md" >&2; exit 1; }
 
     # A folder full of repositories is a workspace, and a workspace is not a project.
@@ -904,7 +907,7 @@ $gone}"
       EFFORT_FLAG="$(claude_effort_launch_flag)"
       MODEL_FLAG=""; [ -n "${SUPERVISOR_CLAUDE_MODEL:-}" ] && MODEL_FLAG="--model $(shq "$SUPERVISOR_CLAUDE_MODEL") "
       SETTINGS_FLAG=""; WORKER_SETTINGS="$(worker_settings_for "$IDIR" "$PROJECT_DIR")"; [ -n "$WORKER_SETTINGS" ] && [ -f "$WORKER_SETTINGS" ] && SETTINGS_FLAG="--settings $(shq "$WORKER_SETTINGS") "
-      EXTRA_ADD_FLAGS="$(extra_add_dir_flags)$(browser_mcp_flags "$IDIR")"
+      EXTRA_ADD_FLAGS="$(extra_add_dir_flags)$(browser_mcp_flags "$IDIR")$(report_mcp_flags "$IDIR")"
       CLAUDE_FLAGS="${EFFORT_FLAG}${MODEL_FLAG}${SETTINGS_FLAG}--permission-mode $(shq "${SUPERVISOR_PERMISSION_MODE:-auto}") --add-dir $(shq "$IDIR") ${EXTRA_ADD_FLAGS}--append-system-prompt-file $(shq "$IDIR/standards.md")"
       STOP_TAIL="$(shq "$BIN_DIR/night-shift.sh") stop --generation"
       RAW_LAUNCH="claude ${CLAUDE_FLAGS}; ${STOP_TAIL} $(shq "$GEN") $(shq "$PROJECT_DIR")"
@@ -1228,7 +1231,7 @@ $gone}"
     # run that still owes work gets. Exit: 0 whole again, 1 failed, 3 nothing to start it from,
     # 4 refused for good (stopped or replaced), 5 not now (its Claude is still running).
     PROJECT_DIR="$(canon_path "${1:-$PWD}")"
-    command -v tmux >/dev/null 2>&1 || { echo "❌ tmux не встановлено" >&2; exit 1; }
+    command -v tmux >/dev/null 2>&1 || { echo "❌ tmux не встановлено" >&2; echo "start-refused=tool:tmux" >&2; exit 1; }
     SLUG="$(slug_for "$PROJECT_DIR")"
     instance_revive "$SLUG"; rc=$?
     case "$rc" in
@@ -1255,7 +1258,7 @@ $gone}"
     RESUME_BRANCH="${RPOS[2]:-}"; [ "$RESUME_BRANCH" = "-" ] && RESUME_BRANCH=""
     [ -d "$PROJECT_DIR" ] || { echo "❌ Проєкт не знайдено: ${RPOS[0]:-$PWD}" >&2; exit 1; }
     [ -n "$RESUME_SID" ] || { echo "❌ resume: не передано Claude session id" >&2; exit 1; }
-    command -v tmux >/dev/null 2>&1 || { echo "❌ tmux не встановлено" >&2; exit 1; }
+    command -v tmux >/dev/null 2>&1 || { echo "❌ tmux не встановлено" >&2; echo "start-refused=tool:tmux" >&2; exit 1; }
     [ -s "$SUP_DIR/STANDARDS.md" ] || { echo "❌ нема/порожній $SUP_DIR/STANDARDS.md" >&2; exit 1; }
 
     SLUG="$(slug_for "$PROJECT_DIR")"; IDIR="$(instance_dir "$SLUG")"; SESSION="$(session_name "$SLUG")"
@@ -1404,7 +1407,7 @@ $gone}"
     EFFORT_FLAG="$(claude_effort_launch_flag)"
     MODEL_FLAG=""; [ -n "${SUPERVISOR_CLAUDE_MODEL:-}" ] && MODEL_FLAG="--model $(shq "$SUPERVISOR_CLAUDE_MODEL") "
     SETTINGS_FLAG=""; WORKER_SETTINGS="$(worker_settings_for "$IDIR" "$PROJECT_DIR")"; [ -n "$WORKER_SETTINGS" ] && [ -f "$WORKER_SETTINGS" ] && SETTINGS_FLAG="--settings $(shq "$WORKER_SETTINGS") "
-    EXTRA_ADD_FLAGS="$(extra_add_dir_flags)$(browser_mcp_flags "$IDIR")"
+    EXTRA_ADD_FLAGS="$(extra_add_dir_flags)$(browser_mcp_flags "$IDIR")$(report_mcp_flags "$IDIR")"
     GEN="$(new_worker_generation "$IDIR")"
     LAUNCH_ENV="$(subscription_env_prefix) ORCHESTRATOR_RUN_ID=$(shq "$RUN_ID") $(run_env_stamp)"
     CLAUDE_FLAGS="${EFFORT_FLAG}${MODEL_FLAG}${SETTINGS_FLAG}--permission-mode $(shq "${SUPERVISOR_PERMISSION_MODE:-auto}") --add-dir $(shq "$IDIR") ${EXTRA_ADD_FLAGS}--append-system-prompt-file $(shq "$IDIR/standards.md")"

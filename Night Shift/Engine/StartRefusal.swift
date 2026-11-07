@@ -13,6 +13,33 @@ nonisolated enum StartRefusal {
     /// engine will not make git there, and the start was refused before anything was touched.
     static func notAProject(_ output: String) -> Bool { says(output, "start-refused=folder") }
 
+    /// A command-line tool the engine runs on is not on this Mac — the engine names it in
+    /// `start-refused=tool:<name>`. A Mac set up without tmux met «tmux не встановлено» on its first
+    /// message, and 1.17 offered to repair it and sent it to us as `chat.start_failed` (5 Nov).
+    /// The tool's name, or nil; a name that is not a plain command name is not taken from the line.
+    static func missingTool(_ output: String) -> String? {
+        let prefix = "start-refused=tool:"
+        for line in output.split(whereSeparator: \.isNewline) where line.hasPrefix(prefix) {
+            let name = line.dropFirst(prefix.count)
+            if !name.isEmpty, name.count <= 40,
+               name.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "-_.+".contains($0)) }) {
+                return String(name)
+            }
+        }
+        return nil
+    }
+
+    /// The Homebrew formula that installs a tool the engine named, for the tools Bulava's own
+    /// readiness screen already installs that way. Nil for any other name: no button guesses.
+    static func brewFormula(forTool tool: String) -> String? {
+        ["tmux": "tmux", "jq": "jq"][tool]
+    }
+
+    /// What the person reads when a start or a send stopped on a missing tool.
+    static func missingToolMessage(_ tool: String) -> String {
+        String(format: String(localized: "%@ is not installed on this Mac, so this was not sent. Bulava needs it to run a chat."), tool)
+    }
+
     /// Claude Code no longer keeps the conversation a resume asked for — its own clean-up of old
     /// transcripts removed it — so there is nothing to bring back and nothing for a repair to fix.
     /// Reached us as `chat.resume_failed` from 1.16.1 (23 Oct).

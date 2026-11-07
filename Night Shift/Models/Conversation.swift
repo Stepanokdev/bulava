@@ -153,6 +153,12 @@ nonisolated struct ConversationEntry: Identifiable, Codable, Equatable, Sendable
     /// refused message showed the first one's offer: pressing it re-sent the wrong text.
     var codexWall: String?
 
+    /// An app's own line that the person must see — not a log line. Events are kept out of the
+    /// conversation (`visibleEntries`), because most of them are bookkeeping; this one is not: an
+    /// automation that skipped its scheduled run said so nowhere, and three runs were lost that way
+    /// in one week (Nov 2026) before anybody noticed. Optional, so every earlier event stays hidden.
+    var shown: Bool?
+
     /// The turn behind this entry has ended. Written by the feed that builds the entry, because
     /// nothing else in the app can know it.
     ///
@@ -187,7 +193,8 @@ nonisolated struct ConversationEntry: Identifiable, Codable, Equatable, Sendable
          delivery: Delivery? = nil,
          hiddenNotice: Bool? = nil,
          codexWall: String? = nil,
-         turnFinished: Bool? = nil) {
+         turnFinished: Bool? = nil,
+         shown: Bool? = nil) {
         self.id = id
         self.productID = productID
         self.chatID = chatID
@@ -204,6 +211,7 @@ nonisolated struct ConversationEntry: Identifiable, Codable, Equatable, Sendable
         self.hiddenNotice = hiddenNotice
         self.codexWall = codexWall
         self.turnFinished = turnFinished
+        self.shown = shown
     }
 
     init(from decoder: Decoder) throws {
@@ -225,6 +233,7 @@ nonisolated struct ConversationEntry: Identifiable, Codable, Equatable, Sendable
         codexWall = try? c.decodeIfPresent(String.self, forKey: .codexWall)
         turnFinished = try? c.decodeIfPresent(Bool.self, forKey: .turnFinished)
         turnEndedAt = try? c.decodeIfPresent(Date.self, forKey: .turnEndedAt)
+        shown = try? c.decodeIfPresent(Bool.self, forKey: .shown)
     }
 
     /// How long the agent worked on this answer, once it has finished.

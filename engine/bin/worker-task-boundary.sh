@@ -16,7 +16,7 @@
 # It changes what the ENGINE believes. It does not change what the director asked for.
 set -u
 SELF="${BASH_SOURCE[0]}"; while [ -L "$SELF" ]; do d="$(cd -P "$(dirname "$SELF")" && pwd)"; SELF="$(readlink "$SELF")"; case "$SELF" in /*) ;; *) SELF="$d/$SELF";; esac; done
-BIN_DIR="$(cd -P "$(dirname "$SELF")" && pwd)"; . "$BIN_DIR/supervisor-lib.sh"
+BIN_DIR="$(cd -P "$(dirname "$SELF")" && pwd)"; . "$BIN_DIR/supervisor-lib.sh"; . "$BIN_DIR/lib/pieces.sh"
 
 WANT="${1:-}"; shift 2>/dev/null || true; WHY="$*"
 case "$WANT" in
@@ -39,6 +39,9 @@ if [ "$WANT" = new ] && [ -z "$WHY" ]; then
 fi
 
 thread_boundary "$IDIR" "$WANT" "$WHY" || { echo "could not change the task boundary" >&2; exit 1; }
+# A long project's plan kept with the run belongs to the task that made it. Left in place, the gate
+# keeps holding the new task to the old plan's open piece, and the worker cannot get out of it.
+[ "$WANT" = new ] && pieces_set_aside "$IDIR"
 journal_event "$IDIR" task-boundary "$WANT: $(printf '%s' "$WHY" | clip_utf8 160)" '{"source":"worker"}'
 echo "$(date '+%F %T') [task-boundary] $WANT — $(printf '%s' "$WHY" | clip_utf8 120)" >> "$SUP_STATE/supervisor.log"
 

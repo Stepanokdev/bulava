@@ -113,6 +113,47 @@ thread_boundary "$IDIR" continue
 [ "$(thread_state "$IDIR")" = open ] \
   && ok "…and can put a task back on the table" || bad "the task stayed settled"
 
+echo "===== the director saying \"нова задача\" is a new task, settled or open ====="
+# Tenders automation, 2026-11-05: «це нова задача» was read as the next step of a settled task,
+# because the heuristic only knew words like «з нуля», and the stuck plan of that task stayed.
+rm -rf "$IDIR/thread"
+thread_bind "$IDIR" "$BIG" "id-n1" "00000040" >/dev/null
+thread_settle "$IDIR" succeeded_changes "DISPATCH-N"
+[ "$(thread_relation "$IDIR" "Це нова задача: поправ кнопку входу")" = new ] \
+  && ok "a settled task: «це нова задача» opens a new one" || bad "«це нова задача» continued a settled task"
+[ "$(thread_relation "$IDIR" "Так, братико, наступна задача: пройдись по чатах")" = new ] \
+  && ok "…and so does «наступна задача:»" || bad "«наступна задача:» continued a settled task"
+thread_boundary "$IDIR" continue
+[ "$(thread_relation "$IDIR" "New task: rename the button")" = new ] \
+  && ok "an open task: said outright, it still is a new one" || bad "an explicit new task was swallowed by an open one"
+[ "$(thread_relation "$IDIR" "це не нова задача, а продовження: поправ відступ")" = continue ] \
+  && ok "«не нова задача» is not one" || bad "a denial was read as a new task"
+[ "$(thread_relation "$IDIR" "поясни, як нова задача відкривається в коді")" = continue ] \
+  && ok "a question about tasks is not a boundary" || bad "the words in passing were read as a boundary"
+
+echo "===== only a declaration counts: quoted or discussed words stay with the task ====="
+thread_bind "$IDIR" "$SMALL" "id-n2" "00000041" >/dev/null   # an open task again
+for m in "Виправ розпізнавання фрази «нова задача:» у поточній задачі." \
+         'The log says "new task: failed"; fix that error.' \
+         "the next task runner is slow, look at it" \
+         "Так, це точно не нова задача"; do
+  [ "$(thread_relation "$IDIR" "$m")" = continue ] && ok "continues: ${m:0:44}" || bad "read as a new task: $m"
+done
+for m in "Так, це точно нова задача. Починаю її як нову" \
+         "Братику, нова задача — логін" \
+         "а тепер окрема задача: експорт" \
+         "this is really a new task"; do
+  [ "$(thread_relation "$IDIR" "$m")" = new ] && ok "new: ${m:0:44}" || bad "a declared new task was missed: $m"
+done
+
+echo "===== task-boundary new sets aside a plan kept with the run ====="
+printf '{"pieces":[{"n":1,"title":"Документи","state":"open","criteria":["x"],"base_sha":"HEAD"}]}' > "$IDIR/pieces.json"
+printf '{"id":"DISP-PLAN"}' > "$IDIR/dispatch.json"
+( cd "$PROJ" && ORCHESTRATOR_RUN_ID="RUN-T" bash "$BIN/worker-task-boundary.sh" new "окрема задача: тендерний парсер" >/dev/null 2>&1 )
+[ ! -e "$IDIR/pieces.json" ] && [ -s "$IDIR/dispatches/DISP-PLAN.pieces.json" ] \
+  && ok "the old plan is moved under its dispatch" || bad "the old plan still holds the new task"
+rm -f "$IDIR/dispatch.json"
+
 echo "===== a burst of messages: the third one is read WITH the second ====="
 rm -rf "$IDIR/thread"
 thread_bind "$IDIR" "$BIG" "id-a" "00000010" >/dev/null

@@ -212,6 +212,23 @@ nonisolated final class PreparedMessageTests: XCTestCase {
         XCTAssertNotEqual(phase, .preparing(PeerReading()))
     }
 
+    /// The "Queued" mark used to vanish without a word: after hours in the queue (Tenders, 5 Nov)
+    /// he could not tell whether the agent had his message.
+    func testAMessageThatWaitedIsSaidToHaveArrived() {
+        let sent = Date(timeIntervalSince1970: 1_794_000_000)
+        let text = AppModel.arrivalNotice(was: .queued, now: nil, sentAt: sent, at: sent.addingTimeInterval(3 * 3600))
+        XCTAssertNotNil(text, "a message delivered after a long wait gets a line")
+        XCTAssertTrue(text?.contains(Fmt.clock(sent)) == true, "naming when he sent it")
+        XCTAssertNil(AppModel.arrivalNotice(was: .queued, now: nil, sentAt: sent, at: sent.addingTimeInterval(20)),
+                     "a few seconds in the queue needs no line")
+        XCTAssertNil(AppModel.arrivalNotice(was: .queued, now: .queued, sentAt: sent, at: sent.addingTimeInterval(3 * 3600)),
+                     "still waiting is not arrived")
+        XCTAssertNil(AppModel.arrivalNotice(was: .queued, now: .failed, sentAt: sent, at: sent.addingTimeInterval(3 * 3600)),
+                     "nor is failed")
+        XCTAssertNil(AppModel.arrivalNotice(was: nil, now: nil, sentAt: sent, at: sent.addingTimeInterval(3 * 3600)),
+                     "a message that never waited says nothing")
+    }
+
     func testAMessageParkedBehindAUsageWindowSaysSo() {
         let back = Date().addingTimeInterval(3600)
         let phase = DirectChatPhase.resolve(instance: queuedRun(waiting: "limit", pausedUntil: back,

@@ -35,6 +35,15 @@ struct AutomationEditor: View {
     @State private var focusWhenShown: Field = .name
     /// Access the trigger needs and has not been given yet (`AutomationNeedsSection`).
     @State private var needsBlocking = false
+    /// The brief as it was when this form opened, and its version. An agent can change the brief from
+    /// a chat (`automation update`) while the form is open; saving the form must not silently put
+    /// the old text back over it.
+    @State private var openedBrief = ""
+    @State private var openedRevision = 0
+    /// The newer brief found at Save, when he had changed the brief in the form as well: his to choose.
+    @State private var newerBrief: String?
+    /// The last Save did not reach the disk: the form stays open with his changes in it.
+    @State private var saveFailed = false
 
     enum Field: Hashable { case name, repoPath, feedURL, hfAuthor, pageURL, mailFrom, watchFolder }
 
@@ -153,7 +162,11 @@ struct AutomationEditor: View {
                 choosingTemplate = true
             }
         case .edit(let id):
-            if let automation = model.automations.automation(id: id) { draft = AutomationDraft(automation) }
+            if let automation = model.automations.automation(id: id) {
+                draft = AutomationDraft(automation)
+                openedBrief = automation.brief
+                openedRevision = automation.briefRevision
+            }
         case .fromChat(let chatID):
             guard let chat = model.conversations.chat(id: chatID) else { return }
             draft.productID = chat.productID
@@ -436,7 +449,31 @@ struct AutomationEditor: View {
 
     private var footer: some View {
         HStack(spacing: 10) {
-            if let problem = problem {
+            if newerBrief != nil {
+                Text("The brief was changed while this form was open.")
+                    .font(Typo.caption)
+                    .foregroundStyle(Palette.orange)
+                    .lineLimit(2)
+                Spacer(minLength: 8)
+                Button("Use the new brief") { takeNewerBrief() }
+                    .buttonStyle(.bulava(.secondary))
+                Button("Keep mine") { keepMyBrief() }
+                    .buttonStyle(.bulava(.primary))
+            } else {
+                footerUsual
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+    }
+
+    @ViewBuilder private var footerUsual: some View {
+            if saveFailed {
+                Text("Could not save. Your changes are still here — try again.")
+                    .font(Typo.caption)
+                    .foregroundStyle(Palette.orange)
+                    .lineLimit(2)
+            } else if let problem = problem {
                 Text(verbatim: problem)
                     .font(Typo.caption)
                     .foregroundStyle(Palette.orange)
@@ -462,9 +499,6 @@ struct AutomationEditor: View {
                 .buttonStyle(.bulava(.primary))
                 .keyboardShortcut(.defaultAction)
                 .disabled(problem != nil)
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
     }
 
     /// What stops it from being saved: the form's own problem, or access its trigger still needs.
@@ -475,14 +509,49 @@ struct AutomationEditor: View {
     }
 
     private func save() {
-        guard problem == nil, let built = draft.automation() else { return }
+        guard problem == nil, var built = draft.automation() else { return }
         switch request {
         case .new, .fromChat:
             model.createAutomation(built)
         case .edit(let id):
-            model.editAutomation(id, to: built)
+            if let current = model.automations.automation(id: id) {
+                switch Self.briefToSave(form: draft.brief, opened: openedBrief, openedRevision: openedRevision, current: current) {
+                case .form: break
+                case .current: built.brief = current.brief
+                case .conflict: newerBrief = current.brief; return
+                }
+            }
+            guard model.editAutomation(id, to: built) else { saveFailed = true; return }
         }
         dismiss()
+    }
+
+    enum BriefChoice: Equatable { case form, current, conflict }
+
+    /// Which brief a Save of the edit form keeps. The brief may have changed since the form opened —
+    /// an agent's `automation update` from a chat. If he did not touch it in the form, the newer one
+    /// stays; if he did, it is his to choose; if nothing changed meanwhile, the form's.
+    static func briefToSave(form: String, opened: String, openedRevision: Int, current: Automation) -> BriefChoice {
+        guard current.briefRevision != openedRevision else { return .form }
+        return form.trimmingCharacters(in: .whitespacesAndNewlines) == opened.trimmingCharacters(in: .whitespacesAndNewlines)
+            ? .current : .conflict
+    }
+
+    /// The brief changed while the form was open and he changed it here too: take the newer one into
+    /// the form, or keep his own.
+    private func takeNewerBrief() {
+        guard case .edit(let id) = request, let current = model.automations.automation(id: id) else { return }
+        draft.brief = current.brief
+        openedBrief = current.brief
+        openedRevision = current.briefRevision
+        newerBrief = nil
+    }
+
+    private func keepMyBrief() {
+        guard case .edit(let id) = request, let current = model.automations.automation(id: id) else { return }
+        openedRevision = current.briefRevision
+        newerBrief = nil
+        save()
     }
 }
 

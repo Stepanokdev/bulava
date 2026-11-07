@@ -151,7 +151,12 @@ whether Codex did every step he was meant to do in that attempt:
 
 `status` is `full` (nothing missed), `partial` (a step before the review went ahead with Claude
 alone — `preflight`, `align`, `consultation`, `part`, `question`) or `review_by_claude` (the final
-review itself was Claude's, which on a server never happens without a signed answer from the app). A
+review itself was Claude's, which on a server never happens without a signed answer from the app)
+or `unreviewed` (nobody reviewed it: a `succeeded_no_change` with an empty diff is settled by the
+gate as `debt`, and `review.json` names `gate`, not `codex`, as the reviewer). On a server a
+`succeeded_research` is reviewed by Codex: the report the worker names in `artifacts/`, or else its
+declared summary and last message — what the ticket gets — judged also on what data it changed, how,
+and how that was checked (`SUPERVISOR_SERVER_RESEARCH_REVIEW=0` turns this off). A
 `waiting_review` or `done` task with `status` other than `full` is still a pass — Codex reviewed the
 result — but put the gaps on the ticket next to it, so nobody reads it as an ordinary run.
 
@@ -319,6 +324,10 @@ SUPERVISOR_CLAUDE_CHECKS_MIN_SEVERITY=high     # critical | high | medium | low 
 SUPERVISOR_CLAUDE_CHECKS_ROUNDS=1              # per task: a follow-up attempt does not get a new budget
 SUPERVISOR_CLAUDE_CHECKS_TIMEOUT=900           # seconds per check
 SUPERVISOR_CLAUDE_CHECKS_REQUIRED=0            # 1: a check that fails parks the run (needs-user)
+SUPERVISOR_SERVER_RESEARCH_REVIEW=1            # Codex reviews a research result (and the data it changed); 0: settled unreviewed
+SUPERVISOR_SERVER_UNDECLARED_MAX=4             # stops with nothing declared (or a DRAFT) sent back before a review is spent
+SUPERVISOR_BG_WAIT_SECONDS=5400                # how long the Stop hook waits, per run, for the worker's background subagents
+SUPERVISOR_BULAVA_REPORT=1                     # workers get the bulava-report MCP tool (bin/bulava-report-mcp.py); 0: not
 ```
 
 They advise; only Codex accepts or returns the work. Findings at or above the threshold go back to

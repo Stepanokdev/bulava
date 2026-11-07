@@ -187,6 +187,14 @@ nonisolated enum ConversationFind {
                                    markdown: entry.text, query: query)
             }
 
+        // An app notice he must see (`shown`) is on screen as one line of plain text.
+        case .event where entry.shown == true:
+            let count = mentions(in: entry.text, query: query)
+            if count > 0 {
+                out.append(FindPlace(entryID: entry.id, blockID: nil, mark: .whole,
+                                     mentions: count, opensBlock: false))
+            }
+
         // `visibleEntries(inChat:)` never hands these over — they are not on screen.
         case .task, .report, .decision, .event:
             return []

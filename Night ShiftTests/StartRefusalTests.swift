@@ -142,6 +142,140 @@ nonisolated final class StartRefusalTests: XCTestCase {
         XCTAssertEqual(m.chatErrors[chat], "❌ Проєкт не знайдено: /Users/someone/Projects/app")
     }
 
+    /// 5 Nov, 1.17: a Mac without tmux. `start`'s refusal, as the report carried it, now with the
+    /// marker (`engine/tests/test-missing-tool.sh`).
+    private let noTmux = "❌ tmux не встановлено (brew install tmux)\nstart-refused=tool:tmux"
+
+    func testAMissingToolIsReadFromItsOwnLineOnly() {
+        XCTAssertEqual(StartRefusal.missingTool(noTmux), "tmux")
+        XCTAssertNil(StartRefusal.missingTool("❌ tmux не встановлено (brew install tmux)"),
+                     "the words alone are not the marker")
+        XCTAssertNil(StartRefusal.missingTool("say start-refused=tool:tmux in a line"))
+        XCTAssertNil(StartRefusal.missingTool("start-refused=tool:"), "no name, no tool")
+        XCTAssertNil(StartRefusal.missingTool("start-refused=tool:tmux; rm -rf ~"),
+                     "only a plain command name is taken from the line")
+        XCTAssertNil(StartRefusal.missingTool(workspace))
+        XCTAssertFalse(StartRefusal.notAProject(noTmux), "a missing tool is not a folder problem")
+        XCTAssertEqual(StartRefusal.brewFormula(forTool: "tmux"), "tmux")
+        XCTAssertNil(StartRefusal.brewFormula(forTool: "something-else"), "no button guesses a formula")
+    }
+
+    @MainActor
+    func testAStartWithoutTmuxAsksForTheInstallAndIsNotRepaired() {
+        let (m, chat, entry) = model()
+        XCTAssertTrue(m.stopOnStartTheyMustClear(chatID: chat, entryID: entry, output: noTmux))
+        XCTAssertNil(m.repairs[chat], "a tool to install is not a breakage — nothing is repaired or reported")
+        XCTAssertEqual(m.toolBlocked[chat], "tmux", "the install row stands under the message")
+        XCTAssertTrue(m.chatHasAQuestionForYou(chat))
+        XCTAssertEqual(m.chatErrors[chat], StartRefusal.missingToolMessage("tmux"),
+                       "said in the app's words and language, not the engine's Ukrainian line")
+        XCTAssertFalse(m.chatErrors[chat]?.contains("start-refused") ?? true)
+        XCTAssertTrue(m.toast?.actions.isEmpty == true, "and no Fix it button")
+
+        m.retryDirectMessage(entryID: entry)
+        XCTAssertNil(m.toolBlocked[chat], "sending again takes the row away")
+    }
+
+    /// With the engine of this checkout run for real: a Mac without tmux refuses the start, the app
+    /// puts the install row under the message, the row's button asks Terminal for `brew install
+    /// tmux`, tmux appears, Send again takes the row away, and the engine's start goes through.
+    /// Two things are stood in for, because doing them for real would change the Mac the suite runs
+    /// on: Terminal (the command is caught, not typed) and Homebrew's work (tmux is linked onto the
+    /// PATH it installs to).
+    ///
+    /// What this does NOT prove: that the app's own resend reaches the worker. The app's start goes
+    /// to the installed engine (`OrchestratorHome.detect`) and asks the real `~/.claude.json` for
+    /// folder trust, so the engine start here is run beside the app, not by it.
+    @MainActor
+    func testFromARealRefusalThroughTheInstallToAStart() throws {
+        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let engine = repo.appendingPathComponent("engine/bin/night-shift.sh").path
+        guard FileManager.default.fileExists(atPath: engine) else { throw XCTSkip("no engine checkout beside the tests") }
+        // Short, under /tmp: a tmux socket path must fit in 104 bytes, and $TMPDIR's does not.
+        let tmp = URL(fileURLWithPath: "/tmp/bnt-\(UUID().uuidString.prefix(8))")
+        let farm = tmp.appendingPathComponent("bin"), project = tmp.appendingPathComponent("project")
+        let tmuxDir = tmp.appendingPathComponent("tmux")
+        for d in [farm, project, tmuxDir, tmp.appendingPathComponent("state")] {
+            try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        }
+        let env: [String: String] = [
+            "HOME": NSHomeDirectory(), "PATH": farm.path, "TMUX_TMPDIR": tmuxDir.path,
+            "SUPERVISOR_STATE_DIR": tmp.appendingPathComponent("state").path,
+            "SUPERVISOR_CLAUDE_CMD": "cat", "SUPERVISOR_HANDSHAKE_WAIT": "0", "SUPERVISOR_NO_ATTACH": "1",
+        ]
+        func bash(_ script: String, _ args: [String] = [], env: [String: String]) -> (Int32, String) {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/bin/bash")
+            p.arguments = ["-c", script, "bash"] + args
+            p.environment = env
+            let pipe = Pipe()
+            p.standardOutput = pipe; p.standardError = pipe
+            do { try p.run() } catch { return (-1, "\(error)") }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            p.waitUntilExit()
+            return (p.terminationStatus, String(decoding: data, as: UTF8.self))
+        }
+        addTeardownBlock {
+            _ = bash("bash \"$1\" stop \"$2\"; tmux kill-server", [engine, project.path], env: env)
+            try? FileManager.default.removeItem(at: tmp)
+        }
+        // Everything this Mac has on the usual PATH, tmux left out.
+        let system = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        _ = bash("""
+            IFS=: read -r -a dirs <<< "$2"
+            for d in "${dirs[@]}"; do for f in "$d"/*; do n="${f##*/}"
+              [ "$n" = tmux ] || { [ -x "$f" ] && [ ! -e "$1/$n" ] && ln -s "$f" "$1/$n"; }
+            done; done
+            cd "$3" && git init -q && echo hi > f.txt && git add -A && git -c user.email=t@t -c user.name=t commit -qm init
+            """, [farm.path, system, project.path], env: ["PATH": system, "HOME": NSHomeDirectory()])
+        XCTAssertNotEqual(bash("command -v tmux", env: env).0, 0, "tmux is still reachable — nothing here would be proven")
+
+        // 1. The real refusal, read by the app.
+        let (refusedExit, refused) = bash("bash \"$1\" start \"$2\" --no-attach", [engine, project.path], env: env)
+        XCTAssertNotEqual(refusedExit, 0)
+        let (m, chat, entry) = model()
+        XCTAssertTrue(m.stopOnStartTheyMustClear(chatID: chat, entryID: entry, output: refused), refused)
+        XCTAssertEqual(m.toolBlocked[chat], "tmux")
+        XCTAssertNil(m.repairs[chat], "nothing repaired or reported")
+
+        // 2. The row's button: Homebrew, in Terminal, for tmux.
+        var typed: [String] = []
+        m.terminalRunner = { typed.append($0) }
+        m.installMissingTool("tmux")
+        let brew = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"].first { FileManager.default.fileExists(atPath: $0) }
+        if let brew {
+            XCTAssertEqual(typed, ["\(brew) install tmux"])
+        } else {
+            XCTAssertTrue(typed.isEmpty, "no Homebrew: brew.sh is opened instead, nothing is typed")
+        }
+        m.installMissingTool("some-tool")
+        XCTAssertEqual(typed.count, brew == nil ? 0 : 1, "a tool with no known formula types nothing")
+
+        // 3. Homebrew's work: tmux where it installs it. Send again, and the same start goes through.
+        let realTmux = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"].first { FileManager.default.fileExists(atPath: $0) }
+        let tmuxPath = try XCTUnwrap(realTmux, "this Mac has no tmux to stand in for the install")
+        try FileManager.default.createSymbolicLink(atPath: farm.appendingPathComponent("tmux").path,
+                                                   withDestinationPath: tmuxPath)
+        m.retryDirectMessage(entryID: entry)
+        XCTAssertNil(m.toolBlocked[chat], "sending again takes the row away")
+        let (startedExit, started) = bash("bash \"$1\" start \"$2\" --no-attach", [engine, project.path], env: env)
+        XCTAssertEqual(startedExit, 0, started)
+        XCTAssertNil(StartRefusal.missingTool(started), "no longer refused for tmux")
+        XCTAssertEqual(bash("tmux list-sessions -F '#S' | grep -q .", env: env).0, 0,
+                       "the run's tmux session is there")
+    }
+
+    /// A message to a chat that already ran goes through worker-send, which refuses before trying.
+    func testASendWithoutTmuxIsReadAsAMissingTool() {
+        let out = "start-refused=tool:tmux\n❌ tmux не встановлено (brew install tmux)"
+        let result = RelayResult.read(output: out, exitCode: 1, launched: true, endedBy: .exited)
+        XCTAssertEqual(result.tier, .error)
+        XCTAssertEqual(result.missingTool, "tmux")
+        XCTAssertTrue(result.undelivered, "refused before trying: never delivered")
+        XCTAssertNil(RelayResult.read(output: "❌ Нема такої теки: /x", exitCode: 1, launched: true,
+                                      endedBy: .exited).missingTool)
+    }
+
     @MainActor
     func testAnyOtherFailedStartIsLeftToTheRepair() {
         let (m, chat, entry) = model()

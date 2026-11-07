@@ -132,7 +132,7 @@ if review_why and review in ("failed", "debt"):
 # prepared, advised and reviewed, or only reviewed.
 codex = R.get("codex") or {}
 gaps = codex.get("gaps") or []
-if codex.get("status") in ("partial", "review_by_claude") and gaps:
+if codex.get("status") in ("partial", "review_by_claude", "unreviewed") and gaps:
     STAGE = {
         "preflight": t("Preparation", "Підготовка", "Подготовка"),
         "align": t("Comparing the two positions", "Звірка позицій", "Сверка позиций"),
@@ -147,7 +147,11 @@ if codex.get("status") in ("partial", "review_by_claude") and gaps:
         f'<span>{esc(g.get("reason") or "")}</span></li>'
         for g in gaps[:20]
     )
-    head = (t("The final review was done by Claude, not Codex.",
+    head = (t("Nobody reviewed this result: the engine accepted the claim as it was declared.",
+              "Цей результат ніхто не рецензував: рушій прийняв заяву як є.",
+              "Этот результат никто не рецензировал: движок принял заявление как есть.")
+            if codex.get("status") == "unreviewed" else
+            t("The final review was done by Claude, not Codex.",
               "Фінальне ревʼю зробив Claude, а не Codex.",
               "Финальное ревью сделал Claude, а не Codex.")
             if codex.get("status") == "review_by_claude" else

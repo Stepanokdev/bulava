@@ -4,6 +4,22 @@
     "" : {
 
     },
+    "%@ is not installed on this Mac, so this was not sent. Bulava needs it to run a chat." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ не установлен на этом Mac, поэтому сообщение не отправлено. Без него Bulava не запускает чат."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ не встановлено на цьому Mac, тому повідомлення не надіслано. Без нього Bulava не запускає чат."
+          }
+        }
+      }
+    },
     "%@: the sign-in has run out" : {
       "localizations" : {
         "ru" : {
@@ -34316,6 +34332,210 @@
         }
       }
     },
+    "Automation «%@» did not start on schedule (%@): %@ The next run happens once this one is settled." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Автоматизация «%1$@» не запустилась по расписанию (%2$@): %3$@ Следующий запуск будет, как только с этим разберёшься."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Автоматизація «%1$@» не запустилася за розкладом (%2$@): %3$@ Наступний запуск буде, щойно з цим розберешся."
+          }
+        }
+      }
+    },
+    "Automation «%@» skipped a run" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Автоматизация «%@» пропустила запуск"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Автоматизація «%@» пропустила запуск"
+          }
+        }
+      }
+    },
+    "Reaches the agent at its next stop" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агент получит его на ближайшей остановке"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агент отримає його на найближчій зупинці"
+          }
+        }
+      }
+    },
+    "Your message from %@ reached the agent at %@." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Твоё сообщение от %1$@ дошло до агента в %2$@."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Твоє повідомлення від %1$@ дійшло до агента о %2$@."
+          }
+        }
+      }
+    },
+    "An automation's own run does not change automations. Ask him in one of his chats." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запуск автоматизации сам автоматизации не меняет. Попроси его в одном из его чатов."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запуск автоматизації сам автоматизацій не змінює. Попроси його в одному з його чатів."
+          }
+        }
+      }
+    },
+    "“%@” has no automation called “%@”." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У «%1$@» нет автоматизации «%2$@»."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У «%1$@» немає автоматизації «%2$@»."
+          }
+        }
+      }
+    },
+    "“%@” has more than one automation called “%@”; rename one in Bulava first." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У «%1$@» несколько автоматизаций с названием «%2$@». Сначала переименуй одну в Bulava."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У «%1$@» кілька автоматизацій з назвою «%2$@». Спершу перейменуй одну в Bulava."
+          }
+        }
+      }
+    },
+    "The new brief could not be saved. Nothing was changed." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новый текст задания не удалось сохранить. Ничего не изменено."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новий текст завдання не вдалося зберегти. Нічого не змінено."
+          }
+        }
+      }
+    },
+    "Automation “%@”: its brief was changed in this chat (version %@). The next run follows it; a run already under way keeps the old one." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Автоматизация «%1$@»: в этом чате изменён текст задания (версия %2$@). Следующий запуск пойдёт по нему; уже идущий запуск остаётся со старым."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Автоматизація «%1$@»: у цьому чаті змінено текст завдання (версія %2$@). Наступний запуск піде за ним; запуск, що вже йде, лишається зі старим."
+          }
+        }
+      }
+    },
+    "The brief was changed while this form was open." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Текст задания изменили, пока эта форма была открыта."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Текст завдання змінили, поки ця форма була відкрита."
+          }
+        }
+      }
+    },
+    "Use the new brief" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Взять новый текст"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Взяти новий текст"
+          }
+        }
+      }
+    },
+    "Could not save. Your changes are still here — try again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось сохранить. Твои изменения остались здесь — попробуй ещё раз."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не вдалося зберегти. Твої зміни лишилися тут — спробуй ще раз."
+          }
+        }
+      }
+    },
     "The previous run has not finished yet." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -36612,6 +36832,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Це вже вирішили на Mac."
+          }
+        }
+      }
+    },
+    "Homebrew installs it in a Terminal window. When it finishes, press Send again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Homebrew установит его в окне Терминала. Когда закончит, нажми «Отправить ещё раз»."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Homebrew встановить його у вікні Термінала. Коли закінчить, натисни «Надіслати ще раз»."
+          }
+        }
+      }
+    },
+    "Install %@, then press Send again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Установи %@ и нажми «Отправить ещё раз»."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Встанови %@ і натисни «Надіслати ще раз»."
           }
         }
       }

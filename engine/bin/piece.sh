@@ -74,8 +74,11 @@ start)
   [ -n "$title" ] || title="$(piece_next_planned_title "$IDIR")"
   [ -n "$title" ] || { echo "❌ у плані нічого не лишилось — назви шматок: piece start \"назва\" -- …" >&2; exit 2; }
   proj="$(cat "$IDIR/project" 2>/dev/null || printf '%s' "$PWD")"
-  base="$(git -C "$proj" rev-parse HEAD 2>/dev/null || true)"
-  [ -n "$base" ] || { echo "❌ у $proj нема git-коміту, від якого міряти шматок" >&2; exit 1; }
+  # A real commit or nothing: in a repository with no commits `rev-parse HEAD` prints the word HEAD,
+  # and a piece stored with that "base" can never be accepted (supervisor-lib.sh, resolve_base_sha).
+  # Refused before anything is written, so the plan stays as it was.
+  base="$(resolve_base_sha "$proj")"
+  [ -n "$base" ] || { echo "❌ у $proj ще нема жодного git-коміту, а шматок міряється від коміту. Закоміть те, що вже є (git add -A && git commit -m \"початок\"), і відкрий шматок знову." >&2; exit 1; }
   crit="$(python3 -c 'import json,sys; print(json.dumps([c.strip() for c in sys.argv[1:] if c.strip()]))' "$@")" \
     || { echo "❌ не зміг прочитати критерії" >&2; exit 1; }
   if pieces_json "$IDIR" | jq -e --arg t "$title" 'any(.pieces[]; .title == $t and .state == "accepted")' >/dev/null 2>&1; then

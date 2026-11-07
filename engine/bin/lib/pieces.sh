@@ -167,7 +167,9 @@ piece_spec_note() {   # $1=idir $2=project dir
 piece_base_sha() {   # $1=idir $2=project dir
   local p b; p="$(piece_open "$1")"; [ -n "$p" ] || return 0
   [ -e "$1/base-snapshot" ] && return 0
-  b="$(jq -r '.base_sha // empty' <<<"$p")"; [ -n "$b" ] || return 0
+  # Only an object id: a plan written before piece.sh refused unborn repositories may hold the word
+  # HEAD, which "is an ancestor of HEAD" forever and so measured every piece from the latest commit.
+  b="$(only_object_id "$(jq -r '.base_sha // empty' <<<"$p")")"; [ -n "$b" ] || return 0
   git -C "$2" merge-base --is-ancestor "$b" HEAD 2>/dev/null && printf '%s\n' "$b"
 }
 
