@@ -252,6 +252,10 @@ final class AutomationDoor {
             return refusal(String(format: String(localized: "“%@” has more than one automation called “%@”; rename one in Bulava first."), product.name, name))
         }
         if current.brief == brief {
+            // Already the brief in memory — but "unchanged" is only true if the file holds it too.
+            guard model.automations.persistPending() else {
+                return refusal(String(localized: "The new brief could not be saved. Nothing was changed."))
+            }
             return ["ok": true, "name": current.name, "revision": current.briefRevision, "changed": false]
         }
         var edited = current

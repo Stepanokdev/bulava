@@ -521,7 +521,16 @@ struct AutomationEditor: View {
                 case .conflict: newerBrief = current.brief; return
                 }
             }
-            guard model.editAutomation(id, to: built) else { saveFailed = true; return }
+            guard model.editAutomation(id, to: built) else {
+                saveFailed = true
+                // His own change is in memory now, waiting to be written: the next Save retries it,
+                // and must not mistake it for somebody else's newer brief.
+                if let mine = model.automations.automation(id: id) {
+                    openedBrief = mine.brief
+                    openedRevision = mine.briefRevision
+                }
+                return
+            }
         }
         dismiss()
     }

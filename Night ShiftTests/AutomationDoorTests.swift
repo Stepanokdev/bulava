@@ -424,6 +424,47 @@ nonisolated final class AutomationDoorTests: XCTestCase {
         XCTAssertEqual(model.automations.automation(id: a.id)?.brief, brief)
     }
 
+    /// A write refused, access back, the same save again: it reaches the disk, as one new version.
+    /// It used to be "done" in memory after the failed write, so the retry compared equal, wrote
+    /// nothing and said it had — and a relaunch lost the change.
+    @MainActor
+    func testASaveThatFailedIsWrittenWhenItIsTriedAgain() async throws {
+        let (model, door, _, _, _) = try await ready()
+        _ = try ask(door, ["op": "create", "name": "Weekly review", "when": "weekly tue 09:00", "brief": brief, "mode": "branch"])
+        let a = try XCTUnwrap(model.automations.automations.first)
+        let dir = state.appendingPathComponent("app")
+        func readOnly(_ on: Bool) throws {
+            try FileManager.default.setAttributes([.posixPermissions: on ? 0o500 : 0o700], ofItemAtPath: dir.path)
+        }
+        func onDisk() -> Automation? { AutomationStore(directory: dir).automation(id: a.id) }
+
+        // The door: refused while the disk refuses, then written once it takes it.
+        try readOnly(true)
+        XCTAssertEqual(try ask(door, ["op": "update", "name": "Weekly review", "brief": "door brief"])["ok"] as? Bool, false)
+        try readOnly(false)
+        let retried = try ask(door, ["op": "update", "name": "Weekly review", "brief": "door brief"])
+        XCTAssertEqual(retried["ok"] as? Bool, true, "\(retried)")
+        XCTAssertEqual(onDisk()?.brief, "door brief", "on disk, as a fresh store reads it")
+        XCTAssertEqual(onDisk()?.briefRevision, 2, "exactly one new version")
+
+        // The editor's path: the failed Save leaves his change in memory; the same Save again writes it.
+        var edited = try XCTUnwrap(model.automations.automation(id: a.id))
+        edited.brief = "editor brief"
+        try readOnly(true)
+        XCTAssertFalse(model.editAutomation(a.id, to: edited), "a refused write is not saved")
+        XCTAssertTrue(model.automations.automationsUnsaved)
+        // Meanwhile an agent asks for that same brief: "unchanged" would be a lie while the disk lacks it.
+        XCTAssertEqual(try ask(door, ["op": "update", "name": "Weekly review", "brief": "editor brief"])["ok"] as? Bool, false)
+        try readOnly(false)
+        XCTAssertTrue(model.editAutomation(a.id, to: edited), "the retry writes what memory already holds")
+        XCTAssertFalse(model.automations.automationsUnsaved)
+        XCTAssertEqual(onDisk()?.brief, "editor brief")
+        XCTAssertEqual(onDisk()?.briefRevision, 3, "one more version, not two")
+        // His own failed try is not someone else's newer brief: the retry is the form's own.
+        let mine = try XCTUnwrap(model.automations.automation(id: a.id))
+        XCTAssertEqual(AutomationEditor.briefToSave(form: "editor brief", opened: mine.brief, openedRevision: mine.briefRevision, current: mine), .form)
+    }
+
     /// The edit form open while an agent changes the brief from a chat: Save must not put the old text back.
     @MainActor
     func testTheEditFormDoesNotPutAnOldBriefBack() {

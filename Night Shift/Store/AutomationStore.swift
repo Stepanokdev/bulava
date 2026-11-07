@@ -29,8 +29,20 @@ final class AutomationStore {
         copies = (copyFile.load() ?? []).compactMap(\.value)
     }
 
+    /// The last write of the automations did not reach the disk: what is in memory is newer than the
+    /// file. Until a write succeeds, an "unchanged" update is not done — it writes.
+    private(set) var automationsUnsaved = false
+
     @discardableResult
-    private func saveAutomations() -> Bool { automationFile.save(automations.map(Lossy.init)) }
+    private func saveAutomations() -> Bool {
+        let ok = automationFile.save(automations.map(Lossy.init))
+        automationsUnsaved = !ok
+        return ok
+    }
+
+    /// Writes the automations if the last write failed. True when the file holds what memory holds.
+    @discardableResult
+    func persistPending() -> Bool { automationsUnsaved ? saveAutomations() : true }
     private func saveRuns() { runFile.save(runs.map(Lossy.init)) }
     private func saveCopies() { copyFile.save(copies.map(Lossy.init)) }
 
@@ -56,7 +68,9 @@ final class AutomationStore {
         guard let i = automations.firstIndex(where: { $0.id == id }) else { return false }
         var a = automations[i]
         change(&a)
-        guard a != automations[i] else { return true }
+        // Nothing to change — unless the last write failed, and memory already holds a change the
+        // file does not: a retry of the same edit must write it, not report it done.
+        guard a != automations[i] else { return persistPending() }
         a.updatedAt = Date()
         automations[i] = a
         return saveAutomations()
