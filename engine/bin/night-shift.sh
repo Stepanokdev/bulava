@@ -1023,6 +1023,35 @@ $gone}"
     dirty_state_json "$_d" "${2:-300}"
     ;;
 
+  verify-elsewhere)
+    # One of the run's other repositories, checked the way the primary folder is after an answer —
+    # because the director asked, from the chat.
+    #
+    # The check after an answer runs only in the primary folder. When the change was made next door,
+    # the primary's evidence names that repository (`unverified_elsewhere`) and the app offers this.
+    # Only a repository this run was actually given — a line of its instance's `extra-repos` — and
+    # from the base it had when the run began, so "what changed" means what this run changed. It gets
+    # a scratch instance folder of its own: the primary's registered checks, runspec and untracked
+    # manifest are the primary's and must not be run or read against another repository.
+    # Prints the evidence.json path; the same path every time, so the newest check is the one there.
+    _p="$(canon_path "${1:?usage: night-shift verify-elsewhere <primary-dir> <repo-dir>}")"
+    _r="$(canon_path "${2:?usage: night-shift verify-elsewhere <primary-dir> <repo-dir>}")"
+    _idir="$(instance_dir "$(slug_for "$_p")")"
+    [ -s "$_idir/extra-repos" ] || { echo '{"error":"no-run"}'; exit 1; }
+    _base=""; _found=0
+    while IFS=$'\037' read -r _dir _b _rest; do
+      [ "$_dir" = "$_r" ] || continue
+      _found=1; _base="$_b"; break
+    done < "$_idir/extra-repos"
+    [ "$_found" = 1 ] && [ -d "$_r" ] || { echo '{"error":"not-in-run"}'; exit 1; }
+    case "$_base" in -|*[!0-9a-fA-F]*) _base="" ;; esac
+    _scratch="$_idir/elsewhere/$(slug_for "$_r")"
+    mkdir -p "$_scratch" || { echo '{"error":"no-scratch"}'; exit 1; }
+    _ev="$("$BIN_DIR/verify.sh" "$_r" check "$_scratch" "$_base" 2>>"$_scratch/verify.log")"
+    [ -n "$_ev" ] && [ -f "$_ev" ] || { echo '{"error":"no-evidence"}'; exit 1; }
+    printf '%s\n' "$_ev"
+    ;;
+
   commit-preview)
     # What «Commit as me» would commit, read without committing: staged into a throwaway copy of the
     # index exactly as `director_commit` stages it (nested repositories and the harness's own litter
@@ -1690,7 +1719,7 @@ PYEOF
     command -v python3 >/dev/null 2>&1 && python3 "$BIN_DIR/ns-cli.py" help >&2
     echo "" >&2
     echo "usage: night-shift start [dir] [--dirty=keep|commit [--message=…]] | resume <dir> <session-id> [branch] | revive <dir> | stop [dir|--all]"
-    echo "       night-shift status | attach [dir] | list | dirty-state [dir] | commit-preview [dir] | heavy-state [dir] | heavy-exclude <dir> [local|gitignore] | mcp-state [dir] | mcp-decide <dir> enable|skip | mcp-carry <src> <dst> | config … | models | doctor | completion <shell> | help [cmd] | version | uninstall [--force]"
+    echo "       night-shift status | attach [dir] | list | dirty-state [dir] | verify-elsewhere <dir> <repo> | commit-preview [dir] | heavy-state [dir] | heavy-exclude <dir> [local|gitignore] | mcp-state [dir] | mcp-decide <dir> enable|skip | mcp-carry <src> <dst> | config … | models | doctor | completion <shell> | help [cmd] | version | uninstall [--force]"
     exit 1
     ;;
 esac
