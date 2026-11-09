@@ -25,12 +25,18 @@ nonisolated struct ChatSessionBinding: Codable, Equatable, Sendable {
     /// at these: what Claude did after the answer shows below it (`ChatTranscriptFeed.fold`), and
     /// the same way after Bulava restarts and reads the transcript again from the start.
     var screenAnswers: [Date]
+    /// The folder this conversation worked in before he moved it, until its first session in the
+    /// new one starts. A session belongs to the folder it was started in, so moving a chat starts a
+    /// new one — and that new session knows nothing of what was said. While this is set, the next
+    /// message carries the last part of the conversation with it (`ChatFolderMove.preamble`).
+    var movedFrom: String?
 
     init(primaryProjectID: UUID?, projectPath: String, claudeSessionID: String? = nil,
          codexThreadID: String? = nil, codexContextDigest: String? = nil,
          activeRunID: String? = nil, branch: String? = nil, startedAt: Date = Date(),
          outcomeAt: Date? = nil, lastCompletedTurnKey: String? = nil,
-         lastReportedTurnKey: String? = nil, reportPaths: [String] = [], screenAnswers: [Date] = []) {
+         lastReportedTurnKey: String? = nil, reportPaths: [String] = [], screenAnswers: [Date] = [],
+         movedFrom: String? = nil) {
         self.primaryProjectID = primaryProjectID
         self.projectPath = projectPath
         self.claudeSessionID = claudeSessionID
@@ -44,6 +50,14 @@ nonisolated struct ChatSessionBinding: Codable, Equatable, Sendable {
         self.lastReportedTurnKey = lastReportedTurnKey
         self.reportPaths = reportPaths
         self.screenAnswers = screenAnswers
+        self.movedFrom = movedFrom
+    }
+
+    /// A folder chosen for a chat before anything was said in it — and nothing else: no session,
+    /// no run, no report. What `ChatFolderMove` writes for a chat that has not started.
+    var isOnlyAChosenFolder: Bool {
+        primaryProjectID != nil && claudeSessionID == nil && codexThreadID == nil
+            && activeRunID == nil && reportPaths.isEmpty
     }
 
     // MARK: Turn keys
@@ -76,6 +90,7 @@ nonisolated struct ChatSessionBinding: Codable, Equatable, Sendable {
         lastReportedTurnKey = try? c.decodeIfPresent(String.self, forKey: .lastReportedTurnKey)
         reportPaths = (try? c.decode([String].self, forKey: .reportPaths)) ?? []
         screenAnswers = (try? c.decode([Date].self, forKey: .screenAnswers)) ?? []
+        movedFrom = try? c.decodeIfPresent(String.self, forKey: .movedFrom)
     }
 }
 
