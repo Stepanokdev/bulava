@@ -68,6 +68,7 @@ check "tests recorded as skipped"           '[ "$(status_of "tests pass")" = ski
 check "lint recorded as skipped"            '[ "$(status_of "lint clean")" = skipped ]'
 check "the skip says why"                   '[ -n "$(note_of "tests pass")" ]'
 check "nothing passed, so overall is not pass" '[ "$(jq -r .overall_status "$EV")" != pass ]'
+check "nothing next door, so nothing unchecked" '[ "$(jq -r ".unverified_elsewhere | length" "$EV")" = 0 ]'
 check "and no criterion is inconclusive"    '[ "$(jq "[.criteria[]|select(.status==\"inconclusive\")]|length" "$EV")" = 0 ]'
 
 echo "== the work was next door: the skip names that repository, and the review does not bank it as debt =="
@@ -84,7 +85,33 @@ check "the skip names the sibling"          'note_of "tests pass" | grep -qF "$(
 # evidence. Read out of the gate itself, so a change there is a change here.
 NTV="$(awk '/^nothing_to_verify\(\) \{/,/^\}/' "$ROOT/hooks/review-gate.sh")"
 check "the gate reads it as nothing to verify" '[ -n "$NTV" ] && ( eval "$NTV"; verify_json="$(cat "$EV")"; nothing_to_verify )'
+# As data too, for the app to say so under the answer and offer to check it.
+check "evidence says the primary was untouched" '[ "$(jq -r .primary_untouched "$EV")" = true ]'
+check "evidence names the unchecked sibling"    'jq -e --arg s "$(canon_path "$SIB")" ".unverified_elsewhere | index(\$s)" "$EV" >/dev/null'
+
+echo "== night-shift verify-elsewhere: the sibling, checked on request, from the run's base =="
+NS="$ROOT/bin/night-shift.sh"
+SIB2="$(make_repo package.json "$PKG" src/round.ts "export const r = 1")"
+SIB2_BASE="$(git -C "$SIB2" rev-parse HEAD)"
+printf '%s\037%s\037%s\0370\037\n' "$(canon_path "$SIB2")" "$SIB2_BASE" "$(repo_work_digest "$SIB2" "$SIB2_BASE")" >> "$PIDIR/extra-repos"
+printf 'export const r = 2\n' > "$SIB2/src/round.ts"
+: > "$CALLS"
+OUT="$(PATH="$STUB:$PATH" bash "$NS" verify-elsewhere "$P" "$SIB2" 2>/dev/null)"; RC=$?
+EV="$OUT"
+check "it ran and printed an evidence file"     '[ "$RC" = 0 ] && [ -f "$EV" ]'
+check "the evidence is about the sibling"      '[ "$(jq -r .project_dir "$EV")" = "$(canon_path "$SIB2")" ]'
+check "measured from the base the run recorded" '[ "$(jq -r .base_sha "$EV")" = "$SIB2_BASE" ]'
+check "its suite really ran"                    'called "npm run test" && [ "$(status_of "tests pass")" = pass ]'
+check "kept apart from the primary evidence"  'case "$EV" in "$PIDIR/elsewhere/"*) true ;; *) false ;; esac'
+check "and not offered again as unchecked"      '[ "$(jq -r ".unverified_elsewhere | length" "$EV")" = 0 ]'
+STRANGER="$(make_repo package.json "$PKG")"
+: > "$CALLS"
+OUT="$(PATH="$STUB:$PATH" bash "$NS" verify-elsewhere "$P" "$STRANGER" 2>/dev/null)"; RC=$?
+check "a repository this run was not given is refused" '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep -q not-in-run'
+check "and nothing was run in it"               '! called "npm"'
 rm -f "$PIDIR/extra-repos"
+OUT="$(PATH="$STUB:$PATH" bash "$NS" verify-elsewhere "$P" "$SIB2" 2>/dev/null)"; RC=$?
+check "with no record of the run, it says so"   '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep -q no-run'
 
 echo "== JS: only prose changed (tracked README + new notes.md) ⇒ not run =="
 printf 'more\n' >> "$P/README.md"; printf 'notes\n' > "$P/notes.md"

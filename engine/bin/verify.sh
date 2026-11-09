@@ -102,7 +102,7 @@ skip_build() {  # record a skipped build step (neutral, never blocks)
 # code moved under a `.md` name still counts as code removed. No known base commit: nothing can be
 # said, so the suite runs. A project's own `./verify.sh` is not governed by this at all — it may be
 # what checks repositories nested inside a folder whose own git sees nothing.
-UNTESTED_NOTE=""
+UNTESTED=0; UNTESTED_NOTE=""
 nothing_testable_changed() {
   [ -n "$BASE_SHA" ] && git -C "$PROJ" cat-file -e "$BASE_SHA" 2>/dev/null || return 1
   local tracked files elsewhere
@@ -574,12 +574,21 @@ if [ -f "$CHECKS_FILE" ]; then
   done
 fi
 
+# The product's other repositories this run changed. This verifier checks only $PROJ; those are
+# named here, as data, so the app can say under the answer that they went unchecked and offer to
+# check them (`night-shift verify-elsewhere`) — and so can the reviewer reading this file.
+ELSEWHERE_JSON="$( { [ -d "$IDIR" ] && extra_repos_changed "$IDIR"; } 2>/dev/null | jq -R . | jq -s -c . 2>/dev/null)"
+[ -n "$ELSEWHERE_JSON" ] || ELSEWHERE_JSON='[]'
+UNTOUCHED_JSON=false; [ "$UNTESTED" = 1 ] && UNTOUCHED_JSON=true
+
 EVIDENCE_JSON="$EVIDENCE_DIR/evidence.json"
 HEAD_SHA="$(resolve_base_sha "$PROJ")"
 TREE_DIGEST="$(work_tree_digest "$PROJ" 2>/dev/null || echo "")"
-jq -n --argjson crit "[${CRIT_JSON}]" --arg proj "$PROJ" --arg sid "$SID" --arg base "$BASE_SHA" --arg stacks "$STACKS" --arg vprofile "$VPROFILE" --arg head "$HEAD_SHA" --arg tree "$TREE_DIGEST" '
+jq -n --argjson crit "[${CRIT_JSON}]" --arg proj "$PROJ" --arg sid "$SID" --arg base "$BASE_SHA" --arg stacks "$STACKS" --arg vprofile "$VPROFILE" --arg head "$HEAD_SHA" --arg tree "$TREE_DIGEST" \
+      --argjson elsewhere "$ELSEWHERE_JSON" --argjson untouched "$UNTOUCHED_JSON" '
   {project_dir:$proj, session_id:$sid, base_sha:$base, head_sha:$head, work_tree_digest:$tree, stacks:($stacks|split(" ")|map(select(.!=""))),
    verification_profile:$vprofile,
+   primary_untouched:$untouched, unverified_elsewhere:$elsewhere,
    criteria:$crit,
    overall_status: (
      # "pass" ONLY when at least one criterion actually passed and nothing failed/was inconclusive.

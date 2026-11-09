@@ -4,6 +4,244 @@
     "" : {
 
     },
+    "Checks in “%@” passed: %@." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверки в «%@» прошли: %@."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перевірки в «%@» пройшли: %@."
+          }
+        }
+      }
+    },
+    "Checks in “%@” failed: %@." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверки в «%@» не прошли: %@."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перевірки в «%@» не пройшли: %@."
+          }
+        }
+      }
+    },
+    "Checks in “%@” did not finish: %@." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверки в «%@» не завершились: %@."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перевірки в «%@» не завершилися: %@."
+          }
+        }
+      }
+    },
+    "Nothing in “%@” could be checked automatically." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В «%@» нечего проверить автоматически."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У «%@» нічого перевірити автоматично."
+          }
+        }
+      }
+    },
+    "this run no longer has a record of that folder" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "у этого прогона больше нет записи об этой папке"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "цей прогін більше не має запису про цю теку"
+          }
+        }
+      }
+    },
+    "the check left no result" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "проверка не оставила результата"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "перевірка не залишила результату"
+          }
+        }
+      }
+    },
+    "Could not check “%@”: %@." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не получилось проверить «%@»: %@."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не вдалося перевірити «%@»: %@."
+          }
+        }
+      }
+    },
+    "No checks ran: nothing changed in “%@”. The changes are in %@ and were not checked." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверки не запускались: в «%@» ничего не менялось. Изменения — в %@, их не проверяли."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перевірки не запускались: у «%@» нічого не змінювалось. Зміни — у %@, їх не перевіряли."
+          }
+        }
+      }
+    },
+    "The changes in %@ were not checked: the check after an answer runs only in “%@”." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Изменения в %@ не проверялись: проверка после ответа идёт только в «%@»."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зміни в %@ не перевірялись: перевірка після відповіді йде лише в «%@»."
+          }
+        }
+      }
+    },
+    "Checking “%@”…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверяю «%@»…"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перевіряю «%@»…"
+          }
+        }
+      }
+    },
+    "Open log" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть лог"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Відкрити лог"
+          }
+        }
+      }
+    },
+    "Check “%@”" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверить «%@»"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перевірити «%@»"
+          }
+        }
+      }
+    },
+    "Move the chat to “%@”" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перенести чат в «%@»"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перенести чат у «%@»"
+          }
+        }
+      }
+    },
+    "The next answer is then checked in that folder" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тогда следующий ответ будут проверять в этой папке"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тоді наступну відповідь перевірятимуть у цій теці"
+          }
+        }
+      }
+    },
     "This chat is moving to another folder. Send the message again in a moment." : {
       "extractionState" : "manual",
       "localizations" : {

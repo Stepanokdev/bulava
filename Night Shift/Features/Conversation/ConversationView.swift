@@ -65,6 +65,10 @@ struct ConversationView: View {
                                 .padding(.top, 12)
                         }
 
+                        // The folder the work was done in, when the check after the answer did not
+                        // look at it — said where the answer is, with the way to check it.
+                        UncheckedFoldersRow(chatID: chatID)
+
                         // The things to do now the turn has ended — make a report, open one — under the
                         // last answer, where they are seen. They used to live only in the inspector.
                         ChatOutcomeActions(chatID: chatID)
@@ -514,6 +518,140 @@ struct ConversationView: View {
 /// inspector (a 5-pt dot) or the top copy bar, so a finished chat looked like it offered nothing. The
 /// list is decided by `AppModel.chatOutcomeActions` (tested there); this draws it. Shown whether or
 /// not the chat ever asked a question — the status row above hides itself once it has.
+/// Under the last answer, when the check after it did not look at the folder the work was done in.
+///
+/// The check runs in the chat's folder only. A chat left in the product's default folder whose agent
+/// worked next door ends with nothing checked there and the changed repository never checked at all;
+/// the review knew, and the screen said nothing. This says it, names the folder, and offers to check
+/// it — or to move the chat there, so the next answer is checked where the work is.
+private struct UncheckedFoldersRow: View {
+    @Environment(AppModel.self) private var model
+    let chatID: UUID?
+
+    @State private var report: UncheckedFolders?
+    @State private var pendingMove: UncheckedFolders.Folder?
+
+    private var phaseActive: Bool { model.directPhase(for: chatID).isActive }
+    private var chat: Chat? { chatID.flatMap { model.conversations.chat(id: $0) } }
+    /// Read again when the turn ends, when something new is said, and when a check from here ends.
+    private var refreshKey: String {
+        let last = chatID.flatMap { model.conversations.entries(inChat: $0).last?.id.uuidString } ?? "-"
+        return "\(chatID?.uuidString ?? "-")|\(phaseActive)|\(last)|\(model.elsewhereRevision)"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Never empty. A view with nothing in it never appears in the thread's lazy stack, so a
+            // task hung on it never runs — and the report it would load is the only thing that could
+            // make it non-empty. The first version of this row showed nothing, ever, for that reason.
+            Color.clear.frame(height: 0)
+            if let report, report.needsAttention, !phaseActive, let chatID {
+                VStack(alignment: .leading, spacing: 10) {
+                    let unchecked = report.folders.filter { $0.result == nil }
+                    if !unchecked.isEmpty {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "exclamationmark.circle")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Palette.orange)
+                                .padding(.top, 1)
+                            Text(verbatim: headline(report, unchecked: unchecked))
+                                .font(Typo.caption)
+                                .foregroundStyle(Palette.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    ForEach(report.folders.filter { !$0.isSettled }) { folder in
+                        folderRow(folder, chatID: chatID)
+                    }
+                }
+                .padding(.top, 14)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .task(id: refreshKey) { report = await model.uncheckedFolders(chatID: chatID) }
+        .confirmationDialog(Text(String(format: String(localized: "Move this chat to “%@”?"),
+                                        pendingMove?.name ?? "")),
+                            isPresented: Binding(get: { pendingMove != nil },
+                                                 set: { if !$0 { pendingMove = nil } }),
+                            titleVisibility: .visible, presenting: pendingMove) { folder in
+            Button { move(to: folder) } label: { Text("Move") }
+            Button(role: .cancel) { pendingMove = nil } label: { Text("Cancel") }
+        } message: { folder in
+            Text(String(format: String(localized: "The conversation stays here. The agent starts a new session in “%@” and gets the last messages of this chat. Its session in “%@” ends, along with anything it left running there."),
+                        folder.name, report?.primaryName ?? ""))
+        }
+    }
+
+    private func headline(_ report: UncheckedFolders, unchecked: [UncheckedFolders.Folder]) -> String {
+        let names = unchecked.map(\.name).joined(separator: ", ")
+        return report.primaryUntouched
+            ? String(format: String(localized: "No checks ran: nothing changed in “%@”. The changes are in %@ and were not checked."),
+                     report.primaryName, names)
+            : String(format: String(localized: "The changes in %@ were not checked: the check after an answer runs only in “%@”."),
+                     names, report.primaryName)
+    }
+
+    @ViewBuilder
+    private func folderRow(_ folder: UncheckedFolders.Folder, chatID: UUID) -> some View {
+        if model.checkingElsewhere[chatID]?.contains(folder.path) == true {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini)
+                Text(verbatim: String(format: String(localized: "Checking “%@”…"), folder.name))
+                    .font(Typo.caption)
+                    .foregroundStyle(Palette.textTertiary)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                if let result = folder.result {
+                    Text(verbatim: result.sentence(folder: folder.name))
+                        .font(Typo.caption)
+                        .foregroundStyle(result.verdict == .failed ? Palette.orange : Palette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                WrappingHStack(horizontalSpacing: 8, verticalSpacing: 8) {
+                    if let log = folder.result?.log {
+                        Button("Open log") { model.openCheckLog(log) }
+                            .buttonStyle(.bulava(.secondary))
+                    }
+                    Button {
+                        check(folder, chatID: chatID)
+                    } label: {
+                        Text(verbatim: folder.result == nil
+                             ? String(format: String(localized: "Check “%@”"), folder.name)
+                             : String(localized: "Check again"))
+                    }
+                    .buttonStyle(.bulava(folder.result == nil ? .primary : .secondary))
+                    // Moving is for a folder of the product's, in a chat that may move now.
+                    if folder.projectID != nil, model.chatFolderLock(chatID: chatID) == nil {
+                        Button {
+                            pendingMove = folder
+                        } label: {
+                            Text(verbatim: String(format: String(localized: "Move the chat to “%@”"), folder.name))
+                        }
+                        .buttonStyle(.bulava(.secondary))
+                        .help(Text("The next answer is then checked in that folder"))
+                    }
+                }
+            }
+        }
+    }
+
+    private func check(_ folder: UncheckedFolders.Folder, chatID: UUID) {
+        Task { await model.checkElsewhere(chatID: chatID, folder: folder) }
+    }
+
+    private func move(to folder: UncheckedFolders.Folder) {
+        pendingMove = nil
+        guard let projectID = folder.projectID, let chat else { return }
+        let chatID = chat.id, productID = chat.productID
+        Task {
+            if let problem = await model.chooseChatFolder(projectID, productID: productID, chatID: chatID) {
+                model.toast = ToastMessage(text: problem, kind: .error)
+            }
+        }
+    }
+}
+
 private struct ChatOutcomeActions: View {
     @Environment(AppModel.self) private var model
     let chatID: UUID?

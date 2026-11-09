@@ -161,6 +161,55 @@ extension SupervisorClient {
         }
     }
 
+    // MARK: The folders the check after an answer did not look at
+
+    /// A check's evidence, the folder it was found in, and when it was written.
+    struct DatedEvidence: Sendable {
+        var evidence: Evidence
+        var at: Date
+        /// The run folder holding `evidence/` — where the checks of its other repositories live too.
+        var base: URL
+    }
+
+    /// The chat's newest evidence as `chatEvidence` finds it, with the time it was written: what
+    /// tells a check made for the answer on screen from one made for an earlier message.
+    func chatEvidenceDated(projectPath: String, runID: String?, sessionID: String?) -> DatedEvidence? {
+        guard let base = paths.artifactBase(runID: runID, projectPath: projectPath) else { return nil }
+        let file: URL
+        if let sessionID, !sessionID.isEmpty {
+            file = base.appendingPathComponent("evidence/\(sessionID)/evidence.json")
+        } else {
+            let dirs = (try? FileManager.default.contentsOfDirectory(
+                at: base.appendingPathComponent("evidence"), includingPropertiesForKeys: nil)) ?? []
+            guard let newest = dirs.map({ $0.appendingPathComponent("evidence.json") })
+                .compactMap({ url in Self.writtenAt(url).map { (url, $0) } })
+                .max(by: { $0.1 < $1.1 })?.0 else { return nil }
+            file = newest
+        }
+        guard let data = try? Data(contentsOf: file), let evidence = Evidence.decode(from: data),
+              Self.matches(evidence, projectPath: projectPath), let at = Self.writtenAt(file) else { return nil }
+        return DatedEvidence(evidence: evidence, at: at, base: base)
+    }
+
+    /// The newest check of one of the run's other repositories, made from the chat
+    /// (`night-shift verify-elsewhere`), found by what it says it checked rather than by a folder
+    /// name worked out here — the engine names that folder, and only the engine spells its slugs.
+    func elsewhereEvidence(in base: URL, repoPath: String) -> DatedEvidence? {
+        let root = base.appendingPathComponent("elsewhere")
+        let dirs = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
+        let want = Slug.canonicalPath(repoPath)
+        return dirs.compactMap { dir -> DatedEvidence? in
+            let file = dir.appendingPathComponent("evidence/check/evidence.json")
+            guard let data = try? Data(contentsOf: file), let evidence = Evidence.decode(from: data),
+                  Slug.canonicalPath(evidence.projectDir) == want, let at = Self.writtenAt(file) else { return nil }
+            return DatedEvidence(evidence: evidence, at: at, base: base)
+        }.max { $0.at < $1.at }
+    }
+
+    nonisolated private static func writtenAt(_ url: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+    }
+
     nonisolated private static func matches(_ evidence: Evidence, projectPath: String) -> Bool {
         evidence.projectDir.isEmpty
             || Slug.canonicalPath(evidence.projectDir) == Slug.canonicalPath(projectPath)

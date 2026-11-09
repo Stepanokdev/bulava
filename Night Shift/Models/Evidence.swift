@@ -24,6 +24,11 @@ nonisolated struct Evidence: Sendable {
     var stacks: [String]
     var criteria: [EvidenceCriterion]
     var overallStatus: CriterionStatus
+    /// Nothing in this folder changed since the run began, or only prose, so its suites were skipped.
+    var primaryUntouched: Bool = false
+    /// The run's other repositories that changed and that this check did not look at — it checks
+    /// only its own folder. The chat offers to check them (`AppModel.checkElsewhere`).
+    var unverifiedElsewhere: [String] = []
 
     private struct Raw: Decodable {
         struct Crit: Decodable {
@@ -42,6 +47,8 @@ nonisolated struct Evidence: Sendable {
         var stacks: [String]?
         var criteria: [Crit]?
         var overall_status: String?
+        var primary_untouched: Bool?
+        var unverified_elsewhere: [String]?
     }
 
     static func decode(from data: Data) -> Evidence? {
@@ -58,7 +65,9 @@ nonisolated struct Evidence: Sendable {
                                   exitCode: $0.exit_code, artifact: $0.artifact,
                                   status: CriterionStatus(raw: $0.status), note: $0.note)
             },
-            overallStatus: CriterionStatus(raw: raw.overall_status ?? "unknown"))
+            overallStatus: CriterionStatus(raw: raw.overall_status ?? "unknown"),
+            primaryUntouched: raw.primary_untouched ?? false,
+            unverifiedElsewhere: raw.unverified_elsewhere ?? [])
     }
 
     var passed: Int { criteria.filter { $0.status == .pass }.count }
