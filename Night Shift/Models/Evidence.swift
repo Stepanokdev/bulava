@@ -29,6 +29,9 @@ nonisolated struct Evidence: Sendable {
     /// The run's other repositories that changed and that this check did not look at — it checks
     /// only its own folder. The chat offers to check them (`AppModel.checkElsewhere`).
     var unverifiedElsewhere: [String] = []
+    /// Each of those, with the digest of its tree when this check was made. A check of that
+    /// repository made from the chat earlier, of the same tree, still stands for this answer.
+    var unverifiedElsewhereDigests: [String: String] = [:]
 
     private struct Raw: Decodable {
         struct Crit: Decodable {
@@ -49,6 +52,7 @@ nonisolated struct Evidence: Sendable {
         var overall_status: String?
         var primary_untouched: Bool?
         var unverified_elsewhere: [String]?
+        var unverified_elsewhere_digests: [String: String]?
     }
 
     static func decode(from data: Data) -> Evidence? {
@@ -67,7 +71,8 @@ nonisolated struct Evidence: Sendable {
             },
             overallStatus: CriterionStatus(raw: raw.overall_status ?? "unknown"),
             primaryUntouched: raw.primary_untouched ?? false,
-            unverifiedElsewhere: raw.unverified_elsewhere ?? [])
+            unverifiedElsewhere: raw.unverified_elsewhere ?? [],
+            unverifiedElsewhereDigests: raw.unverified_elsewhere_digests ?? [:])
     }
 
     var passed: Int { criteria.filter { $0.status == .pass }.count }

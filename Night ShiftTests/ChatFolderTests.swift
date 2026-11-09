@@ -190,26 +190,38 @@ nonisolated final class ChatFolderTests: XCTestCase {
         XCTAssertTrue(notice?.text.contains("billing") == true, "the chat says where it works now: \(notice?.text ?? "nil")")
     }
 
+    /// What the engine does at a start: the session id is written before any message is sent.
+    @MainActor
+    private func sessionStarted(_ model: AppModel, _ chat: Chat, in folder: Project, id: String) {
+        var instance = SupervisorInstance(slug: "light", projectPath: folder.path, session: "night-light",
+                                          watchdogAlive: true, hasPlan: false, hasResearch: false)
+        instance.sessionID = id
+        model.conversations.bindSession(model.makeBinding(for: folder, instance: instance,
+                                                          keeping: model.conversations.chat(id: chat.id)?.session),
+                                        to: chat.id)
+    }
+
     @MainActor
     func testTheFirstMessageAfterAMoveCarriesTheConversationAndTheOneAfterDoesNot() async throws {
         let (model, product, heavy, light, _) = product()
         let chat = conversationIn(model, product, heavy)
         await model.chooseChatFolder(light.id, productID: product.id, chatID: chat.id)
 
-        let carried = try XCTUnwrap(model.folderMoveHandoff(chatID: chat.id, before: nil))
+        let first = UUID()
+        let carried = try XCTUnwrap(model.folderMoveHandoff(chatID: chat.id, for: first))
         XCTAssertTrue(carried.contains(heavy.path) && carried.contains(light.path), carried)
         XCTAssertTrue(carried.contains("Почини округление в счетах"), "what he asked")
         XCTAssertTrue(carried.contains("billing/round.ts"), "what the agent had found")
+        model.conversations.appendUser("Проверь тесты биллинга", productID: product.id, chatID: chat.id, id: first)
 
-        // The new folder's session starts: from then on it remembers the conversation itself.
-        var instance = SupervisorInstance(slug: "light", projectPath: light.path, session: "night-light",
-                                          watchdogAlive: true, hasPlan: false, hasResearch: false)
-        instance.sessionID = "SESSION-IN-BILLING"
-        let bound = model.makeBinding(for: light, instance: instance,
-                                      keeping: model.conversations.chat(id: chat.id)?.session)
-        model.conversations.bindSession(bound, to: chat.id)
-        XCTAssertNil(model.folderMoveHandoff(chatID: chat.id, before: nil))
-        XCTAssertNil(bound.movedFrom)
+        // The new folder's session starts, and the message carrying the hand-over reaches it.
+        sessionStarted(model, chat, in: light, id: "SESSION-IN-BILLING")
+        model.folderMoveHandoffDelivered(chatID: chat.id, entryID: first)
+
+        XCTAssertNil(model.folderMoveHandoff(chatID: chat.id, for: UUID()),
+                     "from then on that session remembers the conversation itself")
+        XCTAssertNil(model.conversations.chat(id: chat.id)?.session?.movedFrom)
+        XCTAssertNil(model.conversations.chat(id: chat.id)?.session?.handoffEntryID)
     }
 
     @MainActor
@@ -226,6 +238,134 @@ nonisolated final class ChatFolderTests: XCTestCase {
                        "a retry before the session id arrives must still hand the conversation over")
     }
 
+    /// The start wrote its session id, and then the send failed — the review mode could not be set,
+    /// the engine refused the message. The session exists and was never told anything.
+    @MainActor
+    func testASendThatFailsAfterTheSessionStartedStillHandsTheConversationOverOnTheRetry() async throws {
+        let (model, product, heavy, light, _) = product()
+        let chat = conversationIn(model, product, heavy)
+        await model.chooseChatFolder(light.id, productID: product.id, chatID: chat.id)
+        let first = UUID()
+        XCTAssertNotNil(model.folderMoveHandoff(chatID: chat.id, for: first))
+        let entry = model.conversations.appendUser("Проверь тесты биллинга", productID: product.id,
+                                                   chatID: chat.id, id: first)
+
+        sessionStarted(model, chat, in: light, id: "SESSION-IN-BILLING")
+        model.conversations.updateDelivery(entryID: entry.id, .failed)
+
+        let retried = try XCTUnwrap(model.folderMoveHandoff(chatID: chat.id, for: first),
+                                    "the retry of the same message carries it again")
+        XCTAssertTrue(retried.contains("Почини округление в счетах"))
+        XCTAssertFalse(retried.contains("Проверь тесты биллинга"), "never the message itself")
+        XCTAssertEqual(model.conversations.chat(id: chat.id)?.session?.movedFrom, heavy.path)
+    }
+
+    @MainActor
+    func testASecondMessageWhileTheFirstIsOnItsWayDoesNotCarryItAgain() async throws {
+        let (model, product, heavy, light, _) = product()
+        let chat = conversationIn(model, product, heavy)
+        await model.chooseChatFolder(light.id, productID: product.id, chatID: chat.id)
+        let first = UUID()
+        XCTAssertNotNil(model.folderMoveHandoff(chatID: chat.id, for: first))
+        model.conversations.appendUser("Проверь тесты биллинга", productID: product.id, chatID: chat.id, id: first)
+
+        XCTAssertNil(model.folderMoveHandoff(chatID: chat.id, for: UUID()),
+                     "the session is about to be told by the first one; twice is noise")
+        XCTAssertNotNil(model.folderMoveHandoff(chatID: chat.id, for: first), "the first one still carries it")
+    }
+
+    @MainActor
+    func testAFailedCarrierGivesTheHandOverToTheMessageSentInstead() async throws {
+        let (model, product, heavy, light, _) = product()
+        let chat = conversationIn(model, product, heavy)
+        await model.chooseChatFolder(light.id, productID: product.id, chatID: chat.id)
+        let first = UUID()
+        XCTAssertNotNil(model.folderMoveHandoff(chatID: chat.id, for: first))
+        let entry = model.conversations.appendUser("Проверь тесты биллинга", productID: product.id,
+                                                   chatID: chat.id, id: first)
+        model.conversations.updateDelivery(entryID: entry.id, .failed)
+
+        // He writes something new instead of pressing retry.
+        let instead = UUID()
+        let carried = try XCTUnwrap(model.folderMoveHandoff(chatID: chat.id, for: instead))
+        XCTAssertTrue(carried.contains("Проверь тесты биллинга"), "the failed one is part of what was said")
+        XCTAssertEqual(model.conversations.chat(id: chat.id)?.session?.handoffEntryID, instead)
+        model.conversations.appendUser("Ладно, тогда сначала линтер", productID: product.id,
+                                       chatID: chat.id, id: instead)
+        XCTAssertNil(model.folderMoveHandoff(chatID: chat.id, for: first),
+                     "and a later retry of the failed one does not carry it a second time")
+    }
+
+    /// A Codex turn that failed after its thread started: the message is not marked failed, so it
+    /// has no retry, and whether the thread kept the hand-over is not known.
+    @MainActor
+    func testATurnThatFailedUncertainlyLetsTheNextMessageCarryTheHandOver() async throws {
+        let (model, product, heavy, light, _) = product()
+        let chat = conversationIn(model, product, heavy)
+        await model.chooseChatFolder(light.id, productID: product.id, chatID: chat.id)
+        let first = UUID()
+        XCTAssertNotNil(model.folderMoveHandoff(chatID: chat.id, for: first))
+        model.conversations.appendUser("Проверь тесты биллинга", productID: product.id, chatID: chat.id, id: first)
+        model.conversations.updateSession(for: chat.id) { $0.codexThreadID = "THREAD-IN-BILLING" }
+
+        model.folderMoveHandoffReleased(chatID: chat.id, entryID: first)
+
+        let next = UUID()
+        let carried = try XCTUnwrap(model.folderMoveHandoff(chatID: chat.id, for: next),
+                                    "the next message carries it rather than nobody")
+        XCTAssertTrue(carried.contains("Почини округление в счетах"))
+        XCTAssertEqual(model.conversations.chat(id: chat.id)?.session?.movedFrom, heavy.path)
+        XCTAssertEqual(model.conversations.chat(id: chat.id)?.session?.handoffEntryID, next)
+    }
+
+    @MainActor
+    func testADeliveryOfAnotherMessageDoesNotEndTheHandOver() async throws {
+        let (model, product, heavy, light, _) = product()
+        let chat = conversationIn(model, product, heavy)
+        await model.chooseChatFolder(light.id, productID: product.id, chatID: chat.id)
+        let first = UUID()
+        XCTAssertNotNil(model.folderMoveHandoff(chatID: chat.id, for: first))
+
+        model.folderMoveHandoffDelivered(chatID: chat.id, entryID: UUID())
+
+        XCTAssertEqual(model.conversations.chat(id: chat.id)?.session?.movedFrom, heavy.path)
+    }
+
+    /// A Codex thread records its id, not a Claude session; a turn answered in it ends the hand-over
+    /// all the same. Before that, a second move named the first folder as where the conversation
+    /// came from.
+    @MainActor
+    func testASecondMoveAfterAnAnsweredOneComesFromTheFolderItWasIn() async throws {
+        let (model, product, heavy, light, reference) = product()
+        let chat = conversationIn(model, product, heavy)
+        await model.chooseChatFolder(light.id, productID: product.id, chatID: chat.id)
+        let first = UUID()
+        XCTAssertNotNil(model.folderMoveHandoff(chatID: chat.id, for: first))
+        model.conversations.appendUser("Проверь тесты биллинга", productID: product.id, chatID: chat.id, id: first)
+        model.conversations.updateSession(for: chat.id) { $0.codexThreadID = "THREAD-IN-BILLING" }
+        model.folderMoveHandoffDelivered(chatID: chat.id, entryID: first)
+
+        await model.chooseChatFolder(reference.id, productID: product.id, chatID: chat.id)
+
+        XCTAssertEqual(model.conversations.chat(id: chat.id)?.session?.movedFrom, light.path)
+        let carried = try XCTUnwrap(model.folderMoveHandoff(chatID: chat.id, for: UUID()))
+        XCTAssertTrue(carried.contains("`\(light.path)`"), carried)
+        XCTAssertFalse(carried.contains("`\(heavy.path)`"), "the first folder is two moves ago")
+    }
+
+    @MainActor
+    func testTheHandOverSurvivesARestart() async throws {
+        let (model, product, heavy, light, _) = product()
+        let chat = conversationIn(model, product, heavy)
+        await model.chooseChatFolder(light.id, productID: product.id, chatID: chat.id)
+        let first = UUID()
+        XCTAssertNotNil(model.folderMoveHandoff(chatID: chat.id, for: first))
+
+        let reopened = ConversationStore()
+        XCTAssertEqual(reopened.chat(id: chat.id)?.session?.movedFrom, heavy.path)
+        XCTAssertEqual(reopened.chat(id: chat.id)?.session?.handoffEntryID, first)
+    }
+
     @MainActor
     func testARetriedMessageDoesNotQuoteItself() async throws {
         let (model, product, heavy, light, _) = product()
@@ -233,7 +373,7 @@ nonisolated final class ChatFolderTests: XCTestCase {
         await model.chooseChatFolder(light.id, productID: product.id, chatID: chat.id)
         let retried = model.conversations.appendUser("И проверь тесты биллинга", productID: product.id, chatID: chat.id)
 
-        let carried = try XCTUnwrap(model.folderMoveHandoff(chatID: chat.id, before: retried.id))
+        let carried = try XCTUnwrap(model.folderMoveHandoff(chatID: chat.id, for: retried.id))
         XCTAssertFalse(carried.contains("И проверь тесты биллинга"))
         XCTAssertTrue(carried.contains("Почини округление в счетах"))
     }
@@ -294,6 +434,23 @@ nonisolated final class ChatFolderTests: XCTestCase {
 
         XCTAssertNotNil(problem)
         XCTAssertEqual(model.chatFolder(productID: product.id, chatID: chat.id)?.id, heavy.id)
+    }
+
+    /// A check of another folder started from the chat writes into the run folder a move removes.
+    @MainActor
+    func testAChatCheckingAnotherFolderIsNotMoved() async {
+        let (model, product, heavy, light, _) = product()
+        let chat = conversationIn(model, product, heavy)
+        model.checkingElsewhere[chat.id] = ["/w/billing"]
+
+        XCTAssertEqual(model.chatFolderLock(chatID: chat.id), .working)
+        let problem = await model.chooseChatFolder(light.id, productID: product.id, chatID: chat.id)
+
+        XCTAssertNotNil(problem)
+        XCTAssertEqual(model.chatFolder(productID: product.id, chatID: chat.id)?.id, heavy.id)
+
+        model.checkingElsewhere[chat.id] = nil
+        XCTAssertNil(model.chatFolderLock(chatID: chat.id), "once the check ends, it can move")
     }
 
     @MainActor

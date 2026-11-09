@@ -158,7 +158,9 @@ stop_instance() {  # $1 = slug
     # The verifier's build products stay behind. A run's evidence is its logs and its verdicts; the
     # app it built is gigabytes, and every one of those copies was one more app under his bundle id
     # for macOS to choose between — 24 of them were sitting in here, 19 GB in all.
-    for a in reports evidence report scope-violation.json findings.jsonl; do
+    # `elsewhere` holds the checks of the run's other repositories made from the chat: the answer they
+    # were made for is still read from here after the stop, and so are their results and logs.
+    for a in reports evidence elsewhere report scope-violation.json findings.jsonl; do
       [ -e "$idir/$a" ] || continue
       rsync -a --exclude 'DerivedData/' "$idir/$a" "$rdir/" 2>/dev/null \
         || cp -R "$idir/$a" "$rdir/" 2>/dev/null || true
@@ -1034,9 +1036,19 @@ $gone}"
     # a scratch instance folder of its own: the primary's registered checks, runspec and untracked
     # manifest are the primary's and must not be run or read against another repository.
     # Prints the evidence.json path; the same path every time, so the newest check is the one there.
-    _p="$(canon_path "${1:?usage: night-shift verify-elsewhere <primary-dir> <repo-dir>}")"
-    _r="$(canon_path "${2:?usage: night-shift verify-elsewhere <primary-dir> <repo-dir>}")"
+    #
+    # The run is named by its id when the caller knows it — the app always does. The folder alone
+    # says only which run holds it NOW: once the chat that asked has let it go and another chat has
+    # started there, its `extra-repos` and bases are that other run's, and a check made from them
+    # would be filed in a run the asking chat never reads. A run that is no longer the folder's is
+    # refused (`run-ended`), never quietly swapped for the one that is.
+    _p="$(canon_path "${1:?usage: night-shift verify-elsewhere <primary-dir> <repo-dir> [run-id]}")"
+    _r="$(canon_path "${2:?usage: night-shift verify-elsewhere <primary-dir> <repo-dir> [run-id]}")"
+    _rid="${3:-}"
     _idir="$(instance_dir "$(slug_for "$_p")")"
+    if [ -n "$_rid" ] && [ "$(tr -d '[:space:]' < "$_idir/run-id" 2>/dev/null)" != "$_rid" ]; then
+      echo '{"error":"run-ended"}'; exit 1
+    fi
     [ -s "$_idir/extra-repos" ] || { echo '{"error":"no-run"}'; exit 1; }
     _base=""; _found=0
     while IFS=$'\037' read -r _dir _b _rest; do
@@ -1048,6 +1060,13 @@ $gone}"
     _scratch="$_idir/elsewhere/$(slug_for "$_r")"
     mkdir -p "$_scratch" || { echo '{"error":"no-scratch"}'; exit 1; }
     _ev="$("$BIN_DIR/verify.sh" "$_r" check "$_scratch" "$_base" 2>>"$_scratch/verify.log")"
+    # A suite can take an hour, and the run can be stopped, or the folder handed to another run, while
+    # it goes. Then what it wrote is not this run's to report — its folder may already be the other
+    # run's — so it is dropped and the refusal said, rather than filed where somebody else reads it.
+    if [ -n "$_rid" ] && [ "$(tr -d '[:space:]' < "$_idir/run-id" 2>/dev/null)" != "$_rid" ]; then
+      [ -n "$_ev" ] && rm -f "$_ev" 2>/dev/null
+      echo '{"error":"run-ended"}'; exit 1
+    fi
     [ -n "$_ev" ] && [ -f "$_ev" ] || { echo '{"error":"no-evidence"}'; exit 1; }
     printf '%s\n' "$_ev"
     ;;
@@ -1719,7 +1738,7 @@ PYEOF
     command -v python3 >/dev/null 2>&1 && python3 "$BIN_DIR/ns-cli.py" help >&2
     echo "" >&2
     echo "usage: night-shift start [dir] [--dirty=keep|commit [--message=…]] | resume <dir> <session-id> [branch] | revive <dir> | stop [dir|--all]"
-    echo "       night-shift status | attach [dir] | list | dirty-state [dir] | verify-elsewhere <dir> <repo> | commit-preview [dir] | heavy-state [dir] | heavy-exclude <dir> [local|gitignore] | mcp-state [dir] | mcp-decide <dir> enable|skip | mcp-carry <src> <dst> | config … | models | doctor | completion <shell> | help [cmd] | version | uninstall [--force]"
+    echo "       night-shift status | attach [dir] | list | dirty-state [dir] | verify-elsewhere <dir> <repo> [run-id] | commit-preview [dir] | heavy-state [dir] | heavy-exclude <dir> [local|gitignore] | mcp-state [dir] | mcp-decide <dir> enable|skip | mcp-carry <src> <dst> | config … | models | doctor | completion <shell> | help [cmd] | version | uninstall [--force]"
     exit 1
     ;;
 esac

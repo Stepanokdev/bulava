@@ -25,7 +25,8 @@ nonisolated enum ChatFolderMove {
     /// Why the folder cannot be changed right now.
     enum Lock: Equatable {
         /// A turn, a check or a review is under way, or a message is waiting to be delivered. The
-        /// session would be stopped under it.
+        /// session would be stopped under it — and a check of another folder started from the chat
+        /// writes into the run folder a move removes.
         case working
         /// The chat works in a separate copy of a folder, and the copy is that folder's.
         case inCopy
@@ -142,7 +143,8 @@ extension AppModel {
         if chat.isAutomationRun { return .automationRun }
         if chat.workCopyID != nil { return .inCopy }
         if movingChatFolders.contains(chatID) || sendingChatIDs.contains(chatID)
-            || chatCopyMaking[chatID] != nil || isDirectChatBusy(chatID) {
+            || chatCopyMaking[chatID] != nil || isDirectChatBusy(chatID)
+            || checkingElsewhere[chatID]?.isEmpty == false {
             return .working
         }
         if let binding = chat.session, let instance = matchingInstance(for: binding),
@@ -216,8 +218,10 @@ extension AppModel {
         conversations.bindSession(
             ChatSessionBinding(primaryProjectID: target.id, projectPath: target.path,
                                reportPaths: old?.reportPaths ?? [],
-                               // Kept from an earlier move that no session has picked up yet: the
-                               // conversation is still the one that left that folder.
+                               // Kept from an earlier move whose hand-over no session or thread has
+                               // received yet: the conversation is still the one that left that
+                               // folder. Once one has, `movedFrom` is cleared and the folder it is
+                               // leaving now is where it comes from.
                                movedFrom: old?.movedFrom ?? (from.isEmpty ? nil : from)),
             to: chatID)
         // What was blocking the old folder — a trust prompt, a holder, git consent — is not the new
@@ -234,17 +238,52 @@ extension AppModel {
         return nil
     }
 
-    /// The text the next message carries when this chat was just moved, or nil.
-    func folderMoveHandoff(chatID: UUID, before entryID: UUID?) -> String? {
+    /// The conversation so far, for message `entryID` to carry because this chat was just moved —
+    /// or nil when it has nothing to carry.
+    ///
+    /// One message carries it at a time: the first sent after the move, and every retry of that one
+    /// until it is delivered (`folderMoveHandoffDelivered`). A second message sent while the first is
+    /// still on its way carries nothing — the new session is about to be told. A carrier that failed
+    /// gives the hand-over up, so a new message sent instead of a retry carries it in its place.
+    /// Everything said before `entryID` goes in, never the message itself.
+    func folderMoveHandoff(chatID: UUID, for entryID: UUID) -> String? {
         guard let binding = conversations.chat(id: chatID)?.session,
-              let from = binding.movedFrom, !from.isEmpty,
-              binding.claudeSessionID == nil, binding.codexThreadID == nil else { return nil }
+              let from = binding.movedFrom, !from.isEmpty else { return nil }
+        if let carrier = binding.handoffEntryID, carrier != entryID,
+           let carrying = conversations.entry(id: carrier), carrying.delivery != .failed {
+            return nil
+        }
+        if binding.handoffEntryID != entryID {
+            conversations.updateSession(for: chatID) { $0.handoffEntryID = entryID }
+        }
         var history = conversations.entries(inChat: chatID)
-        if let entryID, let cut = history.firstIndex(where: { $0.id == entryID }) {
+        if let cut = history.firstIndex(where: { $0.id == entryID }) {
             history = Array(history[..<cut])
         }
         return ChatFolderMove.preamble(from: from, to: binding.projectPath,
                                        lines: ChatFolderMove.excerpt(history))
+    }
+
+    /// Message `entryID` was answered with an error, and nobody knows whether the session or thread
+    /// kept what it carried. It stops carrying the hand-over, so the next message sent carries it.
+    /// A message marked failed needs no call: a failed carrier gives the hand-over up by itself.
+    func folderMoveHandoffReleased(chatID: UUID, entryID: UUID) {
+        guard conversations.chat(id: chatID)?.session?.handoffEntryID == entryID else { return }
+        conversations.updateSession(for: chatID) { $0.handoffEntryID = nil }
+    }
+
+    /// Message `entryID` reached the new folder's session or thread. If it carried the hand-over,
+    /// that conversation now remembers what was said and nothing after it carries it again.
+    ///
+    /// Not when a session merely started: the start writes its id before the message is sent, and a
+    /// send that fails after that left a session that was never told.
+    func folderMoveHandoffDelivered(chatID: UUID, entryID: UUID) {
+        guard let binding = conversations.chat(id: chatID)?.session,
+              binding.movedFrom != nil, binding.handoffEntryID == entryID else { return }
+        conversations.updateSession(for: chatID) {
+            $0.movedFrom = nil
+            $0.handoffEntryID = nil
+        }
     }
 
     nonisolated static func folderLockProblem(_ lock: ChatFolderMove.Lock?) -> String? {

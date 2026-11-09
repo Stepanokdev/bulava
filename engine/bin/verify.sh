@@ -103,6 +103,7 @@ skip_build() {  # record a skipped build step (neutral, never blocks)
 # said, so the suite runs. A project's own `./verify.sh` is not governed by this at all — it may be
 # what checks repositories nested inside a folder whose own git sees nothing.
 UNTESTED=0; UNTESTED_NOTE=""
+_x_covered=""   # the other repositories this pass verified (filled where they are, below)
 nothing_testable_changed() {
   [ -n "$BASE_SHA" ] && git -C "$PROJ" cat-file -e "$BASE_SHA" 2>/dev/null || return 1
   local tracked files elsewhere
@@ -117,7 +118,9 @@ nothing_testable_changed() {
     UNTESTED_NOTE="only documentation changed in this folder since the run began, so its suite was not run"
   fi
   elsewhere="$( { [ -d "$IDIR" ] && extra_repos_changed "$IDIR"; } 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')"
-  [ -n "$elsewhere" ] && UNTESTED_NOTE="$UNTESTED_NOTE; the change is in: $elsewhere (not verified here)"
+  # Where the change is, not whether it was checked: that is decided further down, where the other
+  # repositories are verified in this same pass (`unverified_elsewhere` says which were not).
+  [ -n "$elsewhere" ] && UNTESTED_NOTE="$UNTESTED_NOTE; the change is in: $elsewhere"
   return 0
 }
 skip_suite() {  # $1 criterion  $2 command — a suite this run gave no reason to run
@@ -495,6 +498,11 @@ extra_checked_by_worker() {   # $1=repository → 0 when a registered check is a
   done < <(jq -r '(.argv // []) | map(tostring) | join(" ")' "$IDIR/checks.jsonl" 2>/dev/null)
   return 1
 }
+# The repositories this pass did verify go into `_x_covered`, one per line — so the evidence does not
+# then name them as unchecked. A repository counts when a step really ran in it to a verdict, pass or fail, or when the
+# worker's own registered checks are about it. A step that ran out of budget, or found its tool
+# missing, said nothing about the repository, and it stays unchecked.
+last_criterion_status() { printf '[%s]' "$CRIT_JSON" | jq -r '.[-1].status // ""' 2>/dev/null; }
 if [ -n "$IDIR" ] && [ -s "$IDIR/extra-repos" ] && [ "${SUPERVISOR_EXTRA_REPO_AUTOVERIFY:-1}" = 1 ]; then
   while IFS=$'\037' read -r _xd _xbase _xdig _xdirty _xacc; do
     [ -n "$_xd" ] && [ -d "$_xd" ] || continue
@@ -503,9 +511,9 @@ if [ -n "$IDIR" ] && [ -s "$IDIR/extra-repos" ] && [ "${SUPERVISOR_EXTRA_REPO_AU
     _xn="$(basename "$_xd")"
     if extra_checked_by_worker "$_xd"; then
       add_criterion "$_xn: own detection" "(skipped)" 0 "" skipped "verified by the checks the worker registered for it"
-      extra_ran=1; continue
+      extra_ran=1; _x_covered="$_x_covered$_xd"$'\n'; continue
     fi
-    STEP_DIR="$_xd"
+    STEP_DIR="$_xd"; _x_step=1
     if [ -x "$_xd/verify.sh" ] && [ -f "$_xd/verify.sh" ] && [ "${SUPERVISOR_PROJECT_VERIFY:-1}" = 1 ]; then
       run_step "$_xn: verify.sh" "$STEP_TO" env ./verify.sh; extra_ran=1
     elif [ -f "$_xd/Makefile" ] && grep -qE '^verify:' "$_xd/Makefile"; then
@@ -517,8 +525,13 @@ if [ -n "$IDIR" ] && [ -s "$IDIR/extra-repos" ] && [ "${SUPERVISOR_EXTRA_REPO_AU
     elif [ -f "$_xd/package.json" ] && jq -e '.scripts.test // empty' "$_xd/package.json" >/dev/null 2>&1 \
          && command -v npm >/dev/null 2>&1 && [ -d "$_xd/node_modules" ]; then
       run_step "$_xn: npm test" "$STEP_TO" npm test --silent; extra_ran=1
+    else
+      _x_step=0
     fi
     unset STEP_DIR
+    if [ "$_x_step" = 1 ]; then
+      case "$(last_criterion_status)" in pass|fail) _x_covered="$_x_covered$_xd"$'\n' ;; esac
+    fi
   done < "$IDIR/extra-repos"
 fi
 
@@ -574,21 +587,40 @@ if [ -f "$CHECKS_FILE" ]; then
   done
 fi
 
-# The product's other repositories this run changed. This verifier checks only $PROJ; those are
-# named here, as data, so the app can say under the answer that they went unchecked and offer to
-# check them (`night-shift verify-elsewhere`) — and so can the reviewer reading this file.
-ELSEWHERE_JSON="$( { [ -d "$IDIR" ] && extra_repos_changed "$IDIR"; } 2>/dev/null | jq -R . | jq -s -c . 2>/dev/null)"
+# The product's other repositories this run changed and this pass did not verify — those the
+# block above ran something in are not among them. Named here, as data, so the app can say under the
+# answer that they went unchecked and offer to check them (`night-shift verify-elsewhere`), and so can
+# the reviewer reading this file.
+#
+# Each with the digest of its tree as it is now. The changes are counted from the start of the run,
+# so the same repository is named again after every later answer; a check made from the chat since,
+# of this very tree, still stands, and the digest is what lets the app tell that it does.
+ELSEWHERE_LIST="$( { [ -d "$IDIR" ] && extra_repos_changed "$IDIR"; } 2>/dev/null | while IFS= read -r _xd; do
+  [ -n "$_xd" ] || continue
+  printf '%s' "$_x_covered" | grep -qxF -- "$_xd" && continue
+  printf '%s\n' "$_xd"
+done)"
+ELSEWHERE_JSON="$(printf '%s' "$ELSEWHERE_LIST" | grep . | jq -R . | jq -s -c . 2>/dev/null)"
 [ -n "$ELSEWHERE_JSON" ] || ELSEWHERE_JSON='[]'
+ELSEWHERE_DIGESTS='{}'
+while IFS= read -r _xd; do
+  [ -n "$_xd" ] || continue
+  _xdg="$(work_tree_digest "$_xd" 2>/dev/null)"
+  [ -n "$_xdg" ] || continue
+  ELSEWHERE_DIGESTS="$(printf '%s' "$ELSEWHERE_DIGESTS" | jq -c --arg k "$_xd" --arg v "$_xdg" '. + {($k): $v}' 2>/dev/null || printf '%s' "$ELSEWHERE_DIGESTS")"
+done <<EOF_ELSEWHERE
+$ELSEWHERE_LIST
+EOF_ELSEWHERE
 UNTOUCHED_JSON=false; [ "$UNTESTED" = 1 ] && UNTOUCHED_JSON=true
 
 EVIDENCE_JSON="$EVIDENCE_DIR/evidence.json"
 HEAD_SHA="$(resolve_base_sha "$PROJ")"
 TREE_DIGEST="$(work_tree_digest "$PROJ" 2>/dev/null || echo "")"
 jq -n --argjson crit "[${CRIT_JSON}]" --arg proj "$PROJ" --arg sid "$SID" --arg base "$BASE_SHA" --arg stacks "$STACKS" --arg vprofile "$VPROFILE" --arg head "$HEAD_SHA" --arg tree "$TREE_DIGEST" \
-      --argjson elsewhere "$ELSEWHERE_JSON" --argjson untouched "$UNTOUCHED_JSON" '
+      --argjson elsewhere "$ELSEWHERE_JSON" --argjson elsewhere_digests "$ELSEWHERE_DIGESTS" --argjson untouched "$UNTOUCHED_JSON" '
   {project_dir:$proj, session_id:$sid, base_sha:$base, head_sha:$head, work_tree_digest:$tree, stacks:($stacks|split(" ")|map(select(.!=""))),
    verification_profile:$vprofile,
-   primary_untouched:$untouched, unverified_elsewhere:$elsewhere,
+   primary_untouched:$untouched, unverified_elsewhere:$elsewhere, unverified_elsewhere_digests:$elsewhere_digests,
    criteria:$crit,
    overall_status: (
      # "pass" ONLY when at least one criterion actually passed and nothing failed/was inconclusive.

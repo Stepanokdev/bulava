@@ -29,6 +29,25 @@ nonisolated struct UncheckedFolders: Equatable, Sendable {
     /// Nothing changed in the chat's own folder (or only prose), so nothing ran there either.
     var primaryUntouched: Bool
     var folders: [Folder]
+    /// The run whose answer this is: a check from the chat is run in it and nowhere else.
+    var runID: String?
+    /// That run still holds its folder. Once it has stopped, its record of the other repositories is
+    /// gone and nothing can be checked from it: the row still says what went unchecked, and offers
+    /// only what can still be done.
+    var canCheck: Bool
+
+    /// A check of one folder made from the chat, and the digest of the tree it checked.
+    struct Checked: Equatable, Sendable {
+        var result: ElsewhereResult
+        var at: Date
+        var digest: String
+
+        init(_ result: ElsewhereResult, at: Date, digest: String = "") {
+            self.result = result
+            self.at = at
+            self.digest = digest
+        }
+    }
 
     /// Worth a row under the answer: a folder still unchecked, or a check that did not pass. A check
     /// that passed — or found nothing to run — has said so in the thread and needs nothing more.
@@ -36,20 +55,31 @@ nonisolated struct UncheckedFolders: Equatable, Sendable {
 
     /// Only for the answer on screen. Evidence written before his last message is the check of an
     /// earlier turn, and one turn's "unchecked" said under the next answer would be about other work.
+    ///
+    /// A check from the chat counts when it was made after this answer's own check — or earlier, of
+    /// exactly the tree this answer's check found there. The engine names a repository after every
+    /// answer while it differs from the start of the run, so without the second rule a check made a
+    /// minute ago would be "not checked" again under an answer that never touched it.
     static func make(evidence: Evidence, writtenAt: Date, lastAskedAt: Date?, primaryName: String,
                      names: [String: (name: String, projectID: UUID?)],
-                     results: [String: (result: ElsewhereResult, at: Date)]) -> UncheckedFolders? {
+                     results: [String: Checked], runID: String? = nil,
+                     canCheck: Bool = true) -> UncheckedFolders? {
         guard !evidence.unverifiedElsewhere.isEmpty else { return nil }
         if let lastAskedAt, writtenAt < lastAskedAt { return nil }
         let folders = evidence.unverifiedElsewhere.map { path -> Folder in
             let key = Slug.canonicalPath(path)
             let known = names[key]
-            let checked = results[key].flatMap { $0.at >= writtenAt ? $0.result : nil }
+            let tree = evidence.unverifiedElsewhereDigests[path] ?? ""
+            let checked = results[key].flatMap { check -> ElsewhereResult? in
+                if check.at >= writtenAt { return check.result }
+                if !tree.isEmpty, check.digest == tree { return check.result }
+                return nil
+            }
             return Folder(path: path, name: known?.name ?? (path as NSString).lastPathComponent,
                           projectID: known?.projectID, result: checked)
         }
         return UncheckedFolders(primaryName: primaryName, primaryUntouched: evidence.primaryUntouched,
-                                folders: folders)
+                                folders: folders, runID: runID, canCheck: canCheck)
     }
 }
 
@@ -70,6 +100,11 @@ nonisolated struct ElsewhereResult: Equatable, Sendable {
 
     var passed: Bool { verdict == .passed }
 
+    static func nothingToRun(_ criterion: EvidenceCriterion) -> Bool {
+        criterion.command == "(none available)"
+            || criterion.note.contains("no automated verification available")
+    }
+
     init(verdict: Verdict, checks: [String], log: String? = nil) {
         self.verdict = verdict
         self.checks = checks
@@ -79,9 +114,10 @@ nonisolated struct ElsewhereResult: Equatable, Sendable {
     init(_ evidence: Evidence) {
         let failed = evidence.criteria.filter { $0.status == .fail }
         // "No automated verification available for this stack" is the engine saying there is
-        // nothing to run, not a check that stopped half way.
+        // nothing to run, not a check that stopped half way. Known by the placeholder it writes for
+        // the command, which names no command; the sentence after it is prose and may be reworded.
         let unfinished = evidence.criteria.filter {
-            $0.status == .inconclusive && !$0.note.contains("no automated verification available")
+            $0.status == .inconclusive && !Self.nothingToRun($0)
         }
         let ran = evidence.criteria.filter { $0.status == .pass }
         if !failed.isEmpty {
@@ -133,10 +169,11 @@ extension AppModel {
         for choice in choices {
             names[Slug.canonicalPath(choice.project.path)] = (choice.name, choice.id)
         }
-        var results: [String: (result: ElsewhereResult, at: Date)] = [:]
+        var results: [String: UncheckedFolders.Checked] = [:]
         for path in dated.evidence.unverifiedElsewhere {
-            if let checked = await client.elsewhereEvidence(in: dated.base, repoPath: path) {
-                results[Slug.canonicalPath(path)] = (ElsewhereResult(checked.evidence), checked.at)
+            if let checked = await client.elsewhereEvidence(in: dated.checkRoots, repoPath: path) {
+                results[Slug.canonicalPath(path)] = UncheckedFolders.Checked(
+                    ElsewhereResult(checked.evidence), at: checked.at, digest: checked.evidence.treeDigest)
             }
         }
         let primary = chatFolder(productID: chat.productID, chatID: chatID)
@@ -144,13 +181,19 @@ extension AppModel {
             ?? primary?.name ?? (binding.projectPath as NSString).lastPathComponent
         let lastAsked = conversations.entries(inChat: chatID).last { $0.kind == .user }?.at
         return UncheckedFolders.make(evidence: dated.evidence, writtenAt: dated.at, lastAskedAt: lastAsked,
-                                     primaryName: primaryName, names: names, results: results)
+                                     primaryName: primaryName, names: names, results: results,
+                                     runID: dated.runID, canCheck: dated.runIsLive)
     }
 
     /// Run the check after an answer in one of the run's other repositories, because he asked from
     /// the chat. The result goes into the thread as a line of its own.
-    func checkElsewhere(chatID: UUID, folder: UncheckedFolders.Folder) async {
+    ///
+    /// In `runID` — the run whose answer named the folder — or not at all: the engine refuses when
+    /// another run holds the folder now. While it runs, the chat is not moved (`chatFolderLock`): a
+    /// move stops the run and removes the folder this check writes into.
+    func checkElsewhere(chatID: UUID, folder: UncheckedFolders.Folder, runID: String?) async {
         guard let chat = conversations.chat(id: chatID), let binding = chat.session,
+              !movingChatFolders.contains(chatID),
               checkingElsewhere[chatID]?.contains(folder.path) != true else { return }
         checkingElsewhere[chatID, default: []].insert(folder.path)
         defer {
@@ -158,7 +201,8 @@ extension AppModel {
             if checkingElsewhere[chatID]?.isEmpty == true { checkingElsewhere[chatID] = nil }
             elsewhereRevision &+= 1
         }
-        switch await client.verifyElsewhere(primaryPath: binding.projectPath, repoPath: folder.path) {
+        switch await client.verifyElsewhere(primaryPath: binding.projectPath, repoPath: folder.path,
+                                            runID: runID) {
         case .success(let evidence):
             let result = ElsewhereResult(evidence)
             let tone: ConversationEntry.Tone = switch result.verdict {
