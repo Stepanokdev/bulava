@@ -113,6 +113,60 @@ rm -f "$PIDIR/extra-repos"
 OUT="$(PATH="$STUB:$PATH" bash "$NS" verify-elsewhere "$P" "$SIB2" 2>/dev/null)"; RC=$?
 check "with no record of the run, it says so"   '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep -q no-run'
 
+echo "== a sibling this same pass verified is not named as unchecked =="
+# The other repositories are verified in the same pass when they have something to run, and a
+# repository covered by the worker's own registered checks counts as verified too. Naming either as
+# "not checked" under the answer was untrue — and offered to run the same suite a second time.
+P3="$(make_repo package.json "$PKG" README.md "hello")"
+P3IDIR="$(instance_dir "$(slug_for "$P3")")"; mkdir -p "$P3IDIR"
+MK="$(make_repo Makefile $'test:\n\ttrue' lib.c "int a = 1;")"
+MK_BASE="$(git -C "$MK" rev-parse HEAD)"
+BARE="$(make_repo lib.ts "export const b = 1")"
+BARE_BASE="$(git -C "$BARE" rev-parse HEAD)"
+{ printf '%s\037%s\037%s\0370\n' "$(canon_path "$MK")" "$MK_BASE" "$(repo_work_digest "$MK" "$MK_BASE")"
+  printf '%s\037%s\037%s\0370\n' "$(canon_path "$BARE")" "$BARE_BASE" "$(repo_work_digest "$BARE" "$BARE_BASE")"
+} > "$P3IDIR/extra-repos"
+printf 'int a = 2;\n' > "$MK/lib.c"
+printf 'export const b = 2\n' > "$BARE/lib.ts"
+verify_from_head "$P3" covered
+check "make test ran in the sibling that has one" '[ "$(status_of "$(basename "$MK"): make test")" = pass ]'
+check "so it is not named as unchecked"           '! jq -e --arg s "$(canon_path "$MK")" ".unverified_elsewhere | index(\$s)" "$EV" >/dev/null'
+check "a sibling with nothing to run still is"    'jq -e --arg s "$(canon_path "$BARE")" ".unverified_elsewhere | index(\$s)" "$EV" >/dev/null'
+check "with the digest of its tree as it is now"  '[ "$(jq -r --arg s "$(canon_path "$BARE")" ".unverified_elsewhere_digests[\$s] // empty" "$EV")" = "$(work_tree_digest "$(canon_path "$BARE")")" ]'
+check "and only for what is named"                '[ "$(jq -r ".unverified_elsewhere_digests | length" "$EV")" = 1 ]'
+check "the skip still says where the change is"   'note_of "tests pass" | grep -qF "$(canon_path "$BARE")"'
+check "without claiming it went unverified"       '! note_of "tests pass" | grep -q "not verified"'
+printf '{"criterion":"lib type-checks","argv":["true"],"cwd":"%s"}\n' "$(canon_path "$BARE")" > "$P3IDIR/checks.jsonl"
+verify_from_head "$P3" covered-by-worker
+check "a sibling the worker's own check is about is not named either" \
+  '! jq -e --arg s "$(canon_path "$BARE")" ".unverified_elsewhere | index(\$s)" "$EV" >/dev/null'
+rm -f "$P3IDIR/checks.jsonl"
+SUPERVISOR_EXTRA_REPO_AUTOVERIFY=0 verify_from_head "$P3" autoverify-off
+check "with the same-pass check switched off, both are named" \
+  '[ "$(jq -r ".unverified_elsewhere | length" "$EV")" = 2 ]'
+
+echo "== verify-elsewhere: in the run whose answer it is, or not at all =="
+printf 'RUN-A\n' > "$P3IDIR/run-id"
+OUT="$(PATH="$STUB:$PATH" bash "$NS" verify-elsewhere "$P3" "$BARE" RUN-A 2>/dev/null)"; RC=$?
+check "the run named holds the folder: it checks" '[ "$RC" = 0 ] && [ -f "$OUT" ]'
+OUT="$(PATH="$STUB:$PATH" bash "$NS" verify-elsewhere "$P3" "$MK" RUN-OLD 2>/dev/null)"; RC=$?
+check "another run holds it now: refused, by name" '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep -q run-ended'
+check "and nothing was checked from that run"     '[ ! -e "$P3IDIR/elsewhere/$(slug_for "$(canon_path "$MK")")" ]'
+# The folder changes hands while the check runs: this sibling's own test hands it to RUN-B.
+SWAP="$(make_repo Makefile "$(printf 'test:\n\tprintf "RUN-B\\n" > "%s"' "$P3IDIR/run-id")" lib.c "int s = 1;")"
+SWAP_BASE="$(git -C "$SWAP" rev-parse HEAD)"
+printf '%s\037%s\037%s\0370\n' "$(canon_path "$SWAP")" "$SWAP_BASE" "$(repo_work_digest "$SWAP" "$SWAP_BASE")" >> "$P3IDIR/extra-repos"
+OUT="$(PATH="$STUB:$PATH" bash "$NS" verify-elsewhere "$P3" "$SWAP" RUN-A 2>/dev/null)"; RC=$?
+check "a run replaced while its check ran is refused" '[ "$RC" != 0 ] && printf "%s" "$OUT" | grep -q run-ended'
+check "and its result is not left for the new run"    '[ ! -f "$P3IDIR/elsewhere/$(slug_for "$(canon_path "$SWAP")")/evidence/check/evidence.json" ]'
+printf 'RUN-A\n' > "$P3IDIR/run-id"
+
+echo "== a stop keeps the checks made from the chat with the run's archive =="
+bash "$NS" stop "$P3" --yes >/dev/null 2>&1
+check "the instance is gone"                      '[ ! -d "$P3IDIR" ]'
+check "the check of the sibling is in the archive" \
+  '[ -f "$(run_dir RUN-A)/elsewhere/$(slug_for "$(canon_path "$BARE")")/evidence/check/evidence.json" ]'
+
 echo "== JS: only prose changed (tracked README + new notes.md) ⇒ not run =="
 printf 'more\n' >> "$P/README.md"; printf 'notes\n' > "$P/notes.md"
 verify_from_head "$P" js-docs

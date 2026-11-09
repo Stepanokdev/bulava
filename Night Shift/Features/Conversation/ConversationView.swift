@@ -513,11 +513,6 @@ struct ConversationView: View {
 
 }
 
-/// Under the last answer, once a turn has ended: everything to do about the result — merge or discard
-/// a run's changes, mark it done or reviewed, make a report, open one. These used to live only in the
-/// inspector (a 5-pt dot) or the top copy bar, so a finished chat looked like it offered nothing. The
-/// list is decided by `AppModel.chatOutcomeActions` (tested there); this draws it. Shown whether or
-/// not the chat ever asked a question — the status row above hides itself once it has.
 /// Under the last answer, when the check after it did not look at the folder the work was done in.
 ///
 /// The check runs in the chat's folder only. A chat left in the product's default folder whose agent
@@ -561,7 +556,7 @@ private struct UncheckedFoldersRow: View {
                         }
                     }
                     ForEach(report.folders.filter { !$0.isSettled }) { folder in
-                        folderRow(folder, chatID: chatID)
+                        folderRow(folder, report: report, chatID: chatID)
                     }
                 }
                 .padding(.top, 14)
@@ -592,7 +587,8 @@ private struct UncheckedFoldersRow: View {
     }
 
     @ViewBuilder
-    private func folderRow(_ folder: UncheckedFolders.Folder, chatID: UUID) -> some View {
+    private func folderRow(_ folder: UncheckedFolders.Folder, report: UncheckedFolders,
+                           chatID: UUID) -> some View {
         if model.checkingElsewhere[chatID]?.contains(folder.path) == true {
             HStack(spacing: 6) {
                 ProgressView().controlSize(.mini)
@@ -613,14 +609,18 @@ private struct UncheckedFoldersRow: View {
                         Button("Open log") { model.openCheckLog(log) }
                             .buttonStyle(.bulava(.secondary))
                     }
-                    Button {
-                        check(folder, chatID: chatID)
-                    } label: {
-                        Text(verbatim: folder.result == nil
-                             ? String(format: String(localized: "Check “%@”"), folder.name)
-                             : String(localized: "Check again"))
+                    // Only while the run whose answer this is still holds its folder: a stopped run
+                    // has nothing left to check from, and a press would only report that.
+                    if report.canCheck {
+                        Button {
+                            check(folder, runID: report.runID, chatID: chatID)
+                        } label: {
+                            Text(verbatim: folder.result == nil
+                                 ? String(format: String(localized: "Check “%@”"), folder.name)
+                                 : String(localized: "Check again"))
+                        }
+                        .buttonStyle(.bulava(folder.result == nil ? .primary : .secondary))
                     }
-                    .buttonStyle(.bulava(folder.result == nil ? .primary : .secondary))
                     // Moving is for a folder of the product's, in a chat that may move now.
                     if folder.projectID != nil, model.chatFolderLock(chatID: chatID) == nil {
                         Button {
@@ -636,8 +636,8 @@ private struct UncheckedFoldersRow: View {
         }
     }
 
-    private func check(_ folder: UncheckedFolders.Folder, chatID: UUID) {
-        Task { await model.checkElsewhere(chatID: chatID, folder: folder) }
+    private func check(_ folder: UncheckedFolders.Folder, runID: String?, chatID: UUID) {
+        Task { await model.checkElsewhere(chatID: chatID, folder: folder, runID: runID) }
     }
 
     private func move(to folder: UncheckedFolders.Folder) {
@@ -652,6 +652,11 @@ private struct UncheckedFoldersRow: View {
     }
 }
 
+/// Under the last answer, once a turn has ended: everything to do about the result — merge or discard
+/// a run's changes, mark it done or reviewed, make a report, open one. These used to live only in the
+/// inspector (a 5-pt dot) or the top copy bar, so a finished chat looked like it offered nothing. The
+/// list is decided by `AppModel.chatOutcomeActions` (tested there); this draws it. Shown whether or
+/// not the chat ever asked a question — the status row above hides itself once it has.
 private struct ChatOutcomeActions: View {
     @Environment(AppModel.self) private var model
     let chatID: UUID?
