@@ -746,6 +746,9 @@ final class AppModel {
     /// through this (`startingInstance(for:)`).
     var startingChats: [UUID: String] = [:]
     var stoppingChatIDs: Set<UUID> = []
+    /// Chats being moved to another folder this moment (`chooseChatFolder`): the old folder's
+    /// session is being stopped and nothing may be sent until the new folder is bound.
+    var movingChatFolders: Set<UUID> = []
 
     var codexTurns: [UUID: CodexChatRunner] = [:]
 

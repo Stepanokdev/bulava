@@ -4,6 +4,278 @@
     "" : {
 
     },
+    "This chat is moving to another folder. Send the message again in a moment." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чат сейчас переезжает в другую папку. Отправь сообщение ещё раз через пару секунд."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чат саме переїжджає в іншу теку. Надішли повідомлення ще раз за кілька секунд."
+          }
+        }
+      }
+    },
+    "This chat was moved from the folder %@ to %@, so you are starting a new session here." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот чат перенесли из папки %@ в %@, поэтому здесь у тебя новая сессия."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Цей чат перенесли з теки %@ у %@, тож тут у тебе нова сесія."
+          }
+        }
+      }
+    },
+    "The last messages of this chat, so you know what we were working on:" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Последние сообщения этого чата, чтобы ты знал, над чем мы работали:"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Останні повідомлення цього чату, щоб ти знав, над чим ми працювали:"
+          }
+        }
+      }
+    },
+    "Me" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Я"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Я"
+          }
+        }
+      }
+    },
+    "My new message:" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Моё новое сообщение:"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Моє нове повідомлення:"
+          }
+        }
+      }
+    },
+    "That folder is no longer part of this product." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этой папки больше нет в продукте."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Цієї теки більше немає в продукті."
+          }
+        }
+      }
+    },
+    "Now working in %@. The next message starts a new session there and passes it the last messages of this chat." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Теперь чат работает в %@. Следующее сообщение начнёт там новую сессию и передаст ей последние сообщения чата."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тепер чат працює в %@. Наступне повідомлення почне там нову сесію й передасть їй останні повідомлення чату."
+          }
+        }
+      }
+    },
+    "The agent is still working in this chat. Change the folder once it has finished." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агент ещё работает в этом чате. Смени папку, когда он закончит."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агент ще працює в цьому чаті. Зміни теку, коли він закінчить."
+          }
+        }
+      }
+    },
+    "This chat works in a separate copy of its folder, so its folder cannot be changed." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот чат работает в отдельной копии папки, поэтому сменить папку нельзя."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Цей чат працює в окремій копії теки, тож змінити теку не можна."
+          }
+        }
+      }
+    },
+    "An automation's run works in the automation's folder." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запуск автоматизации работает в папке автоматизации."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запуск автоматизації працює в теці автоматизації."
+          }
+        }
+      }
+    },
+    "Move this chat to “%@”?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перенести чат в «%@»?"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перенести чат у «%@»?"
+          }
+        }
+      }
+    },
+    "Move" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перенести"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перенести"
+          }
+        }
+      }
+    },
+    "The conversation stays here. The agent starts a new session in “%@” and gets the last messages of this chat. Its session in “%@” ends, along with anything it left running there." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переписка останется здесь. Агент начнёт новую сессию в «%@» и получит последние сообщения этого чата. Сессия в «%@» закончится вместе со всем, что она оставила запущенным."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Листування залишиться тут. Агент почне нову сесію в «%@» і отримає останні повідомлення цього чату. Сесія в «%@» завершиться разом з усім, що вона лишила запущеним."
+          }
+        }
+      }
+    },
+    "You can change the folder once the agent has finished" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Папку можно сменить, когда агент закончит"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Теку можна змінити, коли агент закінчить"
+          }
+        }
+      }
+    },
+    "Choose the folder this chat works in, or a separate copy of it. The check after each answer runs in that folder." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбери папку, в которой работает этот чат, или отдельную копию. Проверка после каждого ответа идёт в этой папке."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обери теку, у якій працює цей чат, або окрему копію. Перевірка після кожної відповіді йде в цій теці."
+          }
+        }
+      }
+    },
+    "Choose the folder this chat works in. The check after each answer runs in that folder." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбери папку, в которой работает этот чат. Проверка после каждого ответа идёт в этой папке."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обери теку, у якій працює цей чат. Перевірка після кожної відповіді йде в цій теці."
+          }
+        }
+      }
+    },
     "%@ is not installed on this Mac, so this was not sent. Bulava needs it to run a chat." : {
       "localizations" : {
         "ru" : {

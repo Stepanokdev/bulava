@@ -1183,10 +1183,12 @@ extension AppModel {
 
     /// Where a product's slash commands come from: its primary folder first, then the others it
     /// holds. One place, so the Mac's composer and the phone's offer the same list.
-    func slashCommandRoots(for productID: UUID) -> SlashCommandCatalog.Roots {
+    ///
+    /// With a chat, "primary" is that chat's folder — the one its agent starts in, whose commands
+    /// it will actually find — and not the product's default.
+    func slashCommandRoots(for productID: UUID, chatID: UUID? = nil) -> SlashCommandCatalog.Roots {
         let product = products.product(id: productID)
-        let primaryPath = product?.defaultProjectID
-            .flatMap { projects.project(id: $0) }
+        let primaryPath = chatFolder(productID: productID, chatID: chatID)
             .map { Slug.canonicalPath($0.path) }
         var seen = Set<String>()
         let added = (product?.resources ?? []).compactMap { resource -> URL? in
