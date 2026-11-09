@@ -87,6 +87,42 @@ should_build() {  # $1 = ERE of buildable paths
 skip_build() {  # record a skipped build step (neutral, never blocks)
   add_criterion "$1" "$2" 0 "" skipped "no buildable change since base"
 }
+
+# Whether this folder holds nothing a test suite could fail on: no change at all since the run
+# began, or only prose.
+#
+# The review reaches the verifier only when something changed — here, or in one of the product's
+# other repositories. A primary folder with no change of its own therefore means the work was done
+# next door, and the heavy root `npm test` that ran here anyway (a big monorepo's whole suite, after
+# a fix in a sibling) measured a folder nobody touched and filed the result as a pass. A README edit
+# is the same: no suite reads it.
+#
+# Deliberately narrow. Prose is .md/.rst/.adoc and nothing else — a `.yaml`, a `.txt` (requirements
+# files), an `.env.example` all keep the suite. Renames are listed as a deletion and an addition, so
+# code moved under a `.md` name still counts as code removed. No known base commit: nothing can be
+# said, so the suite runs. A project's own `./verify.sh` is not governed by this at all — it may be
+# what checks repositories nested inside a folder whose own git sees nothing.
+UNTESTED_NOTE=""
+nothing_testable_changed() {
+  [ -n "$BASE_SHA" ] && git -C "$PROJ" cat-file -e "$BASE_SHA" 2>/dev/null || return 1
+  local tracked files elsewhere
+  tracked="$(git -C "$PROJ" diff --no-renames --name-only "$BASE_SHA" 2>/dev/null)" || return 1
+  files="$(printf '%s\n%s\n' "$tracked" "$(worker_untracked "$PROJ" "$IDIR")" | grep .)"
+  if [ -n "$files" ] && printf '%s\n' "$files" | grep -qviE '\.(md|markdown|rst|adoc)$'; then
+    return 1
+  fi
+  if [ -z "$files" ]; then
+    UNTESTED_NOTE="nothing in this folder changed since the run began, so its suite was not run"
+  else
+    UNTESTED_NOTE="only documentation changed in this folder since the run began, so its suite was not run"
+  fi
+  elsewhere="$( { [ -d "$IDIR" ] && extra_repos_changed "$IDIR"; } 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')"
+  [ -n "$elsewhere" ] && UNTESTED_NOTE="$UNTESTED_NOTE; the change is in: $elsewhere (not verified here)"
+  return 0
+}
+skip_suite() {  # $1 criterion  $2 command — a suite this run gave no reason to run
+  add_criterion "$1" "$2" 0 "" skipped "$UNTESTED_NOTE"
+}
 has_npm_script(){ jq -e --arg s "$1" '.scripts[$s] // empty' "$PROJ/package.json" >/dev/null 2>&1; }
 
 detect_pm(){
@@ -124,6 +160,8 @@ if [ "$VPROFILE" != none ] && [ -d "$IDIR" ] && [ -z "$BASE_SHA" ]; then
 fi
 
 if [ "$VPROFILE" != none ] && [ -z "${SKIP_STACKS:-}" ]; then
+
+UNTESTED=0; nothing_testable_changed && UNTESTED=1
 
 if echo " $STACKS " | grep -q ' ios-native '; then
   ran_any=1
@@ -191,8 +229,13 @@ EOF_PKGS
     fi
   else
     skip_build "web build succeeds" "$PM run build"
-    has_npm_script test && run_step "tests pass" "$STEP_TO" $PM run test
-    has_npm_script lint && run_step "lint clean" "$STEP_TO" $PM run lint
+    if [ "$UNTESTED" = 1 ]; then
+      has_npm_script test && skip_suite "tests pass" "$PM run test"
+      has_npm_script lint && skip_suite "lint clean" "$PM run lint"
+    else
+      has_npm_script test && run_step "tests pass" "$STEP_TO" $PM run test
+      has_npm_script lint && run_step "lint clean" "$STEP_TO" $PM run lint
+    fi
   fi
 fi
 
@@ -200,18 +243,24 @@ if echo " $STACKS " | grep -q ' backend-go '; then
   ran_any=1
   if should_build '\.go$|go\.mod|go\.sum'; then run_step "go builds" "$STEP_TO" go build ./...
   else skip_build "go builds" "go build ./..."; fi
-  run_step "go tests pass" "$STEP_TO" go test ./...
+  if [ "$UNTESTED" = 1 ]; then skip_suite "go tests pass" "go test ./..."
+  else run_step "go tests pass" "$STEP_TO" go test ./...; fi
 fi
 
 if echo " $STACKS " | grep -q ' backend-python '; then
   ran_any=1
   # The project's own files only — never its .venv (lib/py-compile-project.py says why).
-  if [ "$(python3 "$BIN_DIR/lib/py-compile-project.py" "$PROJ" --count 2>/dev/null || echo 0)" -gt 0 ]; then
-    run_step "python compiles" "$STEP_TO" python3 "$BIN_DIR/lib/py-compile-project.py" "$PROJ"
+  if [ "$UNTESTED" = 1 ]; then
+    skip_suite "python compiles" "python3 lib/py-compile-project.py"
+    command -v pytest >/dev/null 2>&1 && skip_suite "pytest passes" "pytest -q"
   else
-    add_criterion "python compiles" "python3 lib/py-compile-project.py" 0 "" skipped "no project Python files"
+    if [ "$(python3 "$BIN_DIR/lib/py-compile-project.py" "$PROJ" --count 2>/dev/null || echo 0)" -gt 0 ]; then
+      run_step "python compiles" "$STEP_TO" python3 "$BIN_DIR/lib/py-compile-project.py" "$PROJ"
+    else
+      add_criterion "python compiles" "python3 lib/py-compile-project.py" 0 "" skipped "no project Python files"
+    fi
+    command -v pytest >/dev/null 2>&1 && run_step "pytest passes" "$STEP_TO" pytest -q
   fi
-  command -v pytest >/dev/null 2>&1 && run_step "pytest passes" "$STEP_TO" pytest -q
 fi
 
 # ------------------------------------------------------------------------- the shell suites
