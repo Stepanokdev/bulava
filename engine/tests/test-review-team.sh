@@ -161,6 +161,31 @@ mkcase
 SUPERVISOR_REVIEW_TEAM="general security" FAKE_GENERAL=FAIL rungate >/dev/null
 check "a general member reads with no focus"     'grep -q "You have no particular focus" "$CALLS.general.prompt"'
 
+echo "===== the pipeline the message went through chooses ====="
+# The gates as the run records them (pipeline.sh: dispatch.json .pipeline_gates), compiled from the real
+# built-in description, so the test breaks if the manifest stops naming the team.
+PIPE_TMP="$(mktemp -d)"; REPOS+=("$PIPE_TMP")
+python3 "$ROOT/bin/pipeline-tool.py" compile "$ROOT/supervisor/pipelines/manifests/review-team" --out "$PIPE_TMP/c.json" >/dev/null
+gates_of(){ jq -c '.gates' "$PIPE_TMP/c.json"; }
+with_gates(){ jq -nc --argjson g "$1" '{id:"d-1", task:"t", pipeline:"review-team", pipeline_gates:$g}' > "$IDIR/dispatch.json"; }
+check "the built-in names the three specialists" '[ "$(jq -r ".gates.reviewTeam" "$PIPE_TMP/c.json")" = "contract security state" ]'
+mkcase; with_gates "$(gates_of)"
+SUPERVISOR_REVIEW_TEAM= rungate >/dev/null
+check "Mac, no team set: the pipeline's team reads it" '[ "$(cut -d" " -f1 "$CALLS" | sort | tr "\n" " ")" = "contract security state " ]'
+check "passed by the team"                       'done_is passed'
+mkcase; with_gates "$(gates_of)"
+SUPERVISOR_REVIEW_TEAM= FAKE_SECURITY=FAIL rungate >/dev/null
+check "its finding sends the work back"          '! done_is passed && [ "$(calls)" = 3 ]'
+mkcase; with_gates '{"review":true,"maxRounds":3,"reviewTeam":"off"}'
+SUPERVISOR_REVIEW_TEAM="contract security state" rungate >/dev/null
+check "a pipeline that chose one reviewer gets one, server default or not" '[ "$(calls)" = 1 ] && [ "$(cut -d" " -f1 "$CALLS")" = single ]'
+mkcase; with_gates '{"review":true,"maxRounds":3}'
+SUPERVISOR_REVIEW_TEAM="contract security state" rungate >/dev/null
+check "a pipeline that did not choose leaves it to the engine" '[ "$(calls)" = 3 ]'
+mkcase; with_gates '{"review":true,"maxRounds":3}'
+SUPERVISOR_REVIEW_TEAM= rungate >/dev/null
+check "…which on the Mac is one reviewer"        '[ "$(calls)" = 1 ]'
+
 echo "===== the doctor says what is set ====="
 # With only the plain tools on PATH, so the doctor does not go asking claude and codex to sign in.
 TOOLS="$(mktemp -d)"; for t in bash git jq python3 perl openssl curl tmux sh env uname sed awk grep cat; do p="$(command -v "$t")" && ln -s "$p" "$TOOLS/$t"; done

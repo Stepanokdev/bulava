@@ -96,6 +96,20 @@ OPTION_LABELS = {
     "mail": T("Лист", "An email"), "folder": T("Файл у теці", "A file in a folder"), "meetingEnded": T("Кінець зустрічі", "A meeting ended"),
     "followup": T("Це продовження відкритої задачі", "It continues an open task"),
     "always": T("Завжди", "Always"), "triage": T("Коли тріаж вирішить", "When triage decides"),
+    "one": T("Один рев'юер", "One reviewer"),
+    "specialists": T("Три спеціалісти: контракт, безпека, стани", "Three specialists: contract, security, state"),
+    "specialists-general": T("Три спеціалісти й звичайний рев'юер", "Three specialists and an ordinary reviewer"),
+    "all": T("Сім фокусів, чотири з них ще не виміряні", "Seven focuses, four of them not yet measured"),
+}
+
+# Who reads the work at the Codex review (lib/review-team.sh): the members each option names. "one" is
+# the single review, whatever the engine's own default is. A review step that does not choose leaves
+# the choice to the engine (SUPERVISOR_REVIEW_TEAM: on a server the three specialists, elsewhere one).
+REVIEW_TEAMS = {
+    "one": "off",
+    "specialists": "contract security state",
+    "specialists-general": "contract security state general",
+    "all": "contract security state general negative legacy outcome",
 }
 
 
@@ -224,9 +238,11 @@ REG = {
         "d": T("Збірка, тести й зареєстровані перевірки.", "Build, tests and registered checks."),
         "in": [{"id": "work", "types": ["work"], "req": True}], "out": [{"id": "work", "type": "work"}]},
     "gate.review": {"t": T("Рев'ю Codex", "Codex review"), "cat": "gate", "phase": "gate", "v": "v1", "exec": True, "g": "review", "prompt": True,
-        "d": T("Codex читає diff і приймає або повертає. Твій текст — додаткові вимоги рецензенту.", "Codex reads the diff and accepts or sends back. Your text adds requirements for the reviewer."),
+        "d": T("Codex читає diff і приймає або повертає. Його може читати команда: кожен рев'юер зі свого боку, і досить одного, хто знайшов дефект. Твій текст — додаткові вимоги рецензентам.",
+               "Codex reads the diff and accepts or sends back. A team can read it: each reviewer from its own side, and one that finds a defect is enough. Your text adds requirements for the reviewers."),
         "in": [{"id": "work", "types": ["work"], "req": True}],
-        "out": [{"id": "pass", "type": "work", "label": T("прийнято", "accepted")}, {"id": "fail", "type": "feedback", "label": T("повернути", "send back")}]},
+        "out": [{"id": "pass", "type": "work", "label": T("прийнято", "accepted")}, {"id": "fail", "type": "feedback", "label": T("повернути", "send back")}],
+        "p": [P("team", "Хто рев'юїть", "Who reviews", "select", "one", list(REVIEW_TEAMS))]},
     "gate.reportReview": {"t": T("Рев'ю звіту", "Report review"), "cat": "gate", "phase": "gate", "v": "v2", "exec": True, "g": "review", "prompt": True,
         "d": T("Codex перевіряє зміст звіту: джерела, відповіді на питання.", "Codex checks the report itself: sources, answers to the questions."),
         "in": [{"id": "report", "types": ["report"], "req": True}],
@@ -544,6 +560,12 @@ def validate(m, require_exec=True):
             if key_of(n) == "prep.compose":
                 add("warn", "V26", "Бриф є, а виконавця немає.", "There is a brief but no worker.", n["id"])
     for n in nodes:
+        if key_of(n) == "gate.review":
+            team = (n.get("params") or {}).get("team")
+            if team is not None and team not in REVIEW_TEAMS:
+                add("error", "V30", "«%s»: невідомий склад рев'ю «%s»." % (_title(n, module_of(n)), team),
+                    "'%s': unknown review team '%s'." % (_title(n, module_of(n)), team), n["id"])
+    for n in nodes:
         if key_of(n) == "gate.reportReview":
             if not any(key_of(g.by_id[u]) == "agent.researcher" for u in g.upstream(n["id"]) if u in g.by_id):
                 add("error", "V27", "«Рев'ю звіту» стоїть після виконавця, що пише звіт.", "'Report review' must follow a worker that writes a report.", n["id"])
@@ -580,6 +602,9 @@ def guarantees(m, g=None):
         out.append({"k": "unverified", "t": T("Не перевірено", "Not verified"), "tone": "bad"})
     if (code or rep) and not unverified:
         out.append({"k": "review", "t": T("Перевіряє Codex", "Codex reviews"), "tone": "ok"})
+        size = max([review_team_size(n) for n in nodes if key_of(n) == "gate.review"] or [1])
+        if size > 1:
+            out.append({"k": "team", "t": T("Команда з %d" % size, "A team of %d" % size), "tone": "ok"})
     if code and all(covered(n, "gate.scope") for n in code):
         out.append({"k": "scope", "t": T("Межі змін", "Scope"), "tone": "ok"})
     if code and all(covered(n, "gate.verify") for n in code):
@@ -593,6 +618,17 @@ def guarantees(m, g=None):
     if any((module_of(n) or {}).get("unattended") for n in nodes):
         out.append({"k": "unattended", "t": T("Без нагляду", "Unattended"), "tone": "warn"})
     return {"list": out, "unverified": unverified}
+
+
+def review_team(n):
+    """The members a review step names, as SUPERVISOR_REVIEW_TEAM reads them; None when it leaves the
+    choice to the engine or names something unknown."""
+    return REVIEW_TEAMS.get((n.get("params") or {}).get("team"))
+
+
+def review_team_size(n):
+    t = review_team(n)
+    return 1 if t in (None, "off") else len(t.split())
 
 
 def needs_of(m):
@@ -818,6 +854,8 @@ def compile_manifest(m, prompt_dir=None):
                 gates["review"] = True
                 if (dn.get("prompt") or "").strip():
                     gates["reviewExtra"] = prompt_file(dn)
+                if review_team(dn):
+                    gates["reviewTeam"] = review_team(dn)
             if key_of(dn) == "gate.reportReview":
                 gates["reportReview"] = True
                 if (dn.get("prompt") or "").strip():
@@ -1055,12 +1093,16 @@ def find(pid):
 
 
 def resolve(name):
-    """What pipeline.sh should execute for `name`. Built-ins keep their proven stage lists."""
+    """What pipeline.sh should execute for `name`. Built-ins keep their proven stage lists; a built-in
+    that has none runs from its description, compiled like anybody's own."""
     if not ID_RE.match(name or ""):
         return None, None
     legacy = os.path.join(LEGACY_DIR, name + ".json")
     if os.path.exists(legacy):
         return "legacy", legacy
+    b = builtin_dir(name)
+    if os.path.exists(os.path.join(b, "pipeline.json")):
+        return "manifest", b
     d = user_dir(name)
     if os.path.exists(os.path.join(d, "pipeline.json")):
         return "manifest", d

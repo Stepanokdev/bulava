@@ -1890,7 +1890,10 @@ fi
 review_prompt_fit prompt persona PLAN_TEXT CONTRACT_TEXT CHALLENGES_TEXT CHALLENGE_BLOCK OWED_BLOCK FINDINGS_BLOCK \
   CHECKS_BLOCK last_msg recent_user_turns diff_summary verify_json verify_fail_logs
 # A team, when one is set (SUPERVISOR_REVIEW_TEAM) and Codex is the reviewer; the Claude stand-in reads
-# alone, as it always has.
+# alone, as it always has. The pipeline the message went through has the last word when its review step
+# chose ("Who reviews"): a built-in "Claude + a Codex team", or "one reviewer" even on a server.
+_pg_team="$(gate_opt .reviewTeam)"
+[ -n "$_pg_team" ] && SUPERVISOR_REVIEW_TEAM="$_pg_team"
 REVIEW_TEAM=""
 [ "${REVIEWER:-codex}" = codex ] && REVIEW_TEAM="$(review_team_members)"
 if [ -n "$REVIEW_TEAM" ]; then

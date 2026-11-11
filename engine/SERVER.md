@@ -364,6 +364,10 @@ SUPERVISOR_REVIEW_TEAM="contract security state"   # default on a server; empty 
                                                     # off, empty or one member: the single review
 ```
 
+A pipeline whose review step chose a team ("Who reviews", e.g. the built-in `review-team`, "Claude + a
+Codex team") is reviewed by that team; one that chose "one reviewer" is reviewed by one, here too. A
+review step that did not choose leaves it to this setting.
+
 `doctor --server --json` reports it as `engine.review_team`, with the calls a round costs. The
 last round's members and who answered are in the run's `review-team.json`.
 Expect ten to fifteen minutes more on an attempt whose findings go back. Pinned by
