@@ -158,7 +158,9 @@ stop_instance() {  # $1 = slug
     # The verifier's build products stay behind. A run's evidence is its logs and its verdicts; the
     # app it built is gigabytes, and every one of those copies was one more app under his bundle id
     # for macOS to choose between — 24 of them were sitting in here, 19 GB in all.
-    for a in reports evidence report scope-violation.json findings.jsonl; do
+    # `elsewhere` holds the checks of the run's other repositories made from the chat: the answer they
+    # were made for is still read from here after the stop, and so are their results and logs.
+    for a in reports evidence elsewhere report scope-violation.json findings.jsonl; do
       [ -e "$idir/$a" ] || continue
       rsync -a --exclude 'DerivedData/' "$idir/$a" "$rdir/" 2>/dev/null \
         || cp -R "$idir/$a" "$rdir/" 2>/dev/null || true
@@ -166,6 +168,11 @@ stop_instance() {  # $1 = slug
   fi
   # A chat that started on top of the director's uncommitted work keeps its base for a resume.
   save_run_base "$idir" "$slug"
+  # …and its task, so the next message can be asked whether it continues it (lib/thread-carry.sh).
+  thread_carry_save "$idir"
+  # …and the copy of a folder with no git, so a resume measures from what was accepted there.
+  plain_shadow_keep "$idir"
+  checks_keep "$idir"
   rm -rf "$idir"   # removing the dir makes the watchdog loop exit
   echo "☀️ Зупинено: $proj"
   echo "   сесія '$session' залишена (tmux attach -t $session; закрити: tmux kill-session -t $session)"
@@ -308,6 +315,7 @@ case "$cmd" in
     fi
     if [ -d "$IDIR" ]; then
       [ -f "$IDIR/watchdog.pid" ] && kill "$(cat "$IDIR/watchdog.pid")" 2>/dev/null
+      thread_carry_save "$IDIR"
       rm -rf "$IDIR"
     fi
     tmux has-session -t "$SESSION" 2>/dev/null && tmux kill-session -t "$SESSION" 2>/dev/null
@@ -848,6 +856,14 @@ $gone}"
       BASE_SHA="$REVIEW_BASE"
     fi
     [ -n "$BASE_SHA" ] && printf '%s\n' "$BASE_SHA" > "$IDIR/base-sha"
+    # A chat he sits at, in a folder with no git: what it changes is measured against a copy of the
+    # folder kept outside it, so the review has a diff to read (lib/plain-shadow.sh).
+    # A fresh start measures itself: a copy kept for an earlier conversation's resume goes.
+    plain_shadow_forget "$SLUG"
+    checks_forget "$SLUG"
+    if [ "${SUPERVISOR_PLAIN_FOLDER:-}" = 1 ] && [ "${SUPERVISOR_UNATTENDED:-}" != 1 ] && [ -z "$BASE_SHA" ]; then
+      plain_shadow_take "$IDIR" "$PROJECT_DIR"
+    fi
     # What git ignored at the start, so the scope gate never deletes it (see `ignored_manifest`).
     ignored_manifest "$PROJECT_DIR" > "$IDIR/base-ignored" 2>/dev/null || true
     # A fresh start measures itself; a base kept for an earlier session's resume no longer applies.
@@ -1021,6 +1037,56 @@ $gone}"
       echo '{"error":"no-repo"}'; exit 0
     fi
     dirty_state_json "$_d" "${2:-300}"
+    ;;
+
+  verify-elsewhere)
+    # One of the run's other repositories, checked the way the primary folder is after an answer —
+    # because the director asked, from the chat.
+    #
+    # The check after an answer runs only in the primary folder. When the change was made next door,
+    # the primary's evidence names that repository (`unverified_elsewhere`) and the app offers this.
+    # Only a repository this run was actually given — a line of its instance's `extra-repos` — and
+    # from the base it had when the run began, so "what changed" means what this run changed. It gets
+    # a scratch instance folder of its own: the primary's registered checks, runspec and untracked
+    # manifest are the primary's and must not be run or read against another repository.
+    # Prints the evidence.json path; the same path every time, so the newest check is the one there.
+    #
+    # The run is named by its id when the caller knows it — the app always does. The folder alone
+    # says only which run holds it NOW: once the chat that asked has let it go and another chat has
+    # started there, its `extra-repos` and bases are that other run's, and a check made from them
+    # would be filed in a run the asking chat never reads. A run that is no longer the folder's is
+    # refused (`run-ended`), never quietly swapped for the one that is.
+    _p="$(canon_path "${1:?usage: night-shift verify-elsewhere <primary-dir> <repo-dir> [run-id]}")"
+    _r="$(canon_path "${2:?usage: night-shift verify-elsewhere <primary-dir> <repo-dir> [run-id]}")"
+    _idir="$(instance_dir "$(slug_for "$_p")")"
+    # The run this check is for: the one named, or — when the caller names none — the one holding
+    # the folder now. Either way it is held fixed for the whole check and compared again after it,
+    # so a check started under one run is never filed under another (or under none, once stopped).
+    _now_rid="$(tr -d '[:space:]' < "$_idir/run-id" 2>/dev/null)"
+    _rid="${3:-$_now_rid}"
+    if [ "$_now_rid" != "$_rid" ]; then
+      echo '{"error":"run-ended"}'; exit 1
+    fi
+    [ -s "$_idir/extra-repos" ] || { echo '{"error":"no-run"}'; exit 1; }
+    _base=""; _found=0
+    while IFS=$'\037' read -r _dir _b _rest; do
+      [ "$_dir" = "$_r" ] || continue
+      _found=1; _base="$_b"; break
+    done < "$_idir/extra-repos"
+    [ "$_found" = 1 ] && [ -d "$_r" ] || { echo '{"error":"not-in-run"}'; exit 1; }
+    case "$_base" in -|*[!0-9a-fA-F]*) _base="" ;; esac
+    _scratch="$_idir/elsewhere/$(slug_for "$_r")"
+    mkdir -p "$_scratch" || { echo '{"error":"no-scratch"}'; exit 1; }
+    _ev="$("$BIN_DIR/verify.sh" "$_r" check "$_scratch" "$_base" 2>>"$_scratch/verify.log")"
+    # A suite can take an hour, and the run can be stopped, or the folder handed to another run, while
+    # it goes. Then what it wrote is not this run's to report — its folder may already be the other
+    # run's — so it is dropped and the refusal said, rather than filed where somebody else reads it.
+    if [ ! -s "$_idir/extra-repos" ] || [ "$(tr -d '[:space:]' < "$_idir/run-id" 2>/dev/null)" != "$_rid" ]; then
+      [ -n "$_ev" ] && rm -f "$_ev" 2>/dev/null
+      echo '{"error":"run-ended"}'; exit 1
+    fi
+    [ -n "$_ev" ] && [ -f "$_ev" ] || { echo '{"error":"no-evidence"}'; exit 1; }
+    printf '%s\n' "$_ev"
     ;;
 
   commit-preview)
@@ -1300,6 +1366,11 @@ $gone}"
     ASIDE=""
     if [ -d "$IDIR" ]; then
       [ -f "$IDIR/watchdog.pid" ] && kill "$(cat "$IDIR/watchdog.pid")" 2>/dev/null
+      # The task as this folder last knew it, kept before the folder is put aside — a successful
+      # resume deletes the aside copy, and a rollback leaves this copy as it was.
+      thread_carry_save "$IDIR"
+      plain_shadow_keep "$IDIR"
+      checks_keep "$IDIR"
       ASIDE="$SUP_STATE/resume-aside/$SLUG.$$"
       mkdir -p "$SUP_STATE/resume-aside" 2>/dev/null
       if ! mv "$IDIR" "$ASIDE" 2>/dev/null; then
@@ -1346,8 +1417,19 @@ $gone}"
     printf '%s\n' "$RUN_ID" > "$IDIR/run-id"
     set_direct_chat_mode "$IDIR"
     rm -f "$IDIR/handshake-ok" "$IDIR/claude-session-id"
+    # The task this conversation was on, before its first message here is accepted: worker-send
+    # enqueues right after this resume returns, and the relation is decided then. Only with Jev on.
+    thread_carry_restore "$IDIR" "$RESUME_SID"
     BASE_SHA="$(resolve_base_sha "$PROJECT_DIR")"
     [ -n "$BASE_SHA" ] && printf '%s\n' "$BASE_SHA" > "$IDIR/base-sha"
+    # A resumed chat in a folder with no git goes on from the copy its conversation had — the last
+    # state a review accepted — never from the folder as it is now, which may hold work a review
+    # returned or never saw. Only when there is none is a copy taken now.
+    if [ "${SUPERVISOR_PLAIN_FOLDER:-}" = 1 ] && [ "${SUPERVISOR_UNATTENDED:-}" != 1 ] && [ -z "$BASE_SHA" ]; then
+      plain_shadow_restore "$IDIR" || plain_shadow_take "$IDIR" "$PROJECT_DIR"
+    fi
+    # The checks the conversation registered come back with it (supervisor-lib checks_keep).
+    checks_restore "$IDIR" && echo "$(date '+%F %T') [checks] $SLUG: the conversation's registered checks brought back with the resume" >> "$SUP_STATE/supervisor.log"
     if restore_run_base "$IDIR" "$SLUG" "$PROJECT_DIR"; then
       # The session this resumes started on top of the director's uncommitted work: it is measured
       # against the base the review last accepted, not against HEAD, and the worker is reminded
@@ -1690,7 +1772,7 @@ PYEOF
     command -v python3 >/dev/null 2>&1 && python3 "$BIN_DIR/ns-cli.py" help >&2
     echo "" >&2
     echo "usage: night-shift start [dir] [--dirty=keep|commit [--message=…]] | resume <dir> <session-id> [branch] | revive <dir> | stop [dir|--all]"
-    echo "       night-shift status | attach [dir] | list | dirty-state [dir] | commit-preview [dir] | heavy-state [dir] | heavy-exclude <dir> [local|gitignore] | mcp-state [dir] | mcp-decide <dir> enable|skip | mcp-carry <src> <dst> | config … | models | doctor | completion <shell> | help [cmd] | version | uninstall [--force]"
+    echo "       night-shift status | attach [dir] | list | dirty-state [dir] | verify-elsewhere <dir> <repo> [run-id] | commit-preview [dir] | heavy-state [dir] | heavy-exclude <dir> [local|gitignore] | mcp-state [dir] | mcp-decide <dir> enable|skip | mcp-carry <src> <dst> | config … | models | doctor | completion <shell> | help [cmd] | version | uninstall [--force]"
     exit 1
     ;;
 esac

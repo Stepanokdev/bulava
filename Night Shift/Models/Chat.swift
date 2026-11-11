@@ -25,12 +25,23 @@ nonisolated struct ChatSessionBinding: Codable, Equatable, Sendable {
     /// at these: what Claude did after the answer shows below it (`ChatTranscriptFeed.fold`), and
     /// the same way after Bulava restarts and reads the transcript again from the start.
     var screenAnswers: [Date]
+    /// The folder this conversation worked in before he moved it, until the new folder's session
+    /// or thread has been handed the conversation. A session belongs to the folder it was started in,
+    /// so moving a chat starts a new one — and that new session knows nothing of what was said. While
+    /// this is set, the next message carries the last part of the conversation with it
+    /// (`ChatFolderMove.preamble`). A session having started is not enough to clear it: the message
+    /// that carries the hand-over can still fail on its way, and its retry must carry it again.
+    var movedFrom: String?
+    /// The message carrying the hand-over now (`movedFrom`), so a second message sent while it is on
+    /// its way does not carry the same conversation again. A failed one gives it up to the next.
+    var handoffEntryID: UUID?
 
     init(primaryProjectID: UUID?, projectPath: String, claudeSessionID: String? = nil,
          codexThreadID: String? = nil, codexContextDigest: String? = nil,
          activeRunID: String? = nil, branch: String? = nil, startedAt: Date = Date(),
          outcomeAt: Date? = nil, lastCompletedTurnKey: String? = nil,
-         lastReportedTurnKey: String? = nil, reportPaths: [String] = [], screenAnswers: [Date] = []) {
+         lastReportedTurnKey: String? = nil, reportPaths: [String] = [], screenAnswers: [Date] = [],
+         movedFrom: String? = nil, handoffEntryID: UUID? = nil) {
         self.primaryProjectID = primaryProjectID
         self.projectPath = projectPath
         self.claudeSessionID = claudeSessionID
@@ -44,6 +55,15 @@ nonisolated struct ChatSessionBinding: Codable, Equatable, Sendable {
         self.lastReportedTurnKey = lastReportedTurnKey
         self.reportPaths = reportPaths
         self.screenAnswers = screenAnswers
+        self.movedFrom = movedFrom
+        self.handoffEntryID = handoffEntryID
+    }
+
+    /// A folder chosen for a chat before anything was said in it — and nothing else: no session,
+    /// no run, no report. What `ChatFolderMove` writes for a chat that has not started.
+    var isOnlyAChosenFolder: Bool {
+        primaryProjectID != nil && claudeSessionID == nil && codexThreadID == nil
+            && activeRunID == nil && reportPaths.isEmpty
     }
 
     // MARK: Turn keys
@@ -76,6 +96,8 @@ nonisolated struct ChatSessionBinding: Codable, Equatable, Sendable {
         lastReportedTurnKey = try? c.decodeIfPresent(String.self, forKey: .lastReportedTurnKey)
         reportPaths = (try? c.decode([String].self, forKey: .reportPaths)) ?? []
         screenAnswers = (try? c.decode([Date].self, forKey: .screenAnswers)) ?? []
+        movedFrom = try? c.decodeIfPresent(String.self, forKey: .movedFrom)
+        handoffEntryID = try? c.decodeIfPresent(UUID.self, forKey: .handoffEntryID)
     }
 }
 

@@ -746,6 +746,13 @@ final class AppModel {
     /// through this (`startingInstance(for:)`).
     var startingChats: [UUID: String] = [:]
     var stoppingChatIDs: Set<UUID> = []
+    /// Chats being moved to another folder this moment (`chooseChatFolder`): the old folder's
+    /// session is being stopped and nothing may be sent until the new folder is bound.
+    var movingChatFolders: Set<UUID> = []
+    /// Folders being checked from a chat right now (`checkElsewhere`), by chat.
+    var checkingElsewhere: [UUID: Set<String>] = [:]
+    /// Bumped when such a check ends, so what the chat shows under the answer is read again.
+    var elsewhereRevision = 0
 
     var codexTurns: [UUID: CodexChatRunner] = [:]
 

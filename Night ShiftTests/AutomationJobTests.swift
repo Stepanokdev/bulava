@@ -404,6 +404,60 @@ nonisolated final class AutomationJobTests: XCTestCase {
         XCTAssertEqual(run.result, .needsYou)
     }
 
+    /// The whole way: a job's run ends on a question with its session still in the folder — the
+    /// kind of session no other run may take — and the next run starts. Its brief goes out; the
+    /// session it would have met is gone first; the question stays in its chat and in the count.
+    @MainActor
+    func testTheNextRunOfAJobStartsAlthoughAnEarlierOneWaitsOnAQuestion() async throws {
+        let (m, box, project, product, notes) = world()
+        let state = scratch.appendingPathComponent("supervisor", isDirectory: true)
+        try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+        await m.client.updatePaths(SupervisorPaths(stateDir: state))
+        // The engine's own commands (stop) read the state folder from the environment: this one,
+        // never the machine's.
+        setenv("SUPERVISOR_STATE_DIR", state.path, 1)
+        defer { unsetenv("SUPERVISOR_STATE_DIR") }
+        let a = job(product, project, notes: notes)
+        m.automations.add(a)
+        m.runAutomationNow(a.id)
+        await waitUntil { !box.sent.isEmpty }
+        let asked = try XCTUnwrap(m.automations.runs(for: a.id).first)
+        let askedChat = try XCTUnwrap(asked.chatID)
+        let folder = try XCTUnwrap(JobFolders.existing(for: a.id))
+        // The engine's instance as it is while a question waits: a declared "blocked", a question.
+        // Named the way the engine names it, so the engine's own `stop` finds it.
+        let instance = state.appendingPathComponent("instances/\(Slug.forEngine(folder.path))", isDirectory: true)
+        try FileManager.default.createDirectory(at: instance, withIntermediateDirectories: true)
+        let files = ["project": folder.path, "session": "ns-job-question", "run-id": "RUN-ASKED", "started-at": "",
+                     "done": "needs-user",
+                     "outcome.json": #"{"schema":1,"result":"blocked","summary":"Котрий із двох календарів брати?","ts":"2026-11-10 20:00:00","run_id":"RUN-ASKED"}"#]
+        for (name, text) in files { try text.write(to: instance.appendingPathComponent(name), atomically: true, encoding: .utf8) }
+        m.conversations.bindSession(ChatSessionBinding(primaryProjectID: project.id, projectPath: folder.path,
+                                                       claudeSessionID: "claude-asked", activeRunID: "RUN-ASKED"),
+                                    to: askedChat)
+        await m.refresh()
+        await m.automationsTick()
+        await waitUntil { m.automations.run(id: asked.id)?.state == .finished }
+        XCTAssertEqual(m.automations.run(id: asked.id)?.result, .needsYou)
+        let held = await m.client.readInstances()
+        XCTAssertTrue(held.contains { Slug.canonicalPath($0.projectPath) == Slug.canonicalPath(folder.path) },
+                      "the question's session is still in the folder")
+
+        XCTAssertNil(m.reasonNotToStart(m.automations.automation(id: a.id)!, now: Date()))
+        m.runAutomationNow(a.id)
+        await waitUntil { box.sent.count == 2 }
+        XCTAssertEqual(box.sent.count, 2, "the next run's brief went out")
+        let after = await m.client.readInstances()
+        XCTAssertFalse(after.contains { Slug.canonicalPath($0.projectPath) == Slug.canonicalPath(folder.path) },
+                       "the earlier session was let go before it, so the folder is free for the new run")
+        XCTAssertEqual(m.automations.run(id: asked.id)?.result, .needsYou, "the question still waits")
+        XCTAssertTrue(m.automationRunsWantingHim.contains { $0.id == asked.id }, "and is counted")
+        XCTAssertEqual(m.conversations.chat(id: askedChat)?.session?.claudeSessionID, "claude-asked",
+                       "its conversation is kept, to be resumed by his answer")
+        XCTAssertTrue(m.visibleEntries(inChat: askedChat).contains { $0.kind == .event && $0.text.contains("Your question here still waits") },
+                      "and its chat says what happened")
+    }
+
     func testWhenTheEngineHasGivenUpOnARun() {
         XCTAssertTrue(AppModel.engineGaveUp(stalled: true, frozenGaveUp: true, done: nil, question: false,
                                             outcome: nil, turnRunning: true),

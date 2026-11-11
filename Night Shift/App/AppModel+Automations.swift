@@ -186,9 +186,7 @@ extension AppModel {
     /// will act on it: in that run's chat.
     func runHoldingBack(_ automation: Automation) -> AutomationRun? {
         let mine = automations.runs(for: automation.id)
-        if let r = mine.first(where: { !$0.state.isTerminal || ($0.state == .finished && $0.result == .needsYou) }) {
-            return r
-        }
+        if let r = mine.first(where: { !$0.state.isTerminal }) { return r }
         if let r = mine.first(where: { $0.state == .finished && $0.result == .changes && $0.handoff == .waiting }) {
             return r
         }
@@ -219,8 +217,11 @@ extension AppModel {
     /// Why a run cannot start right now, or nil. Each reason is something he can act on or wait out.
     func reasonNotToStart(_ automation: Automation, now: Date) -> String? {
         let mine = automations.runs(for: automation.id)
-        // A question waits until it is answered, looked at or not — the same rule as the badge.
-        if mine.contains(where: { !$0.state.isTerminal || ($0.state == .finished && $0.result == .needsYou) }) {
+        // A run still going holds the next one back. A run that ended on a question does not: the
+        // question stays in its own chat, with the badge, for as long as he leaves it, and the
+        // automation goes on. Holding every later run on it cost the bug reports four days and the
+        // evening todo three in one week (3–10 Nov), each recorded as "has not finished".
+        if mine.contains(where: { !$0.state.isTerminal }) {
             return String(localized: "The previous run has not finished yet.")
         }
         if mine.contains(where: { $0.state == .finished && $0.result == .changes && $0.handoff == .waiting }) {
@@ -450,6 +451,8 @@ extension AppModel {
             return
         }
         await readyForUnattendedJob(folder.path)
+        guard automations.run(id: runID)?.state == .preparing else { return }
+        await letGoOfEarlierQuestions(automation, for: runID)
         guard automations.run(id: runID)?.state == .preparing else { return }
         let chat = conversations.newAutomationChat(id: chatID, for: product.id, runID: runID,
                                                    copyID: nil, title: runChatTitle(automation))
@@ -695,13 +698,39 @@ extension AppModel {
     private func conclude(_ runID: UUID, chatID: UUID, lastAsked: UUID?, outcome: WorkerOutcome?,
                           done: String?, summary: String?) async {
         guard let run = automations.run(id: runID), run.state == .running else { return }
-        let status = await run.workspaceID.flatMap { automations.copy(id: $0) }.asyncMap { await WorkCopies.status(of: $0) }
+        let copy = run.workspaceID.flatMap { automations.copy(id: $0) }
+        // A run that moved its copy off its branch (a brief that detaches HEAD to look at another
+        // commit) is brought back to it when nothing would be lost — otherwise its copy read as
+        // "not ours" for ever and the run never ended. What is out there is said, never dropped.
+        var offBranch: WorkCopies.OffBranch = .onBranch
+        if let copy { offBranch = await WorkCopies.returnToBranch(copy) }
+        let status = await copy.asyncMap { await WorkCopies.status(of: $0) }
         // Read before the wait; true after it only if nobody has asked anything since and nothing
         // started — a follow-up sent meanwhile is a new turn this outcome says nothing about.
         guard automations.run(id: runID)?.state == .running,
               conversations.entries(inChat: chatID).last(where: { $0.kind == .user })?.id == lastAsked,
               !directPhase(for: chatID).isActive, !sendingChatIDs.contains(chatID) else { return }
+        if case .strays(let head, let commits, let uncommitted) = offBranch, let copy {
+            // Work, or what may be work, sits where the branch does not reach. It is not handed
+            // over, not thrown away, and not left to hold the automation: he is asked.
+            // Said first, wherever the run is read — its line in the list shows the first line of
+            // the summary — and in its chat; what the worker said follows it, kept.
+            let explanation = Self.offBranchNote(head: head, commits: commits, uncommitted: uncommitted.count,
+                                                 branch: copy.branch, path: copy.checkoutRoot)
+            automations.updateRun(runID) { $0.note = explanation }
+            settle(run, result: .needsYou, summary: Self.leading(explanation, before: summary), now: Date())
+            if let productID = conversations.chat(id: chatID)?.productID {
+                conversations.postNotice(explanation, productID: productID, chatID: chatID)
+            }
+            return
+        }
         guard status?.inspected != false else { return }
+        if case .returned(let head) = offBranch {
+            automations.updateRun(runID) {
+                $0.note = String(format: String(localized: "It ended on another commit than its branch (%@), with nothing of its own there; the copy was put back on its branch and read from it."),
+                                 String(head.prefix(7)))
+            }
+        }
         if run.isJob {
             let result = Self.jobResult(outcome: outcome)
             if result == .failed, outcome == nil {
@@ -727,6 +756,20 @@ extension AppModel {
         let kept = Self.runSummary(turn: summary, turnOutcome: outcome, copyHasWork: hasWork,
                                    earlier: automations.run(id: runID)?.summary)
         settle(run, result: result, summary: kept, now: Date())
+    }
+
+    /// `first`, then what was there before it, a blank line between.
+    nonisolated static func leading(_ first: String, before rest: String?) -> String {
+        guard let rest, !rest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return first }
+        return first + "\n\n" + rest
+    }
+
+    /// What a run that left its branch with something out there is settled with: where HEAD is,
+    /// what the branch does not hold, and where to look.
+    nonisolated static func offBranchNote(head: String, commits: Int, uncommitted: Int,
+                                          branch: String, path: String) -> String {
+        String(format: String(localized: "It left its branch %@: HEAD is at %@, with %lld commits the branch does not have and %lld files not committed. Nothing was handed over or thrown away — look at the copy in %@."),
+               branch, String(head.prefix(7)), commits, uncommitted, path)
     }
 
     /// How a run ended, from what its worker declared and what its copy holds. A check never ends
@@ -842,16 +885,38 @@ extension AppModel {
         }
     }
 
+    /// A job's runs share one folder, and an earlier run that ended on a question kept its session
+    /// there, waiting on him — a session another run may not take, so the next run's brief was
+    /// refused at the door and the question held the automation after all. Before the next run
+    /// starts, such a session is let go. The question stays in its chat and in the "waiting for
+    /// you" count; his answer later resumes the same Claude conversation there, once the newer run
+    /// has finished (`jobFolderBusyForAnswer`). A chat he is writing in right now is left alone.
+    func letGoOfEarlierQuestions(_ automation: Automation, for runID: UUID) async {
+        for earlier in automations.runs(for: automation.id)
+        where earlier.id != runID && earlier.isJob && earlier.state == .finished && earlier.result == .needsYou {
+            guard let chatID = earlier.chatID,
+                  !directPhase(for: chatID).isActive, !sendingChatIDs.contains(chatID) else { continue }
+            guard await releaseJobSession(earlier),
+                  let productID = conversations.chat(id: chatID)?.productID else { continue }
+            conversations.postNotice(
+                String(format: String(localized: "A newer run of «%@» needed the folder, so this run's session was let go. Your question here still waits: answer it once that run has finished, and the conversation goes on where it stopped."),
+                       automation.name),
+                productID: productID, chatID: chatID)
+        }
+    }
+
     /// Stop what is left of a job's run in its folder — the conversation stays, and he can still
     /// write into it; the next message starts it again there.
-    func releaseJobSession(_ run: AutomationRun) async {
-        guard let chatID = run.chatID, let path = conversations.chat(id: chatID)?.session?.projectPath else { return }
+    /// True when a session of this run was there and is gone now.
+    @discardableResult
+    func releaseJobSession(_ run: AutomationRun) async -> Bool {
+        guard let chatID = run.chatID, let path = conversations.chat(id: chatID)?.session?.projectPath else { return false }
         let live = await client.readInstances()
         guard let instance = live.first(where: { Slug.canonicalPath($0.projectPath) == Slug.canonicalPath(path) }),
               instance.runID == conversations.chat(id: chatID)?.session?.activeRunID,
               !directPhase(for: chatID).isActive, !sendingChatIDs.contains(chatID),
-              !generatingChatReportIDs.contains(chatID) else { return }
-        _ = await releaseProject(path: path, session: instance.session)
+              !generatingChatReportIDs.contains(chatID) else { return false }
+        return await releaseProject(path: path, session: instance.session) == nil
     }
 
     func failRun(_ runID: UUID, _ why: String) {
@@ -1828,6 +1893,21 @@ extension AppModel {
     }
 
     /// The job run a conversation is, with its automation, or nil for any other conversation.
+    /// Why a message cannot go into this run's chat now, or nil. A job's runs share one folder, and
+    /// a question an earlier run ended on no longer holds the next run back — so he can come to
+    /// answer it while a newer run of the same job is working there. Two sessions must never write
+    /// that folder at once: the answer waits for the newer run to end.
+    func jobFolderBusyForAnswer(chatID: UUID) -> String? {
+        guard let job = jobRun(forChat: chatID) else { return nil }
+        let other = automations.runs(for: job.automation.id).first { r in
+            r.id != job.run.id && (r.state == .running || r.state == .preparing
+                || (r.chatID.map { directPhase(for: $0).isActive || sendingChatIDs.contains($0) } ?? false))
+        }
+        guard other != nil else { return nil }
+        return String(format: String(localized: "A newer run of «%@» is working in its folder now. Send this again once it has finished."),
+                      job.automation.name)
+    }
+
     func jobRun(forChat chatID: UUID) -> (run: AutomationRun, automation: Automation)? {
         guard let runID = conversations.chat(id: chatID)?.automationRunID,
               let run = automations.run(id: runID), run.isJob,

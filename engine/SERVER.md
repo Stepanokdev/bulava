@@ -29,6 +29,7 @@ Without it nothing in this file applies, and a terminal or the Mac app behaves e
 | `git push`, `glab`, `gh` from inside a run | allowed | denied — the bridge publishes |
 | tmux server | the user's default | its own socket (`SUPERVISOR_TMUX_SOCKET=bulava`) |
 | Independent code and security checks before Codex | off (`SUPERVISOR_CLAUDE_CHECKS=1` turns them on) | **on** (`=0` turns them off) |
+| Codex's final code review by a team of three specialists | off (`SUPERVISOR_REVIEW_TEAM="contract security state"` turns it on) | **on** (`=off` turns it off) |
 
 The bridge's own secrets on the same machine are added to both layers with
 `SUPERVISOR_SERVER_EXTRA_SECRET_PATHS` — paths separated by spaces, each starting with `~/` or `/`
@@ -338,6 +339,33 @@ and Codex is shown the last reading. A check that fails (time, a refusal, no fin
 lets the work go on to Codex unless `REQUIRED=1`; an empty diff is "nothing to check", never "clean".
 What they remember — rounds, the findings returned, the readings by snapshot — is kept beside the
 task in `tasks/<key>/checks/`. `doctor --server --json` reports the setting as `engine.claude_checks`.
+
+## Codex's review by a team of specialists
+
+The final code review is three Codex reviews of the same change instead of one, each with a focus of
+its own — requirements and business logic, security and data integrity, state transitions and
+integrations — side by side, so a round takes as long as the slowest of them and costs three calls.
+On the bench of planted defects (8–9 Nov, 23 snapshots of the factory's own MRs) one ordinary review
+found 61.8% of them on Astra medium and three specialists 72.5%; on Sol high 67.1% and 72.4%. The
+focus lines are the ones measured, word for word (`bin/lib/review-team.sh`).
+
+Their findings are joined, not voted on: any member that fails the work sends it back, each list
+under its reviewer's name — also when another member is blocked or hands off. Without a FAIL, a
+blocked member parks the run, then one that hands off; only every member passing is a pass. A
+member that does not answer, or answers COMPLETE with no verdict, is named and the others decide;
+none with a usable answer is a reviewer that did not answer, as before. A member the CLI refused parks the run like a
+single refusal. The Claude stand-in, when the director allows one, reads alone.
+
+```
+SUPERVISOR_REVIEW_TEAM="contract security state"   # default on a server; empty everywhere else
+                                                    # members: contract security state general
+                                                    #          negative legacy outcome (the last three
+                                                    #          are proposals from the bench, not measured)
+                                                    # off, empty or one member: the single review
+```
+
+`doctor --server --json` reports it as `engine.review_team`, with the calls a round costs. The
+last round's members and who answered are in the run's `review-team.json`.
 Expect ten to fifteen minutes more on an attempt whose findings go back. Pinned by
 `tests/test-claude-checks.sh`.
 

@@ -455,6 +455,11 @@ mark_done() {  # $1 = disposition, [$2] = why, in a sentence the person reads
     fi
   fi
   restamp_receipt "$disposition"
+  # A folder with no git measures its next turn from what this one left, as accepted.
+  if [ "$disposition" = passed ] && [ "${PLAIN_ADVANCE:-0}" = 1 ] && [ -n "${IDIR_SCOPE:-}" ] \
+     && plain_shadow_present "$IDIR_SCOPE"; then
+    plain_shadow_advance "$IDIR_SCOPE" "$cwd"
+  fi
   if [ "$disposition" = passed ] && [ -n "${IDIR_SCOPE:-}" ] && [ -f "$IDIR_SCOPE/direct-chat" ]; then
     if [ -f "$IDIR_SCOPE/base-snapshot" ] && worktree_dirty "$cwd"; then
       # A run that started on top of the director's uncommitted work. Moving the base to HEAD
@@ -524,6 +529,9 @@ restamp_receipt() {  # $1 = passed | debt | needs-user | scope_violation
 
 PLAIN_RUN=0
 [ -n "${IDIR_SCOPE:-}" ] && plain_folder_run "$IDIR_SCOPE" && PLAIN_RUN=1
+# Signed as plain, whatever the repositories inside it say below: the folder around them has no git
+# of its own, and what changed in it is read from its copy (lib/plain-shadow.sh) either way.
+PLAIN_SIGNED="$PLAIN_RUN"
 # A plain folder is a job's only while it holds no code the run wrote. Repositories inside it — an
 # app, its server and its site, each a checkout of its own — are reviewed like any run's: one
 # workspace built two apps, a site and a backend in one, and no review ever read a line.
@@ -819,6 +827,41 @@ if [ -n "${IDIR_SCOPE:-}" ] && [ -s "$IDIR_SCOPE/findings.jsonl" ]; then
     mark_done needs-user
     log "worker 'blocker' finding (fresh) — parked as needs-user (not a worker defect)"
     exit 0
+  fi
+fi
+
+# A chat he sits at, in a plain folder, that says it changed something: its word stood only because
+# there was nothing to read. Now there is — the copy of the folder kept outside it since the run
+# began (lib/plain-shadow.sh) — and when the change is more than prose it is reviewed like any run's,
+# the patch handed to the reviewer below. An automation's job, a research result and "nothing to
+# change" keep the rule beneath.
+PLAIN_REVIEW=0; PLAIN_CODE=""; PLAIN_BIG=""; PLAIN_UNREAD=0; PLAIN_ADVANCE=0
+if [ "${PLAIN_SIGNED:-0}" = 1 ] && [ "${SUPERVISOR_OUTCOME_PROTOCOL:-1}" = 1 ] && ! run_unattended "$IDIR_SCOPE"; then
+  _pf_declared="$(jq -r '.result // empty' "$IDIR_SCOPE/outcome.json" 2>/dev/null)"
+  if plain_shadow_present "$IDIR_SCOPE"; then
+    # Owed a review: code changed, a file of code too large to copy changed, or the comparison could
+    # not be made at all — an unread folder is never taken for an unchanged one.
+    PLAIN_CODE="$(plain_shadow_changed_code "$IDIR_SCOPE" "$cwd")" || PLAIN_UNREAD=1
+    PLAIN_BIG="$(plain_shadow_unread_code "$IDIR_SCOPE" "$cwd")"
+    if [ -n "$PLAIN_CODE$PLAIN_BIG" ] || [ "$PLAIN_UNREAD" = 1 ]; then
+      if [ "$PLAIN_RUN" = 0 ] || [ "$_pf_declared" = succeeded_changes ]; then
+        # Reviewed — on its own, or beside the repositories inside the folder that already send it
+        # to review — with the patch of the folder around them in front of the reviewer.
+        PLAIN_REVIEW=1; PLAIN_RUN=0; PLAIN_ADVANCE=1
+        _pf_what="$(printf '%s\n%s' "$PLAIN_CODE" "$PLAIN_BIG" | grep . | head -5 | tr '\n' ' ')"
+        [ "$PLAIN_UNREAD" = 1 ] && _pf_what="${_pf_what}the comparison with the copy failed"
+        log "plain folder: code changed since the copy's base ($_pf_what) — reviewed from the copy kept outside the folder"
+      else
+        # A research result or "nothing to change" keeps its word — but the code stays owed: the
+        # copy's base does not move, so the next declared change is reviewed with it.
+        log "plain folder: code changed but the run declared ${_pf_declared:-nothing} — that stands; the change stays owed a review (the copy's base does not move)"
+      fi
+    else
+      PLAIN_ADVANCE=1
+      [ "$_pf_declared" = succeeded_changes ] && log "plain folder: only prose changed since the run began — the declared outcome stands"
+    fi
+  elif [ "$_pf_declared" = succeeded_changes ]; then
+    log "plain folder: no copy of the folder was taken ($(cat "$IDIR_SCOPE/plain-shadow.skipped" 2>/dev/null || echo 'started before copies were kept')) — the declared outcome stands"
   fi
 fi
 
@@ -1202,6 +1245,51 @@ review_call() {   # $1=prompt [$2=1 to let Codex search the web]
   return 0
 }
 
+# The final code review by a team (lib/review-team.sh): each member a full review call with a focus of
+# its own, all side by side, their findings joined (lib/review-team-merge.py). Sets what review_call
+# sets. A member the CLI refused parks the run as for a single reviewer; a member that did not answer
+# is named, and the verdict is the verdict of those that did; none answering is the single reviewer's
+# "no answer", with its exit code.
+review_team_call() {   # $1=shared prompt; the members in REVIEW_TEAM, one per line
+  local shared="$1" dir m n merged mrc first_rc="" first_cause="" missing
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/review-team.XXXXXX" 2>/dev/null)" || { review_call "$shared"; return 0; }
+  n="$(printf '%s\n' "$REVIEW_TEAM" | grep -c .)"
+  for m in $REVIEW_TEAM; do
+    (
+      review_call "$(review_team_prompt "$m" "$shared" "$n")"
+      printf '%s' "$review" > "$dir/$m.out"
+      printf '%s\n' "$review_rc" > "$dir/$m.rc"
+      printf '%s\n' "$review_refused" > "$dir/$m.refused"
+      printf '%s' "$review_cause" > "$dir/$m.cause"
+    ) &
+  done
+  wait
+  review=""; review_rc=0; review_cause=""; review_refused=0
+  for m in $REVIEW_TEAM; do
+    if [ "$(cat "$dir/$m.refused" 2>/dev/null)" = 1 ]; then
+      review_refused=1; review_rc="$(cat "$dir/$m.rc" 2>/dev/null)"; review_cause="$(cat "$dir/$m.cause" 2>/dev/null)"
+    fi
+    _mrc="$(cat "$dir/$m.rc" 2>/dev/null || echo 1)"
+    if [ "$_mrc" != 0 ] && [ -z "$first_rc" ]; then first_rc="$_mrc"; first_cause="$(cat "$dir/$m.cause" 2>/dev/null)"; fi
+  done
+  if [ "$review_refused" = 1 ]; then rm -rf "$dir"; return 0; fi
+  merged="$(python3 "$BIN_DIR/lib/review-team-merge.py" "$dir" $REVIEW_TEAM)"; mrc=$?
+  [ -n "${IDIR_SCOPE:-}" ] && cp -f "$dir/summary.json" "$IDIR_SCOPE/review-team.json" 2>/dev/null
+  if [ "$mrc" = 0 ] && [ -n "$merged" ]; then
+    review="$merged"; review_rc=0
+    missing="$(jq -r '[.members[] | select(.state == null) | .role] | join(" ")' "$dir/summary.json" 2>/dev/null)"
+    log "review team ($(printf '%s' "$REVIEW_TEAM" | tr '\n' ' ')): $(jq -r '"\(.answered)/\(.of) answered — \(.state) \(.verdict)"' "$dir/summary.json" 2>/dev/null)${missing:+; did not answer: $missing}"
+    [ -n "$missing" ] && [ -n "${IDIR_SCOPE:-}" ] && journal_event "$IDIR_SCOPE" review-team-partial \
+      "Не всі рецензенти команди відповіли: $missing — вердикт тих, хто відповів" \
+      "$(jq -nc --arg m "$missing" '{source:"gate", missing:$m}')" 2>/dev/null || true
+  else
+    review=""; review_rc="${first_rc:-0}"; review_cause="$first_cause"
+    log "review team: no member answered (first exit ${first_rc:-0})"
+  fi
+  rm -rf "$dir" 2>/dev/null
+  return 0
+}
+
 # The CLI refused the call itself, so this is not a reviewer that is away.
 #
 # It used to be: no verdict meant "unreachable", which parked the run and recorded a pause on
@@ -1476,7 +1564,7 @@ fi
 if [ -n "${IDIR_SCOPE:-}" ]; then
   "$BIN_DIR/scope-gate.sh" "$cwd" "$IDIR_SCOPE" "$BASE_SHA" >/dev/null 2>&1 || true
 
-  if [ "$(runspec_mode "$IDIR_SCOPE")" != broad ]; then
+  if [ "$(runspec_mode "$IDIR_SCOPE")" != broad ] && [ "$PLAIN_REVIEW" = 0 ]; then
     # The scope gate quarantines in this folder only; work in a connected repository is still work.
     post="$(git -C "$cwd" diff "$BASE_SHA" --stat 2>/dev/null)$(worker_untracked "$cwd" "${IDIR_SCOPE:-}")$EXTRA_CHANGED"
     if [ -z "$post" ]; then
@@ -1498,6 +1586,27 @@ fi
 if [ -n "${IDIR_SCOPE:-}" ] && [ -n "$EXTRA_CHANGED" ]; then
   diff_summary="$diff_summary
 $(extra_repos_diffstat "$IDIR_SCOPE" 2>/dev/null || true)"
+fi
+# A folder with no git: the change, from the copy of the folder taken when the run began. The whole
+# patch is written beside the run and as much of it as fits is put in front of the reviewer, who
+# cannot ask git in that folder for it.
+if [ "$PLAIN_REVIEW" = 1 ]; then
+  _pr_patch="$(plain_shadow_patch "$IDIR_SCOPE" "$cwd" 2>/dev/null || true)"
+  _pr_max="${SUPERVISOR_PLAIN_PATCH_INLINE_BYTES:-60000}"; case "$_pr_max" in ''|*[!0-9]*) _pr_max=60000 ;; esac
+  _pr_size=0; [ -n "$_pr_patch" ] && _pr_size="$(wc -c < "$_pr_patch" | tr -d ' ')"
+  _pr_unread="$(plain_shadow_unread "$IDIR_SCOPE" "$cwd" 2>/dev/null | head -20)"
+  [ "$PLAIN_UNREAD" = 1 ] && _pr_unread="(the comparison with the copy failed: read the changed files in the folder itself)
+$_pr_unread"
+  _pr_cut=""; [ "$_pr_size" -gt "$_pr_max" ] && _pr_cut=" (first $_pr_max of $_pr_size bytes; the rest is in the file above)"
+  diff_summary="THIS FOLDER HAS NO GIT: git diff there shows nothing. The run's change is measured against a copy of
+the folder taken when the run began, kept outside it. The full patch: ${_pr_patch:-(could not be written)}
+$(plain_shadow_stat "$IDIR_SCOPE" "$cwd" 2>/dev/null)
+${_pr_unread:+Files too large to copy that appeared or changed (not in the patch; read them in the folder):
+$_pr_unread
+}--- the patch$_pr_cut ---
+$( [ -n "$_pr_patch" ] && head -c "$_pr_max" "$_pr_patch" )
+--- end of the patch ---
+$diff_summary"
 fi
 
 verify_json=""; verify_status="skipped"; verify_fail_logs=""
@@ -1780,7 +1889,16 @@ fi
 # that only Codex's parser made would let the same bytes through whenever Claude was reading.
 review_prompt_fit prompt persona PLAN_TEXT CONTRACT_TEXT CHALLENGES_TEXT CHALLENGE_BLOCK OWED_BLOCK FINDINGS_BLOCK \
   CHECKS_BLOCK last_msg recent_user_turns diff_summary verify_json verify_fail_logs
-review_call "$prompt"
+# A team, when one is set (SUPERVISOR_REVIEW_TEAM) and Codex is the reviewer; the Claude stand-in reads
+# alone, as it always has.
+REVIEW_TEAM=""
+[ "${REVIEWER:-codex}" = codex ] && REVIEW_TEAM="$(review_team_members)"
+if [ -n "$REVIEW_TEAM" ]; then
+  log "review by a team: $(printf '%s' "$REVIEW_TEAM" | tr '\n' ' ')"
+  review_team_call "$prompt"
+else
+  review_call "$prompt"
+fi
 [ "$review_refused" = 1 ] && review_refused_park
 
 # A call that failed has no verdict, whatever it managed to print on the way down.

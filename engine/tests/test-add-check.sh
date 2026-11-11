@@ -79,7 +79,7 @@ check "the output is kept"                        '[ -n "$(jq -r ".criteria[]|se
 echo
 echo "===== bounded ====="
 rm -f "$IDIR/checks.jsonl"
-for i in $(seq 1 12); do IDIR="$IDIR" bash "$ADD" "check $i" -- /usr/bin/true >/dev/null 2>&1; done
+for i in $(seq 1 12); do IDIR="$IDIR" bash "$ADD" "check $i" -- /usr/bin/true "$i" >/dev/null 2>&1; done
 check "no more than ten checks are accepted"      '[ "$(grep -c . "$IDIR/checks.jsonl")" -le 10 ]'
 
 echo
@@ -93,6 +93,78 @@ check "…carrying the new command"                  '[ "$(jq -r "select(.criter
 check "…and the others are untouched"              '[ "$(grep -c . "$IDIR/checks.jsonl")" = 10 ] && [ "$(jq -r "select(.criterion==\"check 7\")|.argv[0]" "$IDIR/checks.jsonl")" = /usr/bin/true ]'
 out="$(IDIR="$IDIR" bash "$ADD" "check 99" -- /usr/bin/true 2>&1)"; rc=$?
 check "a NEW claim at the cap is still refused"   '[ "$rc" != 0 ]'
+
+echo
+echo "===== the same command under another name replaces it; --remove and --list ====="
+# Tenders, 5 Nov: four copies of one command, each under a new name, and the eleventh claim had no room.
+rm -f "$IDIR/checks.jsonl"
+IDIR="$IDIR" bash "$ADD" "експорт проходить" -- bash scripts/export-tests.sh >/dev/null 2>&1
+out="$(IDIR="$IDIR" bash "$ADD" "експорт проходить повністю" -- bash scripts/export-tests.sh 2>&1)"
+check "the same command in the same folder replaces the earlier name" '[ "$(grep -c . "$IDIR/checks.jsonl")" = 1 ] && [ "$(jq -r .criterion "$IDIR/checks.jsonl")" = "експорт проходить повністю" ]'
+check "…and says which it replaced"                'printf %s "$out" | grep -q "замінив перевірку «експорт проходить»"'
+( mkdir -p "$PROJ/sub" && cd "$PROJ/sub" && IDIR="$IDIR" bash "$ADD" "те саме з іншої теки" -- bash scripts/export-tests.sh >/dev/null 2>&1 )
+check "the same command from another folder is another check" '[ "$(grep -c . "$IDIR/checks.jsonl")" = 2 ]'
+out="$(IDIR="$IDIR" bash "$ADD" --list 2>&1)"
+check "--list names them, with their commands"     'printf %s "$out" | grep -q "експорт проходить повністю" && printf %s "$out" | grep -q "export-tests.sh"'
+IDIR="$IDIR" bash "$ADD" --remove "те саме з іншої теки" >/dev/null 2>&1
+check "--remove takes one away"                    '[ "$(grep -c . "$IDIR/checks.jsonl")" = 1 ] && ! grep -q "з іншої теки" "$IDIR/checks.jsonl"'
+check "--remove of a name that is not there is refused" '! IDIR="$IDIR" bash "$ADD" --remove "немає такої" >/dev/null 2>&1'
+
+echo
+echo "===== a check's own time limit ====="
+# 3 Nov: the export suite took longer than the step limit, and a worker spent an hour splitting it in three.
+# (Its limit is then lowered to two seconds in the file, so the verifier's hold on it is seen quickly.)
+rm -f "$IDIR/checks.jsonl"
+IDIR="$IDIR" bash "$ADD" --timeout 10 "коротка межа" -- sleep 6 >/dev/null 2>&1
+check "--timeout is written with the check"        '[ "$(jq -r .timeout "$IDIR/checks.jsonl")" = 10 ]'
+check "fewer than ten seconds is refused"          '! IDIR="$IDIR" bash "$ADD" --timeout 3 "x" -- true >/dev/null 2>&1'
+check "a timeout that is not a number is refused"  '! IDIR="$IDIR" bash "$ADD" --timeout 3x "x" -- true >/dev/null 2>&1'
+out="$(SUPERVISOR_ADD_CHECK_TIMEOUT_MAX=100 IDIR="$IDIR" bash "$ADD" --timeout 5000 "довга" -- sleep 1 2>&1)"
+check "above the ceiling it is brought down to it, and said" '[ "$(jq -r "select(.criterion==\"довга\")|.timeout" "$IDIR/checks.jsonl")" = 100 ] && printf %s "$out" | grep -q "стелю"'
+jq -c 'if .criterion == "коротка межа" then .timeout = 2 else . end' "$IDIR/checks.jsonl" > "$IDIR/c.tmp" && mv "$IDIR/c.tmp" "$IDIR/checks.jsonl"
+SUPERVISOR_VERIFY_STEP_TIMEOUT=60 bash "$ROOT/bin/verify.sh" "$PROJ" add-check-timeout "$IDIR" "$(git -C "$PROJ" rev-parse HEAD)" >/dev/null 2>&1
+EVT="$IDIR/evidence/add-check-timeout/evidence.json"
+check "the verifier holds the check to its own limit" 'jq -e ".criteria[]|select(.criterion==\"коротка межа\")|.status == \"inconclusive\" and (.note|test(\"2s\"))" "$EVT" >/dev/null'
+check "and a check with a longer limit is given it"  'jq -e ".criteria[]|select(.criterion==\"довга\")|.status == \"pass\"" "$EVT" >/dev/null'
+
+echo
+echo "===== a new task sets the old checks aside — named in its brief, with the way back ====="
+rm -f "$IDIR/checks.jsonl" "$IDIR/checks-set-aside.json"; rm -rf "$IDIR/dispatches"; mkdir -p "$IDIR/dispatches"
+IDIR="$IDIR" bash "$ADD" "форма зберігається" -- true form >/dev/null 2>&1
+IDIR="$IDIR" bash "$ADD" "звіт будується" -- true report >/dev/null 2>&1
+mv "$IDIR/checks.jsonl" "$IDIR/dispatches/OLD.checks.jsonl"
+jq -nc --arg f "$IDIR/dispatches/OLD.checks.jsonl" '{dispatch_id:"NEW", file:$f}' > "$IDIR/checks-set-aside.json"
+printf '{"id":"NEW"}\n' > "$IDIR/dispatch.json"
+prompt="$(compose_task_prompt "$IDIR" "Продовжуй з формою")"
+check "the brief names the checks set aside"       'printf %s "$prompt" | grep -q "«форма зберігається», «звіт будується»"'
+check "…and how to bring them back"                'printf %s "$prompt" | grep -q -- "--restore-all"'
+printf '{"id":"LATER"}\n' > "$IDIR/dispatch.json"
+prompt="$(compose_task_prompt "$IDIR" "Інше")"
+check "a later task's brief does not repeat it"    '! printf %s "$prompt" | grep -q "відкладено"'
+out="$(IDIR="$IDIR" bash "$ADD" --list 2>&1)"
+check "--list shows what was set aside"            'printf %s "$out" | grep -q "Відкладені" && printf %s "$out" | grep -q "звіт будується"'
+IDIR="$IDIR" bash "$ADD" --restore "форма зберігається" >/dev/null 2>&1
+check "--restore brings one back"                  '[ "$(grep -c . "$IDIR/checks.jsonl")" = 1 ] && grep -q "форма зберігається" "$IDIR/checks.jsonl"'
+IDIR="$IDIR" bash "$ADD" --restore-all >/dev/null 2>&1
+check "--restore-all brings the rest, with no duplicate" '[ "$(grep -c . "$IDIR/checks.jsonl")" = 2 ]'
+rm -f "$IDIR/checks.jsonl" "$IDIR/checks-set-aside.json" "$IDIR/dispatch.json"; rm -rf "$IDIR/dispatches"
+
+echo
+echo "===== the checks outlive the run folder: a resumed conversation has them ====="
+rm -f "$IDIR/checks.jsonl"
+IDIR="$IDIR" bash "$ADD" "переживає новий сеанс" -- true session >/dev/null 2>&1
+checks_keep "$IDIR"
+SAVED="$(mktemp -d)"; mv "$IDIR" "$SAVED/old"; mkdir -p "$IDIR"
+checks_restore "$IDIR"
+check "a new run folder for the same folder gets them back" 'grep -q "переживає новий сеанс" "$IDIR/checks.jsonl"'
+rm -f "$IDIR/checks.jsonl"; checks_forget "$(basename "$IDIR")"
+! checks_restore "$IDIR" && ok "…and nothing after a fresh start forgot them" || no "a forgotten set came back"
+cp -R "$SAVED/old/." "$IDIR/" 2>/dev/null; rm -rf "$SAVED"
+for site in 'night-shift.sh' 'watchdog.sh'; do
+  grep -q "checks_keep" "$ROOT/bin/$site" && ok "kept before the folder goes: $site" || no "no checks_keep in $site"
+done
+grep -q "checks_keep" "$ROOT/hooks/safety-check.sh" && ok "kept before the folder goes: safety-check.sh" || no "no checks_keep in safety-check.sh"
+grep -q "checks_restore" "$ROOT/bin/night-shift.sh" && ok "restored by resume" || no "resume does not restore"
 
 echo
 echo "===== every run is told the channel exists, not just the visual ones ====="

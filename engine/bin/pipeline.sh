@@ -171,12 +171,32 @@ record_dispatch() {
   # `tests/check_form.py` for a dispatch that had been asked to delete the very site the form was
   # on — and overrode the reviewer's PASS with the file-not-found. A follow-up keeps its checks; a
   # new task starts with none, and the old ones stay on disk under the dispatch they belonged to.
-  if [ "${RELATION:-}" != continue ] && [ -s "$IDIR/checks.jsonl" ]; then
+  # Checks a resume brought back with the conversation (checks_restore) stay for its first message,
+  # even when the engine, with no task record to go on, takes that message for a new task: "go on"
+  # after a stop is the same work. A new task said outright still sets them aside.
+  _keep_restored=0
+  if [ -f "$IDIR/checks-restored" ]; then
+    rm -f "$IDIR/checks-restored" 2>/dev/null
+    if [ "${RELATION:-}" != continue ] && [ -s "$IDIR/checks.jsonl" ] && ! explicit_new_task "$MSG"; then
+      _keep_restored=1
+      plog "registered checks brought back by the resume kept for its first message"
+    fi
+  fi
+  if [ "${RELATION:-}" != continue ] && [ "$_keep_restored" = 0 ] && [ -s "$IDIR/checks.jsonl" ]; then
     _prev_did="$(jq -r '.id // empty' "$IDIR/dispatch.json" 2>/dev/null || true)"
     mkdir -p "$IDIR/dispatches" 2>/dev/null || true
     mv -f "$IDIR/checks.jsonl" "$IDIR/dispatches/${_prev_did:-previous}.checks.jsonl" 2>/dev/null \
       || rm -f "$IDIR/checks.jsonl" 2>/dev/null || true
     plog "registered checks of the previous task set aside (dispatches/${_prev_did:-previous}.checks.jsonl)"
+    # Said to the worker, by name, in this task's brief, with the way back: a task the engine took
+    # for new was sometimes the same work, and its checks vanished without a word (Tenders 5 and
+    # 6 Nov) — each cost a review round. Whether they apply is the worker's to judge.
+    if [ -s "$IDIR/dispatches/${_prev_did:-previous}.checks.jsonl" ]; then
+      jq -nc --arg d "$DISPATCH_ID" --arg f "$IDIR/dispatches/${_prev_did:-previous}.checks.jsonl" \
+         '{dispatch_id:$d, file:$f}' > "$IDIR/checks-set-aside.json" 2>/dev/null || true
+    fi
+  elif [ "${RELATION:-}" != continue ]; then
+    rm -f "$IDIR/checks-set-aside.json" 2>/dev/null || true
   fi
   # So does the plan of a long project kept with the run: a new request is not its next piece. (A
   # task a bridge named keeps its plan with the task record, and a new task is a new record.)

@@ -77,8 +77,9 @@ chmod +x "$FAKE/codex"
 # writes a file — the only way to prove the read-only claim is a check rather than a flag.
 cat > "$FAKE/claude" <<'EOF'
 #!/bin/bash
-cat >/dev/null
+cat > "${CLAUDE_PROMPT:-/dev/null}"
 : > "${CLAUDE_CALLED:-/dev/null}"
+echo call >> "${CLAUDE_COUNT:-/dev/null}"
 [ -n "${FAKE_CLAUDE_WRITES:-}" ] && echo "tampered" >> "${FAKE_CLAUDE_WRITES}"
 echo "STATE: COMPLETE"; echo "VERDICT: PASS"
 EOF
@@ -259,6 +260,18 @@ check "Claude did the reading"                    '[ -e "$CLAUDE_CALLED" ]'
 check "Codex was not called for it"               '[ ! -e "$CODEX_CALLED" ]'
 check "the work is accepted"                      '[ "$(cat "$IDIR/done" 2>/dev/null)" = passed ]'
 check "the record names who actually reviewed"    '[ "$(jq -r .reviewer "$(run_reports_dir "$(slug_for "$PROJ")")/review.json" 2>/dev/null)" = claude ]'
+
+echo "===== a review team set, the stand-in still reads alone ====="
+mkcase; codex_usage 432000; rungate s-team
+QID="$(jq -r .id "$IDIR/codex-decision.json")"
+answer "$IDIR" "$QID" claude
+codex_decision_settle "$IDIR" >/dev/null
+export CLAUDE_COUNT="$FAKE/claude-count" CLAUDE_PROMPT="$FAKE/claude-prompt"; rm -f "$CLAUDE_COUNT"
+SUPERVISOR_REVIEW_TEAM="contract security state" rungate s-team2
+check "one Claude reading, not one per member"    '[ "$(grep -c . "$CLAUDE_COUNT" 2>/dev/null)" = 1 ]'
+check "with no team text in it"                   '! grep -q "REVIEW TEAM" "$CLAUDE_PROMPT"'
+check "and Codex not called"                      '[ ! -e "$CODEX_CALLED" ]'
+unset CLAUDE_COUNT CLAUDE_PROMPT
 
 echo "===== a stand-in that writes is not a reviewer ====="
 mkcase; codex_usage 432000; rungate s-tamper

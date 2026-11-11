@@ -4,6 +4,550 @@
     "" : {
 
     },
+    "Checks in “%@” passed: %@." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверки в «%@» прошли: %@."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перевірки в «%@» пройшли: %@."
+          }
+        }
+      }
+    },
+    "Checks in “%@” failed: %@." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверки в «%@» не прошли: %@."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перевірки в «%@» не пройшли: %@."
+          }
+        }
+      }
+    },
+    "Checks in “%@” did not finish: %@." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверки в «%@» не завершились: %@."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перевірки в «%@» не завершилися: %@."
+          }
+        }
+      }
+    },
+    "Nothing in “%@” could be checked automatically." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В «%@» нечего проверить автоматически."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У «%@» нічого перевірити автоматично."
+          }
+        }
+      }
+    },
+    "this run no longer has a record of that folder" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "у этого прогона больше нет записи об этой папке"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "цей прогін більше не має запису про цю теку"
+          }
+        }
+      }
+    },
+    "the check left no result" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "проверка не оставила результата"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "перевірка не залишила результату"
+          }
+        }
+      }
+    },
+    "Could not check “%@”: %@." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не получилось проверить «%@»: %@."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не вдалося перевірити «%@»: %@."
+          }
+        }
+      }
+    },
+    "No checks ran: nothing changed in “%@”. The changes are in %@ and were not checked." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверки не запускались: в «%@» ничего не менялось. Изменения — в %@, их не проверяли."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перевірки не запускались: у «%@» нічого не змінювалось. Зміни — у %@, їх не перевіряли."
+          }
+        }
+      }
+    },
+    "The changes in %@ were not checked: the check after an answer runs only in “%@”." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Изменения в %@ не проверялись: проверка после ответа идёт только в «%@»."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зміни в %@ не перевірялись: перевірка після відповіді йде лише в «%@»."
+          }
+        }
+      }
+    },
+    "Checking “%@”…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверяю «%@»…"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перевіряю «%@»…"
+          }
+        }
+      }
+    },
+    "Open log" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть лог"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Відкрити лог"
+          }
+        }
+      }
+    },
+    "Check “%@”" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверить «%@»"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перевірити «%@»"
+          }
+        }
+      }
+    },
+    "Move the chat to “%@”" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перенести чат в «%@»"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перенести чат у «%@»"
+          }
+        }
+      }
+    },
+    "The next answer is then checked in that folder" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тогда следующий ответ будут проверять в этой папке"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тоді наступну відповідь перевірятимуть у цій теці"
+          }
+        }
+      }
+    },
+    "This chat is moving to another folder. Send the message again in a moment." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чат сейчас переезжает в другую папку. Отправь сообщение ещё раз через пару секунд."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чат саме переїжджає в іншу теку. Надішли повідомлення ще раз за кілька секунд."
+          }
+        }
+      }
+    },
+    "This chat was moved from the folder %@ to %@, so you are starting a new session here." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот чат перенесли из папки %@ в %@, поэтому здесь у тебя новая сессия."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Цей чат перенесли з теки %@ у %@, тож тут у тебе нова сесія."
+          }
+        }
+      }
+    },
+    "The last messages of this chat, so you know what we were working on:" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Последние сообщения этого чата, чтобы ты знал, над чем мы работали:"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Останні повідомлення цього чату, щоб ти знав, над чим ми працювали:"
+          }
+        }
+      }
+    },
+    "Me" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Я"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Я"
+          }
+        }
+      }
+    },
+    "My new message:" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Моё новое сообщение:"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Моє нове повідомлення:"
+          }
+        }
+      }
+    },
+    "That folder is no longer part of this product." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этой папки больше нет в продукте."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Цієї теки більше немає в продукті."
+          }
+        }
+      }
+    },
+    "Now working in %@. The next message starts a new session there and passes it the last messages of this chat." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Теперь чат работает в %@. Следующее сообщение начнёт там новую сессию и передаст ей последние сообщения чата."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тепер чат працює в %@. Наступне повідомлення почне там нову сесію й передасть їй останні повідомлення чату."
+          }
+        }
+      }
+    },
+    "The agent is still working in this chat. Change the folder once it has finished." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агент ещё работает в этом чате. Смени папку, когда он закончит."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агент ще працює в цьому чаті. Зміни теку, коли він закінчить."
+          }
+        }
+      }
+    },
+    "This chat works in a separate copy of its folder, so its folder cannot be changed." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот чат работает в отдельной копии папки, поэтому сменить папку нельзя."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Цей чат працює в окремій копії теки, тож змінити теку не можна."
+          }
+        }
+      }
+    },
+    "An automation's run works in the automation's folder." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запуск автоматизации работает в папке автоматизации."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запуск автоматизації працює в теці автоматизації."
+          }
+        }
+      }
+    },
+    "Move this chat to “%@”?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перенести чат в «%@»?"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перенести чат у «%@»?"
+          }
+        }
+      }
+    },
+    "Move" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перенести"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перенести"
+          }
+        }
+      }
+    },
+    "The conversation stays here. The agent starts a new session in “%@” and gets the last messages of this chat. Its session in “%@” ends, along with anything it left running there." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переписка останется здесь. Агент начнёт новую сессию в «%@» и получит последние сообщения этого чата. Сессия в «%@» закончится вместе со всем, что она оставила запущенным."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Листування залишиться тут. Агент почне нову сесію в «%@» і отримає останні повідомлення цього чату. Сесія в «%@» завершиться разом з усім, що вона лишила запущеним."
+          }
+        }
+      }
+    },
+    "You can change the folder once the agent has finished" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Папку можно сменить, когда агент закончит"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Теку можна змінити, коли агент закінчить"
+          }
+        }
+      }
+    },
+    "Folders with a lock ask before editing: the agent reads them, but a chat cannot work in them" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Папки с замком — «спросить перед изменением»: агент их читает, но чат не может в них работать"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Теки із замком — «спитати перед зміною»: агент їх читає, але чат не може в них працювати"
+          }
+        }
+      }
+    },
+    "This folder is marked “ask before editing”, so a chat cannot work in it. The agent can read it from any folder of the product." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эта папка отмечена «спросить перед изменением», поэтому чат не может в ней работать. Агент может читать её из любой папки продукта."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ця тека позначена «спитати перед зміною», тому чат не може в ній працювати. Агент може читати її з будь-якої теки продукту."
+          }
+        }
+      }
+    },
+    "Choose the folder this chat works in, or a separate copy of it. The check after each answer runs in that folder." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбери папку, в которой работает этот чат, или отдельную копию. Проверка после каждого ответа идёт в этой папке."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обери теку, у якій працює цей чат, або окрему копію. Перевірка після кожної відповіді йде в цій теці."
+          }
+        }
+      }
+    },
+    "Choose the folder this chat works in. The check after each answer runs in that folder." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбери папку, в которой работает этот чат. Проверка после каждого ответа идёт в этой папке."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обери теку, у якій працює цей чат. Перевірка після кожної відповіді йде в цій теці."
+          }
+        }
+      }
+    },
     "%@ is not installed on this Mac, so this was not sent. Bulava needs it to run a chat." : {
       "localizations" : {
         "ru" : {
@@ -34553,6 +35097,74 @@
         }
       }
     },
+    "A newer run of «%@» needed the folder, so this run's session was let go. Your question here still waits: answer it once that run has finished, and the conversation goes on where it stopped." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Более новому запуску «%@» понадобилась папка, поэтому сессию этого запуска отпустили. Твой вопрос здесь по-прежнему ждёт: ответь, когда тот запуск закончит, и разговор продолжится с того же места."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новішому запуску «%@» знадобилася тека, тому сесію цього запуску відпустили. Твоє питання тут і далі чекає: відповідай, коли той запуск закінчить, і розмова продовжиться з того ж місця."
+          }
+        }
+      }
+    },
+    "It ended on another commit than its branch (%@), with nothing of its own there; the copy was put back on its branch and read from it." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запуск закончился на другом коммите, не на своей ветке (%@), и своего там ничего не оставил. Копию вернули на её ветку и прочитали оттуда."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запуск закінчився на іншому коміті, не на своїй гілці (%@), і свого там нічого не лишив. Копію повернули на її гілку й прочитали звідти."
+          }
+        }
+      }
+    },
+    "It left its branch %@: HEAD is at %@, with %lld commits the branch does not have and %lld files not committed. Nothing was handed over or thrown away — look at the copy in %@." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запуск ушёл со своей ветки %1$@: HEAD на %2$@, там %3$lld коммитов, которых нет в ветке, и %4$lld незакоммиченных файлов. Ничего не передано и не выброшено — посмотри копию в %5$@."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запуск пішов зі своєї гілки %1$@: HEAD на %2$@, там %3$lld комітів, яких немає в гілці, і %4$lld незакомічених файлів. Нічого не передано й не викинуто — подивись копію в %5$@."
+          }
+        }
+      }
+    },
+    "A newer run of «%@» is working in its folder now. Send this again once it has finished." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Более новый запуск автоматизации «%@» сейчас работает в её папке. Отправь это ещё раз, когда он закончит."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новіший запуск автоматизації «%@» зараз працює в її теці. Надішли це ще раз, коли він закінчить."
+          }
+        }
+      }
+    },
     "The previous run's changes are still waiting for you — merge or discard them first, so the next run does not pile work on top of work nobody has looked at." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -41099,6 +41711,488 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Зменшити"
+          }
+        }
+      }
+    },
+    "Jev: task continuity" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jev: продолжение задачи"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jev: продовження задачі"
+          }
+        }
+      }
+    },
+    "Decide with Jev whether a message continues the task" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пусть Jev решает, продолжает ли сообщение задачу"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нехай Jev вирішує, чи продовжує повідомлення задачу"
+          }
+        }
+      }
+    },
+    "After a run was stopped or sat idle, its next message used to be prepared as a new task: two positions, an alignment, research. With Jev on, the task is kept and Jev decides in under a second whether the message continues it. When Jev is unsure or cannot be reached, the engine decides as before." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Раньше, если прогон остановили или он простоял, следующее сообщение готовилось как новая задача: две позиции, сверка, ресерч. С Jev задача сохраняется, и Jev меньше чем за секунду решает, продолжает ли её сообщение. Если Jev не уверен или недоступен, движок решает как раньше."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Раніше, якщо прогін зупинили або він простояв, наступне повідомлення готувалося як нова задача: дві позиції, звірка, ресерч. З Jev задача зберігається, і Jev менш ніж за секунду вирішує, чи продовжує її повідомлення. Якщо Jev не впевнений або недоступний, движок вирішує як раніше."
+          }
+        }
+      }
+    },
+    "The message, the task's goal and Claude's last reply go to TypeSafe in the US, on your own TypeSafe account: well under a cent a decision. A key is made at console.typesafe.ai." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщение, цель задачи и последний ответ Claude уходят в TypeSafe в США, на твой собственный аккаунт TypeSafe: решение стоит намного меньше цента. Ключ создаётся на console.typesafe.ai."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Повідомлення, мета задачі й остання відповідь Claude йдуть у TypeSafe у США, на твій власний акаунт TypeSafe: рішення коштує набагато менше за цент. Ключ створюється на console.typesafe.ai."
+          }
+        }
+      }
+    },
+    "Check" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверить"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перевірити"
+          }
+        }
+      }
+    },
+    "Replace key" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заменить ключ"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Замінити ключ"
+          }
+        }
+      }
+    },
+    "Remove key" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удалить ключ"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Видалити ключ"
+          }
+        }
+      }
+    },
+    "Reading the engine's setting…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Читаю настройку движка…"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Читаю налаштування движка…"
+          }
+        }
+      }
+    },
+    "This engine has no Jev yet. It comes with the next engine update." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В этом движке ещё нет Jev. Он придёт со следующим обновлением движка."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У цьому движку ще немає Jev. Він прийде з наступним оновленням движка."
+          }
+        }
+      }
+    },
+    "Waiting for a key. Nothing is sent until one is stored." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Жду ключ. Пока его нет, ничего не отправляется."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чекаю ключ. Поки його немає, нічого не надсилається."
+          }
+        }
+      }
+    },
+    "On. %lld decisions so far." : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "On. %lld decision so far."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "On. %lld decisions so far."
+                }
+              }
+            }
+          }
+        },
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Включено. Пока %lld решение."
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Включено. Пока %lld решения."
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Включено. Пока %lld решений."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Включено. Пока %lld решения."
+                }
+              }
+            }
+          }
+        },
+        "uk" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Увімкнено. Поки %lld рішення."
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Увімкнено. Поки %lld рішення."
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Увімкнено. Поки %lld рішень."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Увімкнено. Поки %lld рішення."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "On. The first decision comes with the next message after a restart or a long pause." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включено. Первое решение будет со следующим сообщением после перезапуска или долгой паузы."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Увімкнено. Перше рішення буде з наступним повідомленням після перезапуску чи довгої паузи."
+          }
+        }
+      }
+    },
+    "On, but there is no key: nothing is sent, and the engine decides as before." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включено, но ключа нет: ничего не отправляется, движок решает как раньше."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Увімкнено, але ключа немає: нічого не надсилається, движок вирішує як раніше."
+          }
+        }
+      }
+    },
+    "Watching only: Jev is asked and its answer written down, the engine decides as before." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Только наблюдение: Jev спрашивают и записывают ответ, а решает движок, как раньше."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Лише спостереження: Jev запитують і записують відповідь, а вирішує движок, як раніше."
+          }
+        }
+      }
+    },
+    "Off. The engine decides as it always has." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выключено. Движок решает как всегда."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вимкнено. Движок вирішує як завжди."
+          }
+        }
+      }
+    },
+    "TypeSafe API key" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API-ключ TypeSafe"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API-ключ TypeSafe"
+          }
+        }
+      }
+    },
+    "Save key" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранить ключ"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зберегти ключ"
+          }
+        }
+      }
+    },
+    "«the ticket was updated, check it» reads as the same task" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«тикет обновили, проверь» читается как та же задача"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«тікет оновили, перевір» читається як та сама задача"
+          }
+        }
+      }
+    },
+    "«the ticket was updated, check it» does not read as the same task" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«тикет обновили, проверь» не читается как та же задача"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«тікет оновили, перевір» не читається як та сама задача"
+          }
+        }
+      }
+    },
+    "Jev answered in %1$@ s (input tokens: %2$@): %3$@." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jev ответил за %1$@ с (входных токенов: %2$@): %3$@."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jev відповів за %1$@ с (вхідних токенів: %2$@): %3$@."
+          }
+        }
+      }
+    },
+    "The check failed: %@." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверка не прошла: %@."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перевірка не пройшла: %@."
+          }
+        }
+      }
+    },
+    "no answer from the engine" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "движок не ответил"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "движок не відповів"
+          }
+        }
+      }
+    },
+    "This engine has no Jev yet." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В этом движке ещё нет Jev."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У цьому движку ще немає Jev."
+          }
+        }
+      }
+    },
+    "Paste the key first." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сначала вставь ключ."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Спершу встав ключ."
+          }
+        }
+      }
+    },
+    "That does not look like a TypeSafe API key." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Это не похоже на API-ключ TypeSafe."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Це не схоже на API-ключ TypeSafe."
+          }
+        }
+      }
+    },
+    "The Keychain did not take the key." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keychain не принял ключ."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keychain не прийняв ключ."
           }
         }
       }

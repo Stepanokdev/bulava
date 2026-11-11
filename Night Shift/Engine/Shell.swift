@@ -152,6 +152,7 @@ private nonisolated final class ProcessRunner: @unchecked Sendable {
     func start(script: String, args: [String], cwd: URL?, path: String,
                extraEnv: [String: String], timeout: TimeInterval,
                idle: TimeInterval? = nil,
+               stdin: Data? = nil,
                onChunk: (@Sendable (String) -> Void)? = nil) {
         idleBudget = idle
         self.onChunk = onChunk
@@ -166,6 +167,11 @@ private nonisolated final class ProcessRunner: @unchecked Sendable {
         process.environment = env
         process.standardOutput = outPipe
         process.standardError = errPipe
+        // Something only the started process may read — a secret it is handed — goes through a
+        // pipe, never the environment: everything a script starts inherits its environment, and
+        // a script starts something (dirname, readlink) before it could unset a variable.
+        let inPipe: Pipe? = stdin == nil ? nil : Pipe()
+        if let inPipe { process.standardInput = inPipe }
 
         let collector = self.collector
         let readLock = self.readLock
@@ -202,6 +208,10 @@ private nonisolated final class ProcessRunner: @unchecked Sendable {
 
         do {
             try process.run()
+            if let inPipe, let stdin {
+                inPipe.fileHandleForWriting.write(stdin)
+                try? inPipe.fileHandleForWriting.close()
+            }
         } catch {
             cancelTimeout()
             emit(CommandResult(stdout: "", stderr: "failed to launch: \(error.localizedDescription)",
@@ -272,6 +282,7 @@ enum Shell {
                     timeout: TimeInterval = 60,
                     idle: TimeInterval? = nil,
                     isolatingProcessTree: Bool = false,
+                    stdin: Data? = nil,
                     onChunk: (@Sendable (String) -> Void)? = nil) async -> CommandResult {
         let path = await ShellEnvironment.shared.path()
         return await withCheckedContinuation { (cont: CheckedContinuation<CommandResult, Never>) in
@@ -279,7 +290,7 @@ enum Shell {
             let launchedScript = isolatingProcessTree ? isolatedProcessTreeWrapper : script
             let launchedArgs = isolatingProcessTree ? [script] + args : args
             runner.start(script: launchedScript, args: launchedArgs, cwd: cwd, path: path,
-                         extraEnv: extraEnv, timeout: timeout, idle: idle, onChunk: onChunk)
+                         extraEnv: extraEnv, timeout: timeout, idle: idle, stdin: stdin, onChunk: onChunk)
         }
     }
 }

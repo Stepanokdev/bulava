@@ -109,3 +109,5 @@ id_ed25519*
 .vscode/
 .idea/
 *.log
+# Experiment results, rendered reports and archives (PDF, zip, tar.gz) — local, not source.
+/output/

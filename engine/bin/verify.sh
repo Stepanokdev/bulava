@@ -78,14 +78,59 @@ run_step() {  # $1 criterion  $2 timeout ; then the command + args
   add_criterion "$crit" "$*" "$ec" "$log" "$status" "$note"
 }
 
+NOBASE=0   # a run's instance with no base commit: suites run, a full-tree build does not (see below)
 should_build() {  # $1 = ERE of buildable paths
   local re="$1" files
+  [ "$NOBASE" = 1 ] && return 1
   [ -n "$BASE_SHA" ] && git -C "$PROJ" cat-file -e "$BASE_SHA" 2>/dev/null || return 0
   files="$(git -C "$PROJ" diff "$BASE_SHA" --name-only 2>/dev/null; worker_untracked "$PROJ" "$IDIR")"
   printf '%s\n' "$files" | grep -qiE "$re"
 }
 skip_build() {  # record a skipped build step (neutral, never blocks)
-  add_criterion "$1" "$2" 0 "" skipped "no buildable change since base"
+  if [ "$NOBASE" = 1 ]; then
+    add_criterion "$1" "$2" 0 "" skipped "no base commit for this run — a full-tree build is refused"
+  else
+    add_criterion "$1" "$2" 0 "" skipped "no buildable change since base"
+  fi
+}
+
+# Whether this folder holds nothing a test suite could fail on: no change at all since the run
+# began, or only prose.
+#
+# The review reaches the verifier only when something changed — here, or in one of the product's
+# other repositories. A primary folder with no change of its own therefore means the work was done
+# next door, and the heavy root `npm test` that ran here anyway (a big monorepo's whole suite, after
+# a fix in a sibling) measured a folder nobody touched and filed the result as a pass. A README edit
+# is the same: no suite reads it.
+#
+# Deliberately narrow. Prose is .md/.rst/.adoc and nothing else — a `.yaml`, a `.txt` (requirements
+# files), an `.env.example` all keep the suite. Renames are listed as a deletion and an addition, so
+# code moved under a `.md` name still counts as code removed. No known base commit: nothing can be
+# said, so the suite runs. A project's own `./verify.sh` is not governed by this at all — it may be
+# what checks repositories nested inside a folder whose own git sees nothing.
+UNTESTED=0; UNTESTED_NOTE=""
+_x_covered=""   # the other repositories this pass verified (filled where they are, below)
+nothing_testable_changed() {
+  [ -n "$BASE_SHA" ] && git -C "$PROJ" cat-file -e "$BASE_SHA" 2>/dev/null || return 1
+  local tracked files elsewhere
+  tracked="$(git -C "$PROJ" diff --no-renames --name-only "$BASE_SHA" 2>/dev/null)" || return 1
+  files="$(printf '%s\n%s\n' "$tracked" "$(worker_untracked "$PROJ" "$IDIR")" | grep .)"
+  if [ -n "$files" ] && printf '%s\n' "$files" | grep -qviE '\.(md|markdown|rst|adoc)$'; then
+    return 1
+  fi
+  if [ -z "$files" ]; then
+    UNTESTED_NOTE="nothing in this folder changed since the run began, so its suite was not run"
+  else
+    UNTESTED_NOTE="only documentation changed in this folder since the run began, so its suite was not run"
+  fi
+  elsewhere="$( { [ -d "$IDIR" ] && extra_repos_changed "$IDIR"; } 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')"
+  # Where the change is, not whether it was checked: that is decided further down, where the other
+  # repositories are verified in this same pass (`unverified_elsewhere` says which were not).
+  [ -n "$elsewhere" ] && UNTESTED_NOTE="$UNTESTED_NOTE; the change is in: $elsewhere"
+  return 0
+}
+skip_suite() {  # $1 criterion  $2 command — a suite this run gave no reason to run
+  add_criterion "$1" "$2" 0 "" skipped "$UNTESTED_NOTE"
 }
 has_npm_script(){ jq -e --arg s "$1" '.scripts[$s] // empty' "$PROJ/package.json" >/dev/null 2>&1; }
 
@@ -118,19 +163,40 @@ if [ "$VPROFILE" = none ]; then
   add_criterion "automated verification" "(profile=none)" 0 "" skipped "verification_profile=none (docs/non-code task)"
 fi
 
+# A run's instance with no base commit: nobody can say what changed. The unbounded full-tree build
+# is still refused (an hour of xcodebuild for a run that may have touched one file), and that is said
+# as inconclusive, so the evidence never reads as a pass. But the suites run: skipping them because
+# "nothing changed" needs a base to say so, and with none the honest answer is to look.
 if [ "$VPROFILE" != none ] && [ -d "$IDIR" ] && [ -z "$BASE_SHA" ]; then
-  add_criterion "automated verification" "(no base_sha)" 0 "" inconclusive "instance run without a base SHA — refusing an unbounded full-tree build"
-  SKIP_STACKS=1
+  add_criterion "automated verification" "(no base_sha)" 0 "" inconclusive "instance run without a base SHA — refusing an unbounded full-tree build; test suites still run"
+  NOBASE=1
 fi
 
 if [ "$VPROFILE" != none ] && [ -z "${SKIP_STACKS:-}" ]; then
 
+UNTESTED=0; nothing_testable_changed && UNTESTED=1
+
 if echo " $STACKS " | grep -q ' ios-native '; then
   ran_any=1
-  if ! should_build '\.swift$|\.xcodeproj|\.xcworkspace|Package\.swift|\.plist$|\.xcassets'; then
+  # Whether to build and whether to test are two questions.
+  # - The separate build runs when a file the build itself reads changed (and never with no base:
+  #   a full-tree build for a run nobody can say anything about is refused).
+  # - The tests run whenever anything but prose changed, the same rule as every other stack. A test
+  #   reads more than the build list — fixtures, a .json or .yaml it loads, the strings catalogue,
+  #   scripts bundled into the app — and `xcodebuild test` builds what it tests anyway. Only a folder
+  #   with no change, or only prose, skips them (`nothing_testable_changed`).
+  native_build=0; native_test=0
+  if [ "$NOBASE" != 1 ] && should_build '\.swift$|\.xcodeproj|\.xcworkspace|Package\.swift|\.plist$|\.xcassets'; then
+    native_build=1
+  fi
+  [ "$UNTESTED" != 1 ] && native_test=1
+  [ "$native_build" = 1 ] && native_test=1
+  if [ "$native_build" = 0 ] && [ "$native_test" = 0 ]; then
     skip_build "app builds" "xcodebuild build"
+    skip_suite "unit tests pass" "xcodebuild test"
   elif ! command -v xcodebuild >/dev/null 2>&1; then
     add_criterion "app builds" "xcodebuild build" 127 "" inconclusive "tool not found: xcodebuild"
+    [ "$native_build" = 0 ] && add_criterion "unit tests pass" "xcodebuild test" 127 "" inconclusive "tool not found: xcodebuild"
   else
     scheme="$(cd "$PROJ" && xcodebuild -list -json 2>/dev/null | jq -r '(.project // .workspace) as $c | (($c.schemes) // []) as $all | (($all | map(select(. == ($c.name // ""))) | first) // ($all | map(select(endswith("-Package") | not)) | first) // ($all | first) // empty)' 2>/dev/null)"
     if [ -n "$scheme" ]; then
@@ -146,8 +212,12 @@ if echo " $STACKS " | grep -q ' ios-native '; then
       # than the sources. Without it a shell suite comparing app-against-checkout reads whatever
       # older build is lying around and reports a mismatch this run did not cause.
       export BULAVA_APP="$EVIDENCE_DIR/DerivedData/Build/Products/Debug/Bulava.app"
-      run_step "app builds ($dest)" "$STEP_TO" xcodebuild build -scheme "$scheme" \
-        -destination "$dest" -derivedDataPath "$EVIDENCE_DIR/DerivedData" CODE_SIGNING_ALLOWED=NO
+      if [ "$native_build" = 0 ]; then
+        skip_build "app builds ($dest)" "xcodebuild build -scheme $scheme"
+      else
+        run_step "app builds ($dest)" "$STEP_TO" xcodebuild build -scheme "$scheme" \
+          -destination "$dest" -derivedDataPath "$EVIDENCE_DIR/DerivedData" CODE_SIGNING_ALLOWED=NO
+      fi
       has_tests="$(cd "$PROJ" && xcodebuild -list -json 2>/dev/null | jq -r '[((.project.targets // .workspace.targets) // [])[] | select(test("(?i)tests?$"))] | length' 2>/dev/null)"
       if [ "${has_tests:-0}" -gt 0 ] && [ "$dest" = 'platform=macOS' ]; then
         run_step "unit tests pass" "$STEP_TO" xcodebuild test -scheme "$scheme" \
@@ -191,8 +261,13 @@ EOF_PKGS
     fi
   else
     skip_build "web build succeeds" "$PM run build"
-    has_npm_script test && run_step "tests pass" "$STEP_TO" $PM run test
-    has_npm_script lint && run_step "lint clean" "$STEP_TO" $PM run lint
+    if [ "$UNTESTED" = 1 ]; then
+      has_npm_script test && skip_suite "tests pass" "$PM run test"
+      has_npm_script lint && skip_suite "lint clean" "$PM run lint"
+    else
+      has_npm_script test && run_step "tests pass" "$STEP_TO" $PM run test
+      has_npm_script lint && run_step "lint clean" "$STEP_TO" $PM run lint
+    fi
   fi
 fi
 
@@ -200,18 +275,24 @@ if echo " $STACKS " | grep -q ' backend-go '; then
   ran_any=1
   if should_build '\.go$|go\.mod|go\.sum'; then run_step "go builds" "$STEP_TO" go build ./...
   else skip_build "go builds" "go build ./..."; fi
-  run_step "go tests pass" "$STEP_TO" go test ./...
+  if [ "$UNTESTED" = 1 ]; then skip_suite "go tests pass" "go test ./..."
+  else run_step "go tests pass" "$STEP_TO" go test ./...; fi
 fi
 
 if echo " $STACKS " | grep -q ' backend-python '; then
   ran_any=1
   # The project's own files only — never its .venv (lib/py-compile-project.py says why).
-  if [ "$(python3 "$BIN_DIR/lib/py-compile-project.py" "$PROJ" --count 2>/dev/null || echo 0)" -gt 0 ]; then
-    run_step "python compiles" "$STEP_TO" python3 "$BIN_DIR/lib/py-compile-project.py" "$PROJ"
+  if [ "$UNTESTED" = 1 ]; then
+    skip_suite "python compiles" "python3 lib/py-compile-project.py"
+    command -v pytest >/dev/null 2>&1 && skip_suite "pytest passes" "pytest -q"
   else
-    add_criterion "python compiles" "python3 lib/py-compile-project.py" 0 "" skipped "no project Python files"
+    if [ "$(python3 "$BIN_DIR/lib/py-compile-project.py" "$PROJ" --count 2>/dev/null || echo 0)" -gt 0 ]; then
+      run_step "python compiles" "$STEP_TO" python3 "$BIN_DIR/lib/py-compile-project.py" "$PROJ"
+    else
+      add_criterion "python compiles" "python3 lib/py-compile-project.py" 0 "" skipped "no project Python files"
+    fi
+    command -v pytest >/dev/null 2>&1 && run_step "pytest passes" "$STEP_TO" pytest -q
   fi
-  command -v pytest >/dev/null 2>&1 && run_step "pytest passes" "$STEP_TO" pytest -q
 fi
 
 # ------------------------------------------------------------------------- the shell suites
@@ -431,21 +512,35 @@ done
 # services) would only add a failure that is the machine's, not the work's. And an operator who
 # verifies everything through registered checks turns it off: SUPERVISOR_EXTRA_REPO_AUTOVERIFY=0.
 extra_ran=0
+check_line_about() {   # $1=one line of checks.jsonl  $2=repository → 0 when that check is about it
+  local line="$1" d="$2" cmd
+  printf '%s' "$line" | jq -e --arg d "$d" \
+    '((.cwd // "") == $d) or ((.cwd // "") | startswith($d + "/"))' >/dev/null 2>&1 && return 0
+  # The repository's path in the command, ending where a path ends — so …/omnis does not claim a
+  # command that only names …/omnis-oex-plugin.
+  cmd="$(printf '%s' "$line" | jq -r '(.argv // []) | map(tostring) | join(" ")' 2>/dev/null) "
+  case "$cmd" in
+    *"$d/"*|*"$d "*|*"$d\""*|*"$d'"*|*"$d;"*|*"$d&"*|*"$d|"*|*"$d)"*) return 0 ;;
+  esac
+  return 1
+}
 extra_checked_by_worker() {   # $1=repository → 0 when a registered check is about it
   local d="$1" line
   [ -s "$IDIR/checks.jsonl" ] || return 1
-  jq -e --arg d "$d" 'select(((.cwd // "") == $d) or ((.cwd // "") | startswith($d + "/")))' \
-     "$IDIR/checks.jsonl" >/dev/null 2>&1 && return 0
-  # The repository's path in the command, ending where a path ends — so …/omnis does not claim a
-  # command that only names …/omnis-oex-plugin.
-  while IFS= read -r line; do
-    line="$line "
-    case "$line" in
-      *"$d/"*|*"$d "*|*"$d\""*|*"$d'"*|*"$d;"*|*"$d&"*|*"$d|"*|*"$d)"*) return 0 ;;
-    esac
-  done < <(jq -r '(.argv // []) | map(tostring) | join(" ")' "$IDIR/checks.jsonl" 2>/dev/null)
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue
+    check_line_about "$line" "$d" && return 0
+  done < "$IDIR/checks.jsonl"
   return 1
 }
+# The repositories this pass did verify go into `_x_covered`, one per line — so the evidence does not
+# then name them as unchecked. A repository counts when a step really ran in it to a verdict, pass or
+# fail. A step that ran out of budget, timed out, or found its tool missing said nothing about the
+# repository, and it stays unchecked. A repository left to the worker's registered checks waits in
+# `_x_by_checks` until those checks have run (below): it counts only when one of them about it
+# reached a verdict — registering a check is not running it.
+_x_by_checks=""
+last_criterion_status() { printf '[%s]' "$CRIT_JSON" | jq -r '.[-1].status // ""' 2>/dev/null; }
 if [ -n "$IDIR" ] && [ -s "$IDIR/extra-repos" ] && [ "${SUPERVISOR_EXTRA_REPO_AUTOVERIFY:-1}" = 1 ]; then
   while IFS=$'\037' read -r _xd _xbase _xdig _xdirty _xacc; do
     [ -n "$_xd" ] && [ -d "$_xd" ] || continue
@@ -453,10 +548,10 @@ if [ -n "$IDIR" ] && [ -s "$IDIR/extra-repos" ] && [ "${SUPERVISOR_EXTRA_REPO_AU
     [ "$_xhead" != "${_xacc:-$_xbase}" ] || [ -n "$(git -C "$_xd" status --porcelain 2>/dev/null | head -1)" ] || continue
     _xn="$(basename "$_xd")"
     if extra_checked_by_worker "$_xd"; then
-      add_criterion "$_xn: own detection" "(skipped)" 0 "" skipped "verified by the checks the worker registered for it"
-      extra_ran=1; continue
+      add_criterion "$_xn: own detection" "(skipped)" 0 "" skipped "left to the checks the worker registered for it — their results are their own criteria"
+      extra_ran=1; _x_by_checks="$_x_by_checks$_xd"$'\n'; continue
     fi
-    STEP_DIR="$_xd"
+    STEP_DIR="$_xd"; _x_step=1
     if [ -x "$_xd/verify.sh" ] && [ -f "$_xd/verify.sh" ] && [ "${SUPERVISOR_PROJECT_VERIFY:-1}" = 1 ]; then
       run_step "$_xn: verify.sh" "$STEP_TO" env ./verify.sh; extra_ran=1
     elif [ -f "$_xd/Makefile" ] && grep -qE '^verify:' "$_xd/Makefile"; then
@@ -468,8 +563,13 @@ if [ -n "$IDIR" ] && [ -s "$IDIR/extra-repos" ] && [ "${SUPERVISOR_EXTRA_REPO_AU
     elif [ -f "$_xd/package.json" ] && jq -e '.scripts.test // empty' "$_xd/package.json" >/dev/null 2>&1 \
          && command -v npm >/dev/null 2>&1 && [ -d "$_xd/node_modules" ]; then
       run_step "$_xn: npm test" "$STEP_TO" npm test --silent; extra_ran=1
+    else
+      _x_step=0
     fi
     unset STEP_DIR
+    if [ "$_x_step" = 1 ]; then
+      case "$(last_criterion_status)" in pass|fail) _x_covered="$_x_covered$_xd"$'\n' ;; esac
+    fi
   done < "$IDIR/extra-repos"
 fi
 
@@ -521,16 +621,64 @@ if [ -f "$CHECKS_FILE" ]; then
     while IFS= read -r -d '' _a; do _argv+=("$_a"); done < <(
       printf '%s' "$_line" | jq -j '.argv[]? | . + "\u0000"' 2>/dev/null)
     [ "${#_argv[@]}" -gt 0 ] || continue
-    run_step "$_crit" "$STEP_TO" "${_argv[@]}"
+    # Its own limit when the worker set one (add-check --timeout), up to the ceiling; else the step's.
+    # A suite of an hour was split in three by hand to fit the step limit (3 Nov) — a run's whole
+    # budget (TOTAL_TO) still bounds them all.
+    _to="$(printf '%s' "$_line" | jq -r '.timeout // empty' 2>/dev/null)"
+    _to_max="${SUPERVISOR_ADD_CHECK_TIMEOUT_MAX:-7200}"; case "$_to_max" in ''|*[!0-9]*) _to_max=7200 ;; esac
+    case "$_to" in ''|*[!0-9]*) _to="$STEP_TO" ;; esac
+    [ "$_to" -gt "$_to_max" ] && _to="$_to_max"
+    run_step "$_crit" "$_to" "${_argv[@]}"
+    # A repository left to the worker's checks is verified once one about it reached a verdict.
+    if [ -n "$_x_by_checks" ]; then
+      case "$(last_criterion_status)" in
+        pass|fail)
+          while IFS= read -r _xd; do
+            [ -n "$_xd" ] || continue
+            check_line_about "$_line" "$_xd" && _x_covered="$_x_covered$_xd"$'\n'
+          done <<EOF_BYCHECKS
+$_x_by_checks
+EOF_BYCHECKS
+          ;;
+      esac
+    fi
   done
 fi
+
+# The product's other repositories this run changed and this pass did not verify — those the
+# block above ran something in are not among them. Named here, as data, so the app can say under the
+# answer that they went unchecked and offer to check them (`night-shift verify-elsewhere`), and so can
+# the reviewer reading this file.
+#
+# Each with the digest of its tree as it is now. The changes are counted from the start of the run,
+# so the same repository is named again after every later answer; a check made from the chat since,
+# of this very tree, still stands, and the digest is what lets the app tell that it does.
+ELSEWHERE_LIST="$( { [ -d "$IDIR" ] && extra_repos_changed "$IDIR"; } 2>/dev/null | while IFS= read -r _xd; do
+  [ -n "$_xd" ] || continue
+  printf '%s' "$_x_covered" | grep -qxF -- "$_xd" && continue
+  printf '%s\n' "$_xd"
+done)"
+ELSEWHERE_JSON="$(printf '%s' "$ELSEWHERE_LIST" | grep . | jq -R . | jq -s -c . 2>/dev/null)"
+[ -n "$ELSEWHERE_JSON" ] || ELSEWHERE_JSON='[]'
+ELSEWHERE_DIGESTS='{}'
+while IFS= read -r _xd; do
+  [ -n "$_xd" ] || continue
+  _xdg="$(work_tree_digest "$_xd" 2>/dev/null)"
+  [ -n "$_xdg" ] || continue
+  ELSEWHERE_DIGESTS="$(printf '%s' "$ELSEWHERE_DIGESTS" | jq -c --arg k "$_xd" --arg v "$_xdg" '. + {($k): $v}' 2>/dev/null || printf '%s' "$ELSEWHERE_DIGESTS")"
+done <<EOF_ELSEWHERE
+$ELSEWHERE_LIST
+EOF_ELSEWHERE
+UNTOUCHED_JSON=false; [ "$UNTESTED" = 1 ] && UNTOUCHED_JSON=true
 
 EVIDENCE_JSON="$EVIDENCE_DIR/evidence.json"
 HEAD_SHA="$(resolve_base_sha "$PROJ")"
 TREE_DIGEST="$(work_tree_digest "$PROJ" 2>/dev/null || echo "")"
-jq -n --argjson crit "[${CRIT_JSON}]" --arg proj "$PROJ" --arg sid "$SID" --arg base "$BASE_SHA" --arg stacks "$STACKS" --arg vprofile "$VPROFILE" --arg head "$HEAD_SHA" --arg tree "$TREE_DIGEST" '
+jq -n --argjson crit "[${CRIT_JSON}]" --arg proj "$PROJ" --arg sid "$SID" --arg base "$BASE_SHA" --arg stacks "$STACKS" --arg vprofile "$VPROFILE" --arg head "$HEAD_SHA" --arg tree "$TREE_DIGEST" \
+      --argjson elsewhere "$ELSEWHERE_JSON" --argjson elsewhere_digests "$ELSEWHERE_DIGESTS" --argjson untouched "$UNTOUCHED_JSON" '
   {project_dir:$proj, session_id:$sid, base_sha:$base, head_sha:$head, work_tree_digest:$tree, stacks:($stacks|split(" ")|map(select(.!=""))),
    verification_profile:$vprofile,
+   primary_untouched:$untouched, unverified_elsewhere:$elsewhere, unverified_elsewhere_digests:$elsewhere_digests,
    criteria:$crit,
    overall_status: (
      # "pass" ONLY when at least one criterion actually passed and nothing failed/was inconclusive.
