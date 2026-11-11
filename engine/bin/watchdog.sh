@@ -208,6 +208,9 @@ while [ -d "$IDIR" ]; do
     if [ "$idle" -ge "$STALE_SECS" ]; then
       log "IDLE ${idle}s ≥ ${STALE_SECS}s (screen unchanged) — full teardown: killing claude+tmux, supervision off"
       tmux kill-session -t "$SESSION" 2>/dev/null
+      thread_carry_save "$IDIR"   # the chat's task outlives this folder (lib/thread-carry.sh)
+      plain_shadow_keep "$IDIR"   # …and the copy of a folder with no git (lib/plain-shadow.sh)
+      checks_keep "$IDIR"         # …and the checks the worker registered
       rm -rf "$IDIR"
       _any_instance || rm -f "$SUP_STATE/night-mode"
       exit 0

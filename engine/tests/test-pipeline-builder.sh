@@ -310,6 +310,27 @@ bash "$ENG/bin/pipeline.sh" "$IDIR" "$TMP/env.json" >/dev/null 2>&1; rc=$?
 ART3="$(find "$IDIR/messages" -maxdepth 1 -type d -name '78-*' | head -1)"
 [ "$rc" = 0 ] && grep -q '"stage":"c"' "$ART3/stages.jsonl" 2>/dev/null && ok "an OPTIONAL failure in the group still lets the run go on" || bad "optional group failure: rc=$rc"
 
+echo "===== a new task sets the previous task's checks aside, and its brief names them ====="
+cat > "$ENG/supervisor/pipelines/compose-only.json" <<'JSON'
+{"name":"compose-only","stages":[{"id":"compose","run":["pipeline-compose.sh"]}]}
+JSON
+printf '{"id":"PREV-DISPATCH"}\n' > "$IDIR/dispatch.json"
+printf '%s\n' '{"criterion":"форма зберігається","argv":["true"],"cwd":"/x"}' '{"criterion":"звіт будується","argv":["true","r"],"cwd":"/x"}' > "$IDIR/checks.jsonl"
+printf '{"message":"Зовсім інша задача: логотип","message_id":"cccccccc-0000-0000-0000-000000000001","seq":"79","pipeline":"compose-only","relation":"new"}\n' > "$TMP/env.json"
+bash "$ENG/bin/pipeline.sh" "$IDIR" "$TMP/env.json" >/dev/null 2>&1; rc=$?
+ART4="$(find "$IDIR/messages" -maxdepth 1 -type d -name '79-*' | head -1)"
+[ ! -s "$IDIR/checks.jsonl" ] && [ -s "$IDIR/dispatches/PREV-DISPATCH.checks.jsonl" ] \
+  && ok "the previous task's checks are set aside under its dispatch" || bad "not set aside (rc=$rc)"
+grep -q "«форма зберігається», «звіт будується»" "$ART4/composed.txt" 2>/dev/null \
+  && ok "the new task's brief names them" || bad "the brief does not name them: $(grep -n 'Перевірки' "$ART4/composed.txt" 2>/dev/null)"
+grep -q -- "--restore-all" "$ART4/composed.txt" 2>/dev/null && ok "with the way back" || bad "no way back in the brief"
+printf '%s\n' '{"criterion":"цієї задачі","argv":["true","n"],"cwd":"/x"}' > "$IDIR/checks.jsonl"
+printf '{"message":"Ще поправ відступ","message_id":"cccccccc-0000-0000-0000-000000000002","seq":"80","pipeline":"compose-only","relation":"continue"}\n' > "$TMP/env.json"
+bash "$ENG/bin/pipeline.sh" "$IDIR" "$TMP/env.json" >/dev/null 2>&1
+ART5="$(find "$IDIR/messages" -maxdepth 1 -type d -name '80-*' | head -1)"
+grep -q "цієї задачі" "$IDIR/checks.jsonl" && ok "a follow-up keeps its own checks" || bad "a follow-up lost its checks"
+grep -q "відкладено" "$ART5/composed.txt" 2>/dev/null && bad "a follow-up's brief repeats the set-aside note" || ok "and its brief does not repeat the note"
+
 echo
 if [ "$fails" = 0 ]; then echo "✅ pipeline builder: all passed"; exit 0; fi
 echo "❌ pipeline builder: $fails failed"; exit 1

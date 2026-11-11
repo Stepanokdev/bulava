@@ -746,17 +746,35 @@ nonisolated final class AutomationLifecycleTests: XCTestCase {
         XCTAssertEqual(copy.baseRef, "main", "from the branch it was recorded with, not the edited one")
     }
 
+    /// A question an earlier run ended on stays in its chat, with the badge; it no longer holds the
+    /// automation. Held, it cost the bug reports four days and the evening todo three (3–10 Nov),
+    /// each recorded as "has not finished".
     @MainActor
-    func testAnOpenedQuestionStillHoldsTheNextRunBack() async {
+    func testAQuestionNoLongerHoldsTheNextRunBack() async {
         let (m, _, project, product) = await world()
-        let a = Automation(productID: product.id, projectID: project.id, name: "Held", brief: "x", trigger: .manual)
+        let a = Automation(productID: product.id, projectID: project.id, name: "Asked", brief: "x", trigger: .manual)
         m.automations.add(a)
         var asked = AutomationRun(automationID: a.id, occurrence: "q", reason: .manual, state: .finished, briefRevision: 1)
         asked.result = .needsYou
         asked.seen = true
         m.automations.record(asked)
-        XCTAssertNotNil(m.reasonNotToStart(m.automations.automation(id: a.id)!, now: Date()),
-                        "a question he looked at but did not answer still waits")
+        XCTAssertNil(m.reasonNotToStart(m.automations.automation(id: a.id)!, now: Date()),
+                     "the next run starts")
+        XCTAssertNil(m.runHoldingBack(m.automations.automation(id: a.id)!))
+        XCTAssertEqual(m.automationRunsWantingHim.map(\.id), [asked.id], "and the question still waits for him")
+    }
+
+    @MainActor
+    func testARunStillGoingHoldsTheNextOneBackAndSaysSo() async {
+        let (m, _, project, product) = await world()
+        let a = Automation(productID: product.id, projectID: project.id, name: "Going", brief: "x", trigger: .manual)
+        m.automations.add(a)
+        var going = AutomationRun(automationID: a.id, occurrence: "r", reason: .manual, state: .running, briefRevision: 1)
+        going.chatID = UUID()
+        m.automations.record(going)
+        XCTAssertEqual(m.reasonNotToStart(m.automations.automation(id: a.id)!, now: Date()),
+                       String(localized: "The previous run has not finished yet."))
+        XCTAssertEqual(m.runHoldingBack(m.automations.automation(id: a.id)!)?.id, going.id)
     }
 
     /// A skipped run used to be written only into the automation's history, folded under "N
@@ -767,11 +785,10 @@ nonisolated final class AutomationLifecycleTests: XCTestCase {
         let a = Automation(productID: product.id, projectID: project.id, name: "Вечірній todo", brief: "x", trigger: .manual)
         m.automations.add(a)
         let chat = UUID()
-        var asked = AutomationRun(automationID: a.id, occurrence: "q", reason: .manual, state: .finished, briefRevision: 1)
-        asked.result = .needsYou
-        asked.chatID = chat
-        m.automations.record(asked)
-        XCTAssertEqual(m.runHoldingBack(m.automations.automation(id: a.id)!)?.id, asked.id)
+        var going = AutomationRun(automationID: a.id, occurrence: "q", reason: .manual, state: .running, briefRevision: 1)
+        going.chatID = chat
+        m.automations.record(going)
+        XCTAssertEqual(m.runHoldingBack(m.automations.automation(id: a.id)!)?.id, going.id)
 
         let t0 = Date()
         XCTAssertEqual(m.beginRun(m.automations.automation(id: a.id)!, occurrence: "slot:1", reason: .manual,
@@ -790,6 +807,168 @@ nonisolated final class AutomationLifecycleTests: XCTestCase {
         // Bookkeeping events stay out of the conversation, as before.
         m.conversations.postEventOnce("bookkeeping", productID: product.id, chatID: chat)
         XCTAssertFalse(m.visibleEntries(inChat: chat).contains { $0.text == "bookkeeping" })
+    }
+
+    /// The 9 Nov catch-up skip of the bug reports left no line: it was recorded at 12:17:15 by the
+    /// build installed before 1.18.1 replaced it at 12:17:26. A catch-up goes the same way as any
+    /// scheduled slot, and is said.
+    @MainActor
+    func testACaughtUpSlotThatIsSkippedIsSaidToo() async {
+        let (m, _, project, product) = await world()
+        let a = Automation(productID: product.id, projectID: project.id, name: "Звіти про помилки", brief: "x", trigger: .manual)
+        m.automations.add(a)
+        let chat = UUID()
+        var going = AutomationRun(automationID: a.id, occurrence: "q", reason: .manual, state: .running, briefRevision: 1)
+        going.chatID = chat
+        m.automations.record(going)
+        let due = Date().addingTimeInterval(-3 * 3600)
+        XCTAssertEqual(m.beginRun(m.automations.automation(id: a.id)!, occurrence: "slot:catchup",
+                                  reason: .caughtUp(due), items: [], now: Date()), .refused)
+        XCTAssertEqual(m.visibleEntries(inChat: chat).filter { $0.kind == .event }.count, 1)
+    }
+
+    // MARK: A run that moved its copy off its branch
+
+    /// Lawria's blind test, 3 Nov: the brief detaches HEAD onto origin/main to test what shipped.
+    /// The copy then read as "not ours" for ever, and the run said «running» for a week.
+    @MainActor
+    private func ranAndDetached(_ m: AppModel, _ box: Box, _ a: Automation) async throws -> (AutomationRun, WorkCopy) {
+        m.runAutomationNow(a.id)
+        await waitUntil { !box.sent.isEmpty }
+        let run = try XCTUnwrap(m.automations.runs(for: a.id).first)
+        let copy = try XCTUnwrap(m.automations.copy(id: try XCTUnwrap(run.workspaceID)))
+        let r = await Shell.run("git checkout -q --detach HEAD", cwd: URL(fileURLWithPath: copy.checkoutRoot))
+        XCTAssertTrue(r.ok, r.combined)
+        let status = await WorkCopies.status(of: copy)
+        XCTAssertFalse(status.inspected, "detached, the copy reads as not ours — what held the run")
+        return (run, copy)
+    }
+
+    @MainActor
+    private func endTurn(_ m: AppModel, _ run: AutomationRun, _ copy: WorkCopy, _ project: Project) async {
+        // The turn ended with an outcome, as the engine reports it on the run's binding.
+        m.conversations.bindSession(ChatSessionBinding(primaryProjectID: project.id, projectPath: copy.path,
+                                                       claudeSessionID: "s-\(run.id)", outcomeAt: Date()),
+                                    to: run.chatID!)
+        await m.automationsTick()
+        await waitUntil { m.automations.run(id: run.id)?.state == .finished }
+    }
+
+    @MainActor
+    func testARunThatDetachedItsCopyWithNothingOfItsOwnIsPutBackAndEnds() async throws {
+        let (m, box, project, product) = await world()
+        let a = Automation(productID: product.id, projectID: project.id, name: "Сліпий тест", brief: "x", trigger: .manual)
+        m.automations.add(a)
+        let (run, copy) = try await ranAndDetached(m, box, a)
+        await endTurn(m, run, copy, project)
+        let ended = try XCTUnwrap(m.automations.run(id: run.id))
+        XCTAssertEqual(ended.state, .finished, "the run ends")
+        XCTAssertEqual(ended.result, .noChange)
+        XCTAssertTrue(ended.note?.contains("put back on its branch") == true, ended.note ?? "no note")
+        let branch = await WorkCopies.currentBranch(of: copy.checkoutRoot)
+        XCTAssertEqual(branch, copy.branch, "the copy is on its branch again")
+        let reread = await WorkCopies.status(of: copy)
+        XCTAssertTrue(reread.inspected)
+        XCTAssertNil(m.reasonNotToStart(m.automations.automation(id: a.id)!, now: Date()), "and the next run may start")
+    }
+
+    @MainActor
+    func testARunThatLeftWorkOffItsBranchAsksAndMovesNothing() async throws {
+        let (m, box, project, product) = await world()
+        let a = Automation(productID: product.id, projectID: project.id, name: "Off", brief: "x", trigger: .manual)
+        m.automations.add(a)
+        let (run, copy) = try await ranAndDetached(m, box, a)
+        let r = await Shell.run("printf 'stray\\n' > stray.txt && git add stray.txt && git commit -qm stray && printf 'x\\n' > loose.txt",
+                                cwd: URL(fileURLWithPath: copy.checkoutRoot))
+        XCTAssertTrue(r.ok, r.combined)
+        let head = (await WorkCopies.git(["rev-parse", "HEAD"], in: copy.checkoutRoot)).stdout
+        await endTurn(m, run, copy, project)
+        let ended = try XCTUnwrap(m.automations.run(id: run.id))
+        XCTAssertEqual(ended.result, .needsYou, "work off the branch is his to look at")
+        XCTAssertTrue(ended.note?.contains(String(head.prefix(7))) == true, ended.note ?? "no note")
+        XCTAssertTrue(ended.note?.contains(copy.branch) == true)
+        let still = (await WorkCopies.git(["rev-parse", "HEAD"], in: copy.checkoutRoot)).stdout
+        XCTAssertEqual(still, head, "nothing was moved")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: copy.checkoutRoot + "/loose.txt"), "nothing was thrown away")
+    }
+
+    /// The worker usually ends with a line of its own. The explanation still comes first — in the
+    /// summary the run's line shows, and in its chat — with the worker's line kept after it.
+    @MainActor
+    func testWorkOffTheBranchIsSaidFirstEvenWhenTheWorkerSummedUp() async throws {
+        let (m, box, project, product) = await world()
+        let a = Automation(productID: product.id, projectID: project.id, name: "Off", brief: "x", trigger: .manual)
+        m.automations.add(a)
+        let (run, copy) = try await ranAndDetached(m, box, a)
+        let r = await Shell.run("printf 'stray\\n' > stray.txt && git add stray.txt && git commit -qm stray && printf 'x\\n' > loose.txt",
+                                cwd: URL(fileURLWithPath: copy.checkoutRoot))
+        XCTAssertTrue(r.ok, r.combined)
+        let head = String((await WorkCopies.git(["rev-parse", "HEAD"], in: copy.checkoutRoot)).stdout.prefix(7))
+        // The engine's instance for the copy, with the worker's own line in its outcome.
+        let state = scratch.appendingPathComponent("supervisor", isDirectory: true)
+        try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+        await m.client.updatePaths(SupervisorPaths(stateDir: state))
+        let instance = state.appendingPathComponent("instances/\(Slug.forPath(copy.checkoutRoot))", isDirectory: true)
+        try FileManager.default.createDirectory(at: instance, withIntermediateDirectories: true)
+        let files = ["project": copy.checkoutRoot, "session": "ns-off", "run-id": "RUN-OFF", "started-at": "", "done": "passed",
+                     "outcome.json": #"{"schema":1,"result":"succeeded_research","summary":"Перевірив релізну збірку: усе працює.","ts":"2026-11-10 20:00:00","run_id":"RUN-OFF"}"#]
+        for (name, text) in files { try text.write(to: instance.appendingPathComponent(name), atomically: true, encoding: .utf8) }
+        m.conversations.bindSession(ChatSessionBinding(primaryProjectID: project.id, projectPath: copy.checkoutRoot,
+                                                       activeRunID: "RUN-OFF"), to: run.chatID!)
+        await m.refresh()
+        await m.automationsTick()
+        await waitUntil { m.automations.run(id: run.id)?.state == .finished }
+        let ended = try XCTUnwrap(m.automations.run(id: run.id))
+        XCTAssertEqual(ended.result, .needsYou)
+        let gist = try XCTUnwrap(AutomationPresentation.gist(ended))
+        XCTAssertTrue(gist.contains(head) && gist.contains(copy.branch) && gist.contains(copy.checkoutRoot),
+                      "the run's line says where HEAD is and where the copy is: \(gist)")
+        XCTAssertTrue(gist.contains("1"), "with what is out there: \(gist)")
+        XCTAssertTrue(ended.summary?.contains("Перевірив релізну збірку") == true, "the worker's line is kept after it")
+        XCTAssertTrue(m.visibleEntries(inChat: run.chatID!).contains { $0.kind == .event && $0.text.contains(head) },
+                      "and the run's chat says it too")
+    }
+
+    @MainActor
+    func testACopyThatIsNotOursIsNeverTouched() async throws {
+        let (m, box, project, product) = await world()
+        let a = Automation(productID: product.id, projectID: project.id, name: "Stranger", brief: "x", trigger: .manual)
+        m.automations.add(a)
+        let (run, copy) = try await ranAndDetached(m, box, a)
+        let gitDir = (await WorkCopies.git(["rev-parse", "--absolute-git-dir"], in: copy.checkoutRoot)).stdout
+        try FileManager.default.removeItem(atPath: gitDir + "/bulava-copy")
+        let outcome = await WorkCopies.returnToBranch(copy)
+        XCTAssertEqual(outcome, .notOurs)
+        let branch = await WorkCopies.currentBranch(of: copy.checkoutRoot)
+        XCTAssertNil(branch, "still detached: not ours to move")
+        _ = run
+    }
+
+    // MARK: A job's one folder
+
+    @MainActor
+    func testAnAnswerToAnOlderJobRunWaitsWhileANewerRunWorksInTheFolder() async {
+        let (m, _, project, product) = await world()
+        let a = Automation(productID: product.id, projectID: project.id, name: "Todo", brief: "x", trigger: .manual)
+        m.automations.add(a)
+        var asked = AutomationRun(automationID: a.id, occurrence: "old", reason: .manual, state: .finished, briefRevision: 1)
+        asked.result = .needsYou; asked.job = true
+        let oldChat = m.conversations.newAutomationChat(id: UUID(), for: product.id, runID: asked.id, copyID: nil, title: "old")
+        asked.chatID = oldChat.id
+        m.automations.record(asked)
+        var newer = AutomationRun(automationID: a.id, occurrence: "new", reason: .manual, state: .running, briefRevision: 1)
+        newer.job = true
+        m.automations.record(newer)
+        XCTAssertNotNil(m.jobFolderBusyForAnswer(chatID: oldChat.id), "two sessions never write the job's folder at once")
+        // His answer, sent into the old run's chat the way the composer and the phone send it.
+        guard case .sent(let entryID) = m.sendDirectMessage("Так, бери ці дві", productID: product.id, chatID: oldChat.id) else {
+            return XCTFail("the message was not taken")
+        }
+        XCTAssertEqual(m.conversations.entry(id: entryID)?.delivery, .failed, "it is not delivered into the busy folder")
+        XCTAssertTrue(m.chatErrors[oldChat.id]?.contains("Todo") == true, "and the chat says why: \(m.chatErrors[oldChat.id] ?? "nothing")")
+        XCTAssertFalse(m.sendingChatIDs.contains(oldChat.id), "nothing was started for it")
+        m.automations.updateRun(newer.id) { $0.state = .finished; $0.result = .noChange }
+        XCTAssertNil(m.jobFolderBusyForAnswer(chatID: oldChat.id), "once it ends, the answer goes")
     }
 
     @MainActor

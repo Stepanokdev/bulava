@@ -161,6 +161,109 @@ extension SupervisorClient {
         }
     }
 
+    // MARK: The folders the check after an answer did not look at
+
+    /// A check's evidence, the folder it was found in, and when it was written.
+    struct DatedEvidence: Sendable {
+        var evidence: Evidence
+        var at: Date
+        /// The run folder holding `evidence/` — the live instance's, or the run's archive once stopped.
+        var base: URL
+        /// The run that wrote it, when that is known: the chat's, or the folder's live one.
+        var runID: String?
+        /// That run still holds its folder, so a check of its other repositories can be run in it
+        /// (`night-shift verify-elsewhere`). A stopped run's record of them is gone.
+        var runIsLive: Bool
+        /// Where the checks of the run's other repositories made from the chat are: the live run's
+        /// folder while it lasts, and the run's archive, where a stop moves them.
+        var checkRoots: [URL]
+
+        init(evidence: Evidence, at: Date, base: URL, runID: String? = nil, runIsLive: Bool = false,
+             checkRoots: [URL] = []) {
+            self.evidence = evidence
+            self.at = at
+            self.base = base
+            self.runID = runID
+            self.runIsLive = runIsLive
+            self.checkRoots = checkRoots
+        }
+    }
+
+    /// The chat's newest evidence as `chatEvidence` finds it, with the time it was written: what
+    /// tells a check made for the answer on screen from one made for an earlier message.
+    func chatEvidenceDated(projectPath: String, runID: String?, sessionID: String?) -> DatedEvidence? {
+        guard let base = paths.artifactBase(runID: runID, projectPath: projectPath) else { return nil }
+        let file: URL
+        if let sessionID, !sessionID.isEmpty {
+            file = base.appendingPathComponent("evidence/\(sessionID)/evidence.json")
+        } else {
+            let dirs = (try? FileManager.default.contentsOfDirectory(
+                at: base.appendingPathComponent("evidence"), includingPropertiesForKeys: nil)) ?? []
+            guard let newest = dirs.map({ $0.appendingPathComponent("evidence.json") })
+                .compactMap({ url in Self.writtenAt(url).map { (url, $0) } })
+                .max(by: { $0.1 < $1.1 })?.0 else { return nil }
+            file = newest
+        }
+        guard let data = try? Data(contentsOf: file), let evidence = Evidence.decode(from: data),
+              Self.matches(evidence, projectPath: projectPath), let at = Self.writtenAt(file) else { return nil }
+
+        // Which run this is, and whether it still holds the folder. Asked of the instance's own
+        // `run-id`, not of where the evidence was found: a live run can already have an archive
+        // folder (the review writes its criteria decisions there), and a stopped one is only that.
+        let instance = paths.instanceDir(slug: Slug.forPath(projectPath))
+        let liveID = (try? String(contentsOf: instance.appendingPathComponent("run-id"), encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let run: String?
+        let live: Bool
+        if let runID, !runID.isEmpty {
+            run = runID
+            live = liveID == runID
+        } else {
+            // No run named: `artifactBase` read the folder's live instance, so the run is its.
+            run = liveID?.isEmpty == false ? liveID : nil
+            live = FileManager.default.fileExists(atPath: instance.path)
+        }
+        var roots: [URL] = []
+        if live { roots.append(instance) }
+        if let run { roots.append(paths.runDir(runID: run)) }
+        return DatedEvidence(evidence: evidence, at: at, base: base, runID: run, runIsLive: live,
+                             checkRoots: roots)
+    }
+
+    /// The newest check of one of the run's other repositories, made from the chat
+    /// (`night-shift verify-elsewhere`), found by what it says it checked rather than by a folder
+    /// name worked out here — the engine names that folder, and only the engine spells its slugs.
+    ///
+    /// A check read from the run's archive names its logs where they were before the stop moved
+    /// them; they are found again beside the evidence, where the archive keeps them.
+    func elsewhereEvidence(in roots: [URL], repoPath: String) -> DatedEvidence? {
+        let want = Slug.canonicalPath(repoPath)
+        let fm = FileManager.default
+        return roots.flatMap { root -> [DatedEvidence] in
+            let dirs = (try? fm.contentsOfDirectory(at: root.appendingPathComponent("elsewhere"),
+                                                    includingPropertiesForKeys: nil)) ?? []
+            return dirs.compactMap { dir -> DatedEvidence? in
+                let folder = dir.appendingPathComponent("evidence/check")
+                let file = folder.appendingPathComponent("evidence.json")
+                guard let data = try? Data(contentsOf: file), var evidence = Evidence.decode(from: data),
+                      Slug.canonicalPath(evidence.projectDir) == want, let at = Self.writtenAt(file) else { return nil }
+                evidence.criteria = evidence.criteria.map { criterion in
+                    var criterion = criterion
+                    if !criterion.artifact.isEmpty, !fm.fileExists(atPath: criterion.artifact) {
+                        let moved = folder.appendingPathComponent((criterion.artifact as NSString).lastPathComponent)
+                        if fm.fileExists(atPath: moved.path) { criterion.artifact = moved.path }
+                    }
+                    return criterion
+                }
+                return DatedEvidence(evidence: evidence, at: at, base: root)
+            }
+        }.max { $0.at < $1.at }
+    }
+
+    nonisolated private static func writtenAt(_ url: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+    }
+
     nonisolated private static func matches(_ evidence: Evidence, projectPath: String) -> Bool {
         evidence.projectDir.isEmpty
             || Slug.canonicalPath(evidence.projectDir) == Slug.canonicalPath(projectPath)

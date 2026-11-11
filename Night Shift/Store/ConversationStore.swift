@@ -97,9 +97,14 @@ final class ConversationStore {
 
     private func pruneEmptyChats() {
         let used = Set(entries.compactMap(\.chatID))
-        // A new chat he has already set to work in a copy, or to go through a pipeline, carries a
-        // choice of his: kept, so the first message still goes where and how he said.
-        let empty = chats.filter { !used.contains($0.id) && !$0.wantsCopy && $0.pipelineID == nil }
+        // A new chat he has already set to work in a copy, or to go through a pipeline, or in a
+        // folder of his choosing, carries a choice of his: kept, so the first message still goes
+        // where and how he said. A binding with a session or a report in it is not that: an empty
+        // chat that only remembers a run is not history.
+        let empty = chats.filter {
+            !used.contains($0.id) && !$0.wantsCopy && $0.pipelineID == nil
+                && $0.session?.isOnlyAChosenFolder != true
+        }
         guard !empty.isEmpty else { return }
 
         chats = Self.merge(memory: chats, stored: chatFile.load() ?? [],
@@ -702,10 +707,12 @@ final class ConversationStore {
     }
 
     /// A line from the app that the person must see in that chat, on the Mac and on the phone
-    /// (`ConversationEntry.shown`). Never twice with the same words in one chat.
+    /// (`ConversationEntry.shown`). Never twice with the same words in one chat — unless `once` is
+    /// false, for a line that marks something that can happen again (a chat moved back to a folder
+    /// it was in before).
     func postNotice(_ text: String, productID: UUID, chatID: UUID,
-                    tone: ConversationEntry.Tone = .attention) {
-        guard !entries.contains(where: {
+                    tone: ConversationEntry.Tone = .attention, once: Bool = true) {
+        guard !once || !entries.contains(where: {
             $0.chatID == chatID && $0.kind == .event && $0.text == text
         }) else { return }
         var entry = ConversationEntry(productID: productID, kind: .event, text: text, tone: tone, shown: true)

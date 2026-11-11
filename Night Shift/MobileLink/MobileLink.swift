@@ -662,7 +662,8 @@ final class MobileLink {
 
         case "commands.list":
             guard let productID = args?["productID"]?.uuid else { return bad("productID") }
-            let roots = model.slashCommandRoots(for: productID)
+            // The chat's own folder when the phone names a chat: that is where its agent looks.
+            let roots = model.slashCommandRoots(for: productID, chatID: args?["chatID"]?.uuid)
             let found = await Task.detached(priority: .utility) { SlashCommandCatalog.discover(roots) }.value
             return .success(found.map {
                 OptionDTO(id: $0.invocation, label: $0.invocation,

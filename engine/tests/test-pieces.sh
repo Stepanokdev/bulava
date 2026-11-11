@@ -157,6 +157,41 @@ chmod u+w "$IDIR"
 check "the worker is told it was not recorded" 'printf "%s" "$out" | jq -r .reason | grep -q "не зміг записати"'
 check "the job is not finished"           '[ "$(cat "$IDIR/done" 2>/dev/null)" != passed ]'
 
+echo "===== the director's uncommitted work, left in place, does not hold a piece back ====="
+# A run started «leave my changes»: the worker may not commit, stage or stash the director's files,
+# so they cannot be what keeps a passed piece from being accepted. Only the worker's own are.
+mkcase
+echo "director draft" >> "$PROJ/src/a.ts"                 # a tracked file he changed
+mkdir -p "$PROJ/notes"; echo "his notes" > "$PROJ/notes/todo.md"   # a file he made
+SNAP="$(snapshot_director_work "$PROJ" "refs/night-shift/$RID")"
+: > "$IDIR/base-snapshot"; printf 'refs/night-shift/%s\n' "$RID" > "$IDIR/snapshot-ref"
+untracked_manifest "$PROJ" > "$IDIR/base-untracked"
+printf '%s\n' "$SNAP" > "$IDIR/base-sha"
+piece plan "Острів" "Фабрика" >/dev/null; piece start -- "озеро" >/dev/null
+echo "worker code" > "$PROJ/src/w.ts"; git -C "$PROJ" add src/w.ts; git -C "$PROJ" commit -qm "worker: w.ts"
+declare_done
+out="$(rungate s-director)"
+check "his files are still uncommitted"   '[ -n "$(git -C "$PROJ" status --porcelain)" ]'
+check "the piece is accepted"             '[ "$(state_of Острів)" = accepted ]'
+check "the worker is sent on, not told to commit" '! printf "%s" "$out" | jq -r .reason | grep -q "Закоміть"'
+dirty_now(){ bash -c '. "$1/bin/supervisor-lib.sh"; . "$1/bin/lib/pieces.sh"; piece_worker_uncommitted "$2" "$3"' _ "$ROOT" "$IDIR" "$PROJ"; }
+check "only his files dirty: not the worker's"     '! dirty_now'
+echo "worker wip" > "$PROJ/src/new.ts"
+check "a new file of the worker's is"              'dirty_now'
+rm -f "$PROJ/src/new.ts"
+echo "worker edit" >> "$PROJ/notes/todo.md"
+check "his file changed further is the worker's"   'dirty_now'
+echo "his notes" > "$PROJ/notes/todo.md"
+echo "worker edit" >> "$PROJ/src/a.ts"
+check "his tracked file changed further is too"    'dirty_now'
+git -C "$PROJ" checkout -q -- src/a.ts 2>/dev/null; git -C "$PROJ" show "$SNAP:src/a.ts" > "$PROJ/src/a.ts"
+echo "worker edit" >> "$PROJ/src/w.ts"
+check "an uncommitted change to a committed file is" 'dirty_now'
+git -C "$PROJ" checkout -q -- src/w.ts
+check "back to only his: clean of the worker"      '! dirty_now'
+rm -f "$IDIR/base-snapshot"
+check "no snapshot: every dirty path counts"       'dirty_now'
+
 echo "===== the plan of a task lives with the task, not the attempt ====="
 mkcase
 TID="PRJ-$RANDOM"; mkdir -p "$(task_dir "$TID")"; printf '{"id":"%s"}' "$TID" > "$(task_file "$TID")"

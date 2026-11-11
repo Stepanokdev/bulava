@@ -28,10 +28,11 @@ struct Composer: View {
                        set: { model.setDraftText($0, slot: slot) })
     }
 
-    private var product: Product? { model.products.product(id: productID) }
     private var chatID: UUID? { model.conversations.currentChatID(for: productID) }
     private var attachments: [Attachment] { model.draftAttachments(slot: slot) }
-    private var isSending: Bool { chatID.map { model.sendingChatIDs.contains($0) } ?? false }
+    private var isSending: Bool {
+        chatID.map { model.sendingChatIDs.contains($0) || model.movingChatFolders.contains($0) } ?? false
+    }
     private var isWorking: Bool { model.isDirectChatBusy(chatID) }
     private var isStopping: Bool { chatID.map { model.stoppingChatIDs.contains($0) } ?? false }
     private var canSend: Bool {
@@ -212,7 +213,7 @@ struct Composer: View {
 
     private var sessionLabel: some View {
         HStack(spacing: 5) {
-            WhereItWorksControl(productID: productID, chatID: chatID, folderName: primaryProjectName)
+            WhereItWorksControl(productID: productID, chatID: chatID)
             if isWorking {
                 Text("·")
                 Text(model.directWaitReason(for: chatID))
@@ -225,19 +226,9 @@ struct Composer: View {
         .lineLimit(1)
     }
 
-    private var primaryProjectName: String {
-        guard let project = primaryProject else {
-            return String(localized: "Choose a project folder")
-        }
-        return project.name
+    private var commandRoots: SlashCommandCatalog.Roots {
+        model.slashCommandRoots(for: productID, chatID: chatID)
     }
-
-    private var primaryProject: Project? {
-        guard let id = product?.defaultProjectID else { return nil }
-        return model.projects.project(id: id)
-    }
-
-    private var commandRoots: SlashCommandCatalog.Roots { model.slashCommandRoots(for: productID) }
 
     private var commandRootsKey: String {
         ([commandRoots.primaryProject?.path ?? "-"] + commandRoots.addedProjects.map(\.path))

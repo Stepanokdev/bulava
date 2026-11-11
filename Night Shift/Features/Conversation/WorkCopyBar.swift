@@ -100,43 +100,122 @@ struct WorkCopyBar: View {
     }
 }
 
-/// Under the composer of a new chat: whether its work happens in his folder or in a copy of it.
-/// Asked before the first message — a conversation does not move folders half way through.
+/// Under the composer: which of the product's folders this chat works in, and — before the first
+/// message — whether in that folder or in a copy of it.
+///
+/// The folder is the chat's own. The product's default is only where a new chat starts, and for a
+/// product of several folders that is often the heaviest one: the check after every answer runs in
+/// the chat's folder, so a chat about one small repository should not have to run a monorepo's
+/// suite. Before the first message the choice costs nothing. After it the chat moves — the agent's
+/// session belongs to the folder it was started in — so that is asked first.
 struct WhereItWorksControl: View {
     @Environment(AppModel.self) private var model
     let productID: UUID
     let chatID: UUID?
-    let folderName: String
+
+    /// A folder chosen in a chat that already has a conversation, waiting for him to confirm.
+    @State private var pendingMove: ChatFolderChoice?
 
     private var chat: Chat? { chatID.flatMap { model.conversations.chat(id: $0) } }
     private var fresh: Bool { chatID.map { model.conversations.entries(inChat: $0).isEmpty } ?? true }
     private var inCopy: Bool { chat?.wantsCopy == true || chat?.workCopyID != nil }
+    private var choices: [ChatFolderChoice] { model.chatFolderChoices(productID: productID) }
+    private var folder: Project? { model.chatFolder(productID: productID, chatID: chatID) }
+    private var lock: ChatFolderMove.Lock? { model.chatFolderLock(chatID: chatID) }
+    private var moving: Bool { chatID.map { model.movingChatFolders.contains($0) } ?? false }
+
+    private var folderName: String {
+        guard let folder else { return String(localized: "Choose a project folder") }
+        return choices.first { $0.id == folder.id }?.name ?? folder.name
+    }
+
+    /// More than one folder, in a chat whose folder is its own to choose.
+    private var offersFolders: Bool {
+        choices.count > 1 && lock != .inCopy && lock != .automationRun
+    }
+    private var offersCopy: Bool { fresh && chat?.isAutomationRun != true }
 
     var body: some View {
-        if fresh, chat?.isAutomationRun != true {
-            Menu {
-                Picker("", selection: Binding(get: { inCopy }, set: { choose($0) })) {
+        Group {
+            if (offersFolders || offersCopy) && !moving {
+                Menu {
+                    menu
+                } label: {
+                    label
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help(Text(help))
+            } else {
+                label
+            }
+        }
+        .confirmationDialog(Text(String(format: String(localized: "Move this chat to “%@”?"),
+                                        pendingMove?.name ?? "")),
+                            isPresented: Binding(get: { pendingMove != nil },
+                                                 set: { if !$0 { pendingMove = nil } }),
+                            titleVisibility: .visible, presenting: pendingMove) { choice in
+            Button { apply(choice) } label: { Text("Move") }
+            Button(role: .cancel) { pendingMove = nil } label: { Text("Cancel") }
+        } message: { choice in
+            Text(String(format: String(localized: "The conversation stays here. The agent starts a new session in “%@” and gets the last messages of this chat. Its session in “%@” ends, along with anything it left running there."),
+                        choice.name, folderName))
+        }
+    }
+
+    @ViewBuilder private var menu: some View {
+        if offersFolders {
+            Section {
+                Picker("", selection: Binding(get: { folder?.id }, set: { chooseFolder($0) })) {
+                    ForEach(choices.filter { !$0.asksBeforeEditing }) { choice in
+                        Label(choice.name, systemImage: "folder")
+                            .tag(Optional(choice.id))
+                    }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+                .disabled(lock == .working)
+                // The lock is the product's own mark for "ask before editing". Such a folder is
+                // listed, so he sees it is part of the product, but greyed out: a chat's main folder
+                // is one its agent may write in freely. (A disabled row inside an inline picker is
+                // drawn as if it could be chosen, so these stand outside it.)
+                ForEach(choices.filter(\.asksBeforeEditing)) { choice in
+                    Button {} label: { Label(choice.name, systemImage: "lock").labelStyle(.titleAndIcon) }
+                        .disabled(true)
+                }
+                if lock == .working {
+                    Text("You can change the folder once the agent has finished")
+                }
+                if choices.contains(where: \.asksBeforeEditing) {
+                    Text("Folders with a lock ask before editing: the agent reads them, but a chat cannot work in them")
+                }
+            } header: {
+                Text("Folder")
+            }
+        }
+        if offersCopy {
+            Section {
+                Picker("", selection: Binding(get: { inCopy }, set: { chooseCopy($0) })) {
                     Text(verbatim: String(format: String(localized: "In %@"), folderName)).tag(false)
                     Text("In a separate copy").tag(true)
                 }
                 .pickerStyle(.inline)
                 .labelsHidden()
-            } label: {
-                label
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help(Text("A separate copy keeps this chat's changes off your folder until you merge them"))
-        } else {
-            label
         }
     }
 
     private var label: some View {
         HStack(spacing: 5) {
-            Image(systemName: inCopy ? "arrow.triangle.branch" : "folder")
-                .font(.system(size: 9, weight: .medium))
+            if moving {
+                ProgressView()
+                    .controlSize(.mini)
+                    .frame(width: 10, height: 10)
+            } else {
+                Image(systemName: inCopy ? "arrow.triangle.branch" : "folder")
+                    .font(.system(size: 9, weight: .medium))
+            }
             Text(verbatim: inCopy ? String(format: String(localized: "%@ · separate copy"), folderName) : folderName)
         }
         .font(Typo.meta)
@@ -144,7 +223,39 @@ struct WhereItWorksControl: View {
         .lineLimit(1)
     }
 
-    private func choose(_ copy: Bool) {
+    private var help: String {
+        switch (offersFolders, offersCopy) {
+        case (true, true):
+            return String(localized: "Choose the folder this chat works in, or a separate copy of it. The check after each answer runs in that folder.")
+        case (true, false):
+            return String(localized: "Choose the folder this chat works in. The check after each answer runs in that folder.")
+        default:
+            return String(localized: "A separate copy keeps this chat's changes off your folder until you merge them")
+        }
+    }
+
+    private func chooseFolder(_ id: UUID?) {
+        guard let id, id != folder?.id, let choice = choices.first(where: { $0.id == id }) else { return }
+        // Disabled in the menu already; the model refuses it too, and says why.
+        if choice.asksBeforeEditing { apply(choice); return }
+        if model.chatHasConversation(chatID) {
+            pendingMove = choice
+        } else {
+            apply(choice)
+        }
+    }
+
+    private func apply(_ choice: ChatFolderChoice) {
+        pendingMove = nil
+        let chatID = self.chatID, productID = self.productID
+        _Concurrency.Task {
+            if let problem = await model.chooseChatFolder(choice.id, productID: productID, chatID: chatID) {
+                model.toast = ToastMessage(text: problem, kind: .error)
+            }
+        }
+    }
+
+    private func chooseCopy(_ copy: Bool) {
         let chat = model.conversations.currentChat(for: productID)
         model.conversations.setWantsCopy(copy, for: chat.id)
     }

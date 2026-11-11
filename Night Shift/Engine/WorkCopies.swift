@@ -410,6 +410,13 @@ enum WorkCopies {
     /// Anything else — a folder someone put there, a copy re-pointed at another repository — is not
     /// adopted and not deleted.
     static func isOurs(_ copy: WorkCopy) async -> Bool {
+        guard await isOurCheckout(copy) else { return false }
+        return await currentBranch(of: copy.checkoutRoot) == copy.branch
+    }
+
+    /// `isOurs` without the branch: our marker, a checkout of his repository and not the repository
+    /// itself — wherever its HEAD now points.
+    private static func isOurCheckout(_ copy: WorkCopy) async -> Bool {
         guard FileManager.default.fileExists(atPath: copy.checkoutRoot) else { return false }
         guard let dir = await gitDir(of: copy.checkoutRoot) else { return false }
         let marker = (try? String(contentsOfFile: (dir as NSString).appendingPathComponent(markerName),
@@ -421,7 +428,49 @@ enum WorkCopies {
         let common = out(await git(["rev-parse", "--path-format=absolute", "--git-common-dir"], in: copy.checkoutRoot))
         let sourceCommon = out(await git(["rev-parse", "--path-format=absolute", "--git-common-dir"], in: copy.sourceRoot))
         guard !common.isEmpty, Slug.canonicalPath(common) == Slug.canonicalPath(sourceCommon) else { return false }
-        return await currentBranch(of: copy.checkoutRoot) == copy.branch
+        return true
+    }
+
+    /// Where a copy stands when its run is over and it is not on its branch any more.
+    enum OffBranch: Equatable, Sendable {
+        /// On its branch: nothing to do.
+        case onBranch
+        /// It had left its branch with nothing of its own out there — a brief that checked out
+        /// another commit to look at it (`git checkout --detach origin/main`). It is back on its
+        /// branch now; `head` is where it had been.
+        case returned(head: String)
+        /// It left its branch and something is out there that the branch does not hold: commits
+        /// only HEAD reaches, or changes not committed. Nothing was moved.
+        case strays(head: String, commits: Int, uncommitted: [String])
+        /// Not our checkout at all, or git did not answer: nothing may be concluded or touched.
+        case notOurs
+    }
+
+    /// Put a finished run's copy back on its branch when that loses nothing.
+    ///
+    /// A copy is only ever read on its branch (`isOurs`), so a run that moved HEAD — the Lawria
+    /// blind test detaches onto origin/main — read as "not ours" for ever, and its run never ended
+    /// (8C1CAF91, «running» from 3 Nov). The marker, the repository and the folder are still ours;
+    /// only HEAD moved. When HEAD holds no commit the branch lacks and nothing is uncommitted, the
+    /// branch is checked out again and the copy reads as before. Otherwise it stays as it is, and
+    /// what is out there is said.
+    static func returnToBranch(_ copy: WorkCopy) async -> OffBranch {
+        guard await isOurCheckout(copy) else { return .notOurs }
+        if await currentBranch(of: copy.checkoutRoot) == copy.branch { return .onBranch }
+        let head = out(await git(["rev-parse", "HEAD"], in: copy.checkoutRoot))
+        let branchRef = "refs/heads/\(copy.branch)"
+        let tip = await git(["rev-parse", "--verify", "-q", branchRef], in: copy.checkoutRoot)
+        guard !head.isEmpty, tip.ok, !out(tip).isEmpty else { return .notOurs }
+        let only = await git(["rev-list", "--count", "\(branchRef)..HEAD"], in: copy.checkoutRoot)
+        let porcelain = await git(["status", "--porcelain=v1", "--untracked-files=all", "-z"], in: copy.checkoutRoot)
+        guard only.ok, let commits = Int(out(only)), porcelain.ok else { return .notOurs }
+        let uncommitted = Self.porcelainPaths(porcelain.stdout)
+        if commits > 0 || !uncommitted.isEmpty {
+            return .strays(head: head, commits: commits, uncommitted: uncommitted)
+        }
+        let back = await git(["checkout", "--quiet", copy.branch], in: copy.checkoutRoot)
+        guard back.ok, await currentBranch(of: copy.checkoutRoot) == copy.branch else { return .notOurs }
+        return .returned(head: head)
     }
 
     /// Whether `folder` is a separate checkout of `project`'s repository — a linked worktree that

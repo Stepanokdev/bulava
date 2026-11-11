@@ -33,4 +33,14 @@ nonisolated final class ShellOutputTests: XCTestCase {
         XCTAssertEqual(r.exitCode, 3)
         XCTAssertFalse(r.ok)
     }
+
+    /// A secret handed to one process goes on its stdin: the process reads it, and nothing it
+    /// starts finds it in the environment.
+    @MainActor
+    func testStdinReachesTheProcessAndNotItsEnvironment() async {
+        let secret = "stdin-secret-\(UUID().uuidString)"
+        let r = await Shell.run("read -r v; printf '%s|' \"$v\"; env | grep -c -- \"$1\"",
+                                args: [secret], stdin: Data((secret + "\n").utf8))
+        XCTAssertEqual(r.stdout, "\(secret)|0", r.combined)
+    }
 }

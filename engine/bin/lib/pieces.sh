@@ -173,6 +173,44 @@ piece_base_sha() {   # $1=idir $2=project dir
   git -C "$2" merge-base --is-ancestor "$b" HEAD 2>/dev/null && printf '%s\n' "$b"
 }
 
+# Whether the tree holds uncommitted work that is the worker's. 0 = it does (the piece waits).
+#
+# A run started on top of the director's uncommitted work («leave my changes») is told never to
+# commit, stage or stash it, and that work was snapshotted at the start (`snapshot-ref`: the tracked
+# files as they were on disk, its third parent the untracked ones). Counting it as the worker's
+# uncommitted work meant such a piece could never be accepted: a passed review, then "commit
+# everything" for files the worker is forbidden to touch, round after round. So a dirty path counts
+# only when it is not exactly as the snapshot holds it — a file the worker changed, or one it made.
+# Without a snapshot every dirty path counts, as before.
+piece_worker_uncommitted() {   # $1=idir $2=project dir
+  local idir="$1" cwd="$2" snap="" path xy untracked
+  local status
+  status="$(git -C "$cwd" status --porcelain=v1 -z --untracked-files=all --no-renames 2>/dev/null | tr '\0' '\n')"
+  [ -n "$status" ] || return 1
+  if [ -f "$idir/base-snapshot" ] && [ -s "$idir/snapshot-ref" ]; then
+    snap="$(git -C "$cwd" rev-parse --verify -q "$(tr -d '[:space:]' < "$idir/snapshot-ref")^{commit}" 2>/dev/null)"
+  fi
+  [ -n "$snap" ] || return 0
+  untracked="$(git -C "$cwd" rev-parse --verify -q "$snap^3^{commit}" 2>/dev/null)"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    xy="${line:0:2}"; path="${line:3}"
+    if [ "$xy" = "??" ]; then
+      # A new file: the director's only if the snapshot's untracked files hold it, byte for byte.
+      [ -n "$untracked" ] || return 0
+      [ "$(git -C "$cwd" rev-parse -q --verify "$untracked:$path" 2>/dev/null)" \
+        = "$(git -C "$cwd" hash-object -- "$path" 2>/dev/null)" ] || return 0
+    else
+      # A tracked file: the director's change only if it is on disk exactly as snapshotted (a
+      # deletion included: the snapshot then has no such path either).
+      git -C "$cwd" diff --quiet "$snap" -- "$path" 2>/dev/null || return 0
+    fi
+  done <<EOF_STATUS
+$status
+EOF_STATUS
+  return 1
+}
+
 # The review passed. With a piece open: accept it at this commit. Prints what is next —
 #   "next<TAB>title"  another planned piece is waiting
 #   "plan-done"       that was the last one: the job is finished
@@ -183,7 +221,7 @@ piece_base_sha() {   # $1=idir $2=project dir
 piece_accept_open() {   # $1=idir $2=project dir
   local idir="$1" cwd="$2" p n head next
   p="$(piece_open "$idir")"; [ -n "$p" ] || return 0
-  if [ -n "$(git -C "$cwd" status --porcelain --untracked-files=normal 2>/dev/null)" ]; then
+  if piece_worker_uncommitted "$idir" "$cwd"; then
     printf 'dirty\n'; return 0
   fi
   n="$(jq -r .n <<<"$p")"; head="$(git -C "$cwd" rev-parse HEAD 2>/dev/null || true)"

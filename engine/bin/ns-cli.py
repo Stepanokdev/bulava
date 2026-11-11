@@ -1218,6 +1218,12 @@ def cmd_doctor_server(args):
          "min_severity": os.environ.get("SUPERVISOR_CLAUDE_CHECKS_MIN_SEVERITY", "high"),
          "rounds": os.environ.get("SUPERVISOR_CLAUDE_CHECKS_ROUNDS", "1"),
          "required": os.environ.get("SUPERVISOR_CLAUDE_CHECKS_REQUIRED", "0") == "1"})
+    team_raw = os.environ.get("SUPERVISOR_REVIEW_TEAM", "contract security state" if prof == "server" else "")
+    team = [m for m in team_raw.split() if m in ("contract", "security", "state", "general", "negative", "legacy", "outcome")]
+    team = list(dict.fromkeys(team))
+    add("engine.review_team", "ok",
+        {"enabled": len(team) >= 2, "members": team if len(team) >= 2 else [],
+         "calls_per_round": len(team) if len(team) >= 2 else 1})
 
     # sign-in
     if shutil.which("claude"):

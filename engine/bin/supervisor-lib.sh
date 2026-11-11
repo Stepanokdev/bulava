@@ -986,6 +986,17 @@ compose_task_prompt() {   # stdout = full injected task
   printf '\n[ДОКАЗ] Якщо твоє твердження не доводиться звичайною збіркою чи тестами (поведінка в UI, стан після скролу, нестандартний проєкт, вкладені репозиторії) — зареєструй перевірку КОМАНДОЮ, і рушій виконає її сам:\n'
   printf '  %s "що саме доводиться" -- <команда, що виходить з 0 лише коли твердження істинне>\n' "$idir/add-check"
   printf '  Статус береться з коду виходу, команду читає рев'"'"'юер. Це не спосіб оголосити щось доведеним.\n'
+  printf '  Довга перевірка: --timeout <секунди> перед назвою. Неправильну чи зайву прибери: --remove "назва"; усі — --list.\n'
+  # Checks the previous task registered, set aside when this one began (pipeline.sh record_dispatch).
+  # Named, with the way back, only in the brief of the task they were set aside for.
+  if [ -s "$idir/checks-set-aside.json" ] \
+     && [ "$(jq -r '.dispatch_id // empty' "$idir/checks-set-aside.json" 2>/dev/null)" = "$(jq -r '.id // empty' "$idir/dispatch.json" 2>/dev/null)" ]; then
+    local _aside; _aside="$(jq -r '.file // empty' "$idir/checks-set-aside.json" 2>/dev/null)"
+    if [ -n "$_aside" ] && [ -s "$_aside" ]; then
+      printf '  Перевірки попередньої задачі відкладено: %s.\n' "$(jq -r '"«" + .criterion + "»"' "$_aside" 2>/dev/null | paste -sd ',' - | sed 's/,/, /g')"
+      printf '  Якщо це та сама робота і вони досі стосуються її — поверни: %s --restore-all (або --restore "назва").\n' "$idir/add-check"
+    fi
+  fi
 
   printf '\n[ЗАВЕРШЕННЯ] Коли задача РЕАЛЬНО завершена — заяви результат РІВНО один раз:\n'
   printf '  %s <result> "короткий підсумок"\n' "$idir/report-outcome"
@@ -2274,7 +2285,15 @@ pending_enqueue() {
   safe="$(printf '%s' "$mid" | tr -cd 'A-Za-z0-9-')"
   [ -n "$safe" ] || safe="anon-$$"
   file="$dir/$seq-$safe.json"
-  bind="$(thread_bind "$idir" "$msg" "$mid" "$seq" "$rel")"
+  # Where the old rule would only have guessed — the first message after a restart, after a settled
+  # task, after hours of silence — Jev is asked (jev-lib.sh). Here, before thread_bind takes the
+  # record's lock: it is a network call, and others break that lock after ten seconds.
+  local hint="" expect=""
+  if [ -z "$rel" ] && command -v jev_relation_for >/dev/null 2>&1; then
+    hint="$(jev_relation_for "$idir" "$msg" "$mid")"
+    rel="${hint%% *}"; [ "$hint" = "$rel" ] || expect="${hint#* }"
+  fi
+  bind="$(thread_bind "$idir" "$msg" "$mid" "$seq" "$rel" "$expect")"
   rel="$(printf '%s' "$bind" | awk '{print $1}')"
   tid="$(printf '%s' "$bind" | awk '{print $2}')"
   rev="$(printf '%s' "$bind" | awk '{print $3}')"
@@ -4248,6 +4267,9 @@ thread_relation() {   # $1=idir $2=message → continue|new
   case "$(thread_state "$idir")" in
     none) printf 'new'; return 0 ;;
   esac
+  # Brought back with a resumed run (lib/thread-carry.sh) and not judged by Jev: the engine before
+  # it had no record here, and that is the answer it gave.
+  [ -n "$(thread_get "$idir" '.carried_at')" ] && { printf 'new'; return 0; }
   # Said outright, it is not the engine's guess to overrule — open task or settled.
   explicit_new_task "$msg" && { printf 'new'; return 0; }
   case "$(thread_state "$idir")" in
@@ -4271,16 +4293,26 @@ thread_relation() {   # $1=idir $2=message → continue|new
 }
 
 # Bind a message to a task. Called at ENQUEUE. Echoes "relation thread_id revision".
-thread_bind() {   # $1=idir $2=message $3=message-id $4=seq [$5=forced relation]
-  local idir="${1:-}" msg="${2:-}" mid="${3:-}" seq="${4:-}" forced="${5:-}"
+thread_bind() {   # $1=idir $2=message $3=message-id $4=seq [$5=forced relation] [$6=task it was decided against]
+  local idir="${1:-}" msg="${2:-}" mid="${3:-}" seq="${4:-}" forced="${5:-}" expect="${6:-}"
   local rel tid rev now obj
   [ -n "$idir" ] && [ -d "$idir" ] || { printf 'new  0'; return 0; }
   _thread_lock "$idir"
   now="$(date +%s)"
   rel="$forced"
+  # A relation decided outside the lock (Jev) is about the task it was decided against. If another
+  # message has moved the record since, it is about nothing here, and the rule decides afresh.
+  [ -n "$expect" ] && [ "$(thread_get "$idir" '.thread_id')" != "$expect" ] && rel=""
   case "$rel" in continue|new) ;; *) rel="$(thread_relation "$idir" "$msg")" ;; esac
   # A continuation with nothing to continue is a new task, whatever anyone asked for.
   [ "$rel" = continue ] && [ "$(thread_state "$idir")" = none ] && rel=new
+  # A task brought back with a resumed run is decided once, here. Replaced by a new one, it takes
+  # the material that came back with it, so the new task reads only its own; continued, that
+  # material is the task's own again. Either way the snapshot of Claude's last reply has served.
+  if [ -n "$(thread_get "$idir" '.carried_at')" ]; then
+    [ "$rel" = new ] && command -v thread_carry_drop_material >/dev/null 2>&1 && thread_carry_drop_material "$idir"
+    rm -f "$idir/carried-material" "$idir/carried-last-reply.txt" 2>/dev/null
+  fi
 
   if [ "$rel" = new ]; then
     tid="$(uuidgen 2>/dev/null || printf '%s-%s' "$now" "$$")"
@@ -4618,7 +4650,10 @@ choose_branch_action() {  # $1=current branch name
   esac
 }
 
-PAID_API_ENV_VARS="ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX OPENAI_API_KEY CODEX_API_KEY"
+# TYPESAFE_API_KEY is not a model a worker could fall back to, but it is a paid key all the same:
+# Jev reads its own from the Keychain (jev-lib.sh), so a copy in the environment is only a leak into
+# every Claude and Codex this engine starts.
+PAID_API_ENV_VARS="ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX OPENAI_API_KEY CODEX_API_KEY TYPESAFE_API_KEY"
 
 subscription_env_prefix() {
   local p="env" v
@@ -6481,3 +6516,41 @@ detect_stacks() {  # $1=project dir
 [ -f "$_SUP_BIN_DIR/lib/tasks.sh" ] && . "$_SUP_BIN_DIR/lib/tasks.sh"
 # Independent Claude checks before the Codex review: bin/lib/claude-checks.sh.
 [ -f "$_SUP_BIN_DIR/lib/claude-checks.sh" ] && . "$_SUP_BIN_DIR/lib/claude-checks.sh"
+# The checks a worker registered outlive the run folder that held them. Stop, the idle teardown, the
+# stale cleanup and a resume all take that folder away, and a conversation continued in a new
+# session started with none (Tenders 5 Nov, 6 Nov; VSO-2023 on the factory) — each cost a review
+# round. They are kept beside the state by the folder's slug and a resume brings them back; whether
+# they still apply is then decided as for any message (pipeline.sh sets them aside, by name, when
+# the next message is a new task). A fresh start forgets them.
+checks_kept() { printf '%s/kept-checks/%s.jsonl' "$SUP_STATE" "${1:-}"; }
+checks_keep() {   # $1=instance dir (before it is removed)
+  local idir="${1%/}" dst
+  dst="$(checks_kept "$(basename "$idir")")"
+  # What is kept mirrors what the run had when it went — none included: a check removed with
+  # --remove, or set aside by a new task, must not come back with the next resume.
+  if [ ! -s "$idir/checks.jsonl" ]; then rm -f "$dst" 2>/dev/null; return 0; fi
+  mkdir -p "$(dirname "$dst")" 2>/dev/null || return 0
+  cp -f "$idir/checks.jsonl" "$dst.tmp.$$" 2>/dev/null && mv -f "$dst.tmp.$$" "$dst" 2>/dev/null \
+    || rm -f "$dst.tmp.$$" 2>/dev/null
+  return 0
+}
+checks_restore() {   # $1=new instance dir → 0 when checks were brought back
+  local idir="${1%/}" src
+  [ -d "$idir" ] && [ ! -s "$idir/checks.jsonl" ] || return 1
+  src="$(checks_kept "$(basename "$idir")")"
+  [ -s "$src" ] || return 1
+  cp -f "$src" "$idir/checks.jsonl" 2>/dev/null || return 1
+  # Marked as the conversation's: the first message after the resume is a new task to the engine
+  # when there is no task record to continue (Jev off), and that alone must not set them aside —
+  # only a new task said outright does (pipeline.sh record_dispatch).
+  : > "$idir/checks-restored"
+}
+checks_forget() { rm -f "$(checks_kept "${1:-}")" 2>/dev/null; return 0; }
+
+# The final code review by a team of focused reviewers.
+[ -f "$_SUP_BIN_DIR/lib/review-team.sh" ] && . "$_SUP_BIN_DIR/lib/review-team.sh"
+# What a chat changed in a folder with no git, measured against a copy kept outside it.
+[ -f "$_SUP_BIN_DIR/lib/plain-shadow.sh" ] && . "$_SUP_BIN_DIR/lib/plain-shadow.sh"
+# A chat's task kept beyond its run folder, and Jev asked whether a message continues it.
+[ -f "$_SUP_BIN_DIR/lib/thread-carry.sh" ] && . "$_SUP_BIN_DIR/lib/thread-carry.sh"
+[ -f "$_SUP_BIN_DIR/jev-lib.sh" ] && . "$_SUP_BIN_DIR/jev-lib.sh"

@@ -941,6 +941,34 @@ actor SupervisorClient {
         await Shell.run("\(nightShiftCmd) allow-git \"$1\" 2>&1", args: [projectPath], timeout: 60)
     }
 
+    enum ElsewhereCheckFailure: Error, Equatable, Sendable {
+        /// The run's record of its repositories is gone — the session was closed since, or the
+        /// folder is another run's now.
+        case noRecord
+        /// Not one of the repositories this run was given.
+        case notInRun
+        /// It ran and left nothing to read.
+        case noResult
+    }
+
+    /// Run the check after an answer in one of the run's other repositories. As long as a check can
+    /// take — a whole suite — because he asked for exactly that and is shown it is running.
+    ///
+    /// `runID` is the run whose answer it is. The engine refuses when that run no longer holds the
+    /// folder, rather than checking from whichever run holds it now.
+    func verifyElsewhere(primaryPath: String, repoPath: String,
+                         runID: String?) async -> Result<Evidence, ElsewhereCheckFailure> {
+        let r = await Shell.run("\(nightShiftCmd) verify-elsewhere \"$1\" \"$2\" \"$3\" 2>/dev/null",
+                                args: [primaryPath, repoPath, runID ?? ""], timeout: 7500)
+        let out = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        if out.contains("\"not-in-run\"") { return .failure(.notInRun) }
+        if out.contains("\"no-run\"") || out.contains("\"run-ended\"") { return .failure(.noRecord) }
+        guard r.exitCode == 0, let path = out.split(separator: "\n").last.map(String.init),
+              let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let evidence = Evidence.decode(from: data) else { return .failure(.noResult) }
+        return .success(evidence)
+    }
+
     /// The folder's uncommitted work, as a start would ask about it. Read-only on the engine's side:
     /// no index refresh and no lock, so it is safe to call while the director works in another tool.
     func dirtyState(projectPath: String) async -> DirtyTree? {

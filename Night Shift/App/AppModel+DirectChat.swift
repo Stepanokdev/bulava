@@ -313,7 +313,8 @@ extension AppModel {
         let chat = conversations.adoptChat(id: chatID, for: productID)
         withdrawProposal(inChat: chat.id, productID: productID)
         let superseding = supersededChatIDs.remove(chat.id) != nil
-        let message = directMessage(text, attachments: attachments, superseding: superseding)
+        let message = directMessage(text, attachments: attachments, superseding: superseding,
+                                    chatID: chat.id, entryID: entryID)
         let userEntry = conversations.appendUser(text, productID: productID, chatID: chat.id,
                                                  attachments: attachments, id: entryID)
         if isDirectChatBusy(chat.id) {
@@ -427,8 +428,13 @@ extension AppModel {
             if let failure = outcome.failure {
                 // Codex had the message: whatever it did before failing may already be done.
                 failChat(chat.id, failure, .uncertain("codex.turn_failed"))
+                // Whether the thread kept the hand-over this message carried is not known, and this
+                // message is not marked failed, so it gets no retry. The next one carries it instead:
+                // the conversation said twice is better than not said at all.
+                folderMoveHandoffReleased(chatID: chat.id, entryID: entryID)
             } else {
                 confirmedDeliveries.insert(entryID)
+                folderMoveHandoffDelivered(chatID: chat.id, entryID: entryID)
             }
             products.worked(product.id)
         }
@@ -565,7 +571,8 @@ extension AppModel {
         handoffBlocked[chatID] = nil
         signInBlocked[chatID] = nil
         conversations.setCodexWall(entryID: entryID, nil)
-        deliver(message: directMessage(entry.text, attachments: entry.attachments),
+        deliver(message: directMessage(entry.text, attachments: entry.attachments,
+                                       chatID: chatID, entryID: entryID),
                 entryID: entryID, chat: chat, product: product)
     }
 
@@ -589,7 +596,8 @@ extension AppModel {
         conversations.updateDelivery(entryID: entryID, nil)
         conversations.appendForeman(String(localized: "Claude answered this one — you asked it to, because Codex had no window left."),
                                     productID: product.id, chatID: chatID)
-        deliverViaClaude(message: directMessage(entry.text, attachments: entry.attachments),
+        deliverViaClaude(message: directMessage(entry.text, attachments: entry.attachments,
+                                                chatID: chatID, entryID: entryID),
                          entryID: entryID, chat: chat, product: product)
     }
 
@@ -712,9 +720,22 @@ extension AppModel {
     }
 
     private func deliver(message: String, entryID: UUID, chat: Chat, product: Product) {
+        // Between stopping the old folder's session and binding the new folder there is a moment
+        // when this chat belongs to neither. A message sent into it then — from the phone, say —
+        // would start a session in the folder he is leaving.
+        if movingChatFolders.contains(chat.id) {
+            conversations.updateDelivery(entryID: entryID, .failed)
+            failChat(chat.id, String(localized: "This chat is moving to another folder. Send the message again in a moment."), .needsYou)
+            return
+        }
         // A conversation that works in a copy — every automation run, and a chat he asked to keep
         // out of his folder — goes through the engine: that is the path that knows about the copy,
         // the review and the outcome a run is read by.
+        if let busy = jobFolderBusyForAnswer(chatID: chat.id) {
+            conversations.updateDelivery(entryID: entryID, .failed)
+            failChat(chat.id, busy, .needsYou)
+            return
+        }
         if chat.isAutomationRun || chat.wantsCopy || chat.workCopyID != nil {
             deliverViaClaude(message: message, entryID: entryID, chat: chat, product: product)
             return
@@ -886,8 +907,15 @@ extension AppModel {
             }
 
             if binding == nil {
+                // What the chat already noted about this folder without a session in it — a folder
+                // he chose, or moved it to, with the reports and the hand-over that go with that.
+                // The new session's binding is built on it rather than from nothing, so a start that
+                // fails after this point still hands the conversation over on the retry.
+                let noted = conversations.chat(id: chat.id)?.session.flatMap {
+                    $0.claudeSessionID == nil ? $0 : nil
+                }
                 if let existing = instanceForAdoption(projectPath: primary.path, chatID: chat.id) {
-                    binding = makeBinding(for: primary, instance: existing)
+                    binding = makeBinding(for: primary, instance: existing, keeping: noted)
                     conversations.bindSession(binding!, to: chat.id)
                 } else if let folder = ClaudeFolderTrust.folderNeedingTrust(forProjectPath: primary.path) {
 
@@ -1005,7 +1033,7 @@ extension AppModel {
                         }
                         return
                     }
-                    binding = self.makeBinding(for: primary, instance: instance)
+                    binding = self.makeBinding(for: primary, instance: instance, keeping: noted)
                     conversations.bindSession(binding!, to: chat.id)
                 }
             }
@@ -1060,6 +1088,7 @@ extension AppModel {
                 conversations.updateDelivery(entryID: entryID,
                                              result.uncertain ? .queued : nil)
                 if result.confirmed { confirmedDeliveries.insert(entryID) }
+                folderMoveHandoffDelivered(chatID: chat.id, entryID: entryID)
                 if let instance = await client.awaitChatInstance(projectPath: bound.projectPath,
                                                                  timeout: 8) {
                     // From the binding as it is NOW. `bound` was taken before the answer marker
@@ -1075,6 +1104,8 @@ extension AppModel {
                 // row says queued because that is what it is, and the header says who is reading.
                 conversations.updateDelivery(entryID: entryID, .queued)
                 chatErrors[chat.id] = nil
+                // The engine holds the message as it was sent — hand-over and all — and delivers it.
+                folderMoveHandoffDelivered(chatID: chat.id, entryID: entryID)
                 if let instance = await client.awaitChatInstance(projectPath: bound.projectPath,
                                                                  timeout: 8) {
                     // From the binding as it is NOW. `bound` was taken before the answer marker
@@ -1088,6 +1119,7 @@ extension AppModel {
             case .queued:
                 conversations.updateDelivery(entryID: entryID, .queued)
                 chatErrors[chat.id] = nil
+                folderMoveHandoffDelivered(chatID: chat.id, entryID: entryID)
                 await refresh(codex: false)
             case .conflict:
                 conversations.updateDelivery(entryID: entryID, .failed)
@@ -1152,9 +1184,15 @@ extension AppModel {
         return env
     }
 
+    /// `chatID` and `entryID` let a chat that was just moved to another folder hand its new session
+    /// the conversation so far — everything said before `entryID`, the message being sent.
     private func directMessage(_ text: String, attachments: [Attachment],
-                               superseding: Bool = false) -> String {
+                               superseding: Bool = false,
+                               chatID: UUID? = nil, entryID: UUID? = nil) -> String {
         var parts: [String] = []
+        if let chatID, let entryID, let carried = folderMoveHandoff(chatID: chatID, for: entryID) {
+            parts.append(carried)
+        }
         // A message he took back after the agent had read it cannot be un-read, so the
         // replacement says so out loud rather than hoping the agent works it out.
         if superseding { parts.append(MessageWithdrawal.supersedingPreamble()) }
@@ -1209,18 +1247,24 @@ extension AppModel {
 
     func makeBinding(for project: Project, instance: SupervisorInstance,
                              keeping old: ChatSessionBinding? = nil) -> ChatSessionBinding {
-        ChatSessionBinding(primaryProjectID: project.id,
-                           projectPath: project.path,
-                           claudeSessionID: instance.sessionID ?? old?.claudeSessionID,
+        let session = instance.sessionID ?? old?.claudeSessionID
+        return ChatSessionBinding(primaryProjectID: project.id,
+                                  projectPath: project.path,
+                                  claudeSessionID: session,
 
-                           codexThreadID: old?.codexThreadID,
-                           activeRunID: instance.runID,
-                           branch: instance.branch,
-                           startedAt: instance.startedAt ?? old?.startedAt ?? Date(),
-                           outcomeAt: old?.outcomeAt,
-                           lastCompletedTurnKey: old?.lastCompletedTurnKey,
-                           lastReportedTurnKey: old?.lastReportedTurnKey,
-                           reportPaths: old?.reportPaths ?? [])
+                                  codexThreadID: old?.codexThreadID,
+                                  activeRunID: instance.runID,
+                                  branch: instance.branch,
+                                  startedAt: instance.startedAt ?? old?.startedAt ?? Date(),
+                                  outcomeAt: old?.outcomeAt,
+                                  lastCompletedTurnKey: old?.lastCompletedTurnKey,
+                                  lastReportedTurnKey: old?.lastReportedTurnKey,
+                                  reportPaths: old?.reportPaths ?? [],
+                                  // Until the message carrying the hand-over is delivered
+                                  // (`folderMoveHandoffDelivered`), not until a session id appears:
+                                  // the start writes the id before anything has been sent to it.
+                                  movedFrom: old?.movedFrom,
+                                  handoffEntryID: old?.handoffEntryID)
     }
 
     /// The chat that currently holds this project's session, and whether it is actually working.
