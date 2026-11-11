@@ -259,6 +259,12 @@ nonisolated struct PipelineDocument: Codable, Sendable, Equatable {
     var isBuiltin: Bool { builtin == true }
     var isImported: Bool { origin?.kind == "github" || origin?.kind == "file" }
 
+    /// As `PipelineSummary.displayName`: a built-in in the app's language, anybody's own as named.
+    var displayName: String {
+        if isBuiltin, !PipelineText.prefersUkrainian, let en = i18n?["en"]?["name"], !en.isEmpty { return en }
+        return name.isEmpty ? id : name
+    }
+
     var localizedDescription: String {
         if !PipelineText.prefersUkrainian, let en = i18n?["en"]?["description"], !en.isEmpty { return en }
         return description
@@ -429,7 +435,12 @@ nonisolated struct PipelineSummary: Codable, Sendable, Equatable, Identifiable, 
         if !PipelineText.prefersUkrainian, let en = i18n?["en"]?["description"], !en.isEmpty { return en }
         return description
     }
-    var displayName: String { (name?.isEmpty == false ? name : nil) ?? id }
+    /// A built-in's name can be worded per language ("Claude + a Codex team"); a name somebody gave
+    /// their own pipeline is shown as they wrote it.
+    var displayName: String {
+        if isBuiltin, !PipelineText.prefersUkrainian, let en = i18n?["en"]?["name"], !en.isEmpty { return en }
+        return (name?.isEmpty == false ? name : nil) ?? id
+    }
     var runnable: Bool { broken == nil && (errors ?? 0) == 0 }
 }
 

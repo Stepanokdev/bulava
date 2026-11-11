@@ -1,0 +1,10 @@
+{
+  "schema": "bulava.layout/1",
+  "nodes": {
+    "chat": { "x": 0, "y": 56 }, "context": { "x": 230, "y": 56 },
+    "peer-claude": { "x": 460, "y": 0 }, "peer-codex": { "x": 460, "y": 112 },
+    "align": { "x": 690, "y": 56 }, "compose": { "x": 920, "y": 56 },
+    "deliver": { "x": 0, "y": 276 }, "scope": { "x": 230, "y": 276 }, "verify": { "x": 460, "y": 276 },
+    "review": { "x": 690, "y": 276 }, "report": { "x": 920, "y": 236 }, "merge": { "x": 920, "y": 336 }
+  }
+}

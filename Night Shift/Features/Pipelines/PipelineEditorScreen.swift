@@ -88,7 +88,7 @@ struct PipelineEditorScreen: View {
                 .help(Text("All pipelines"))
             VStack(alignment: .leading, spacing: 2) {
                 if state.readOnly {
-                    Text(verbatim: state.doc?.name ?? pipelineID)
+                    Text(verbatim: state.doc?.displayName ?? pipelineID)
                         .font(Typo.toolbarTitle).foregroundStyle(Palette.text)
                 } else {
                     TextField("Name", text: Binding(get: { state.doc?.name ?? "" },

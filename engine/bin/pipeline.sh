@@ -50,11 +50,14 @@ case "$PIPE" in *[!a-z0-9-]*|"") PIPE=plain ;; esac   # a name goes onto a path
 # somebody built lives in the engine's STATE, because the engine folder is replaced wholesale on
 # every update. A name that is neither is refused out loud: falling back to `plain` used to turn a
 # misspelt pipeline into "no positions, no review" without a word to anyone.
+# A built-in with no stage list of its own (`review-team`) runs from its description in the engine,
+# compiled like anybody's — the same order `pipeline-tool.py resolve` answers with.
 SRC_KIND=legacy
 SRC_DEF="$ROOT/supervisor/pipelines/$PIPE.json"
 if [ ! -s "$SRC_DEF" ]; then
   SRC_KIND=manifest
-  SRC_DEF="$SUP_STATE/pipelines/$PIPE"
+  SRC_DEF="$ROOT/supervisor/pipelines/manifests/$PIPE"
+  [ -s "$SRC_DEF/pipeline.json" ] || SRC_DEF="$SUP_STATE/pipelines/$PIPE"
   if [ ! -s "$SRC_DEF/pipeline.json" ]; then
     echo "$(date '+%F %T') [pipeline/$PIPE] no such pipeline — refusing rather than running plain" >> "$LOG"
     RUN_EVENT_MESSAGE_ID="$MSG_ID" RUN_EVENT_PIPELINE="$PIPE" \

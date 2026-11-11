@@ -49,6 +49,40 @@ fi
 jq -e '.gates.review == true and .gates.maxRounds == 3 and (.needs == ["codex"])' "$TMP/c.json" >/dev/null \
   && ok "and its gates say: reviewed, up to 3 rounds; it needs Codex" || bad "gates/needs: $(jq -c '{gates,needs}' "$TMP/c.json")"
 
+echo "===== the built-in with a review team: the same stages, a team at the review ====="
+RT="$ENGINE_ROOT/supervisor/pipelines/manifests/review-team"
+[ "$(tool resolve review-team)" = "manifest:$RT" ] && ok "it runs from its description" || bad "resolve review-team: $(tool resolve review-team)"
+[ "$(tool resolve adaptive-peer)" = "legacy:$ENGINE_ROOT/supervisor/pipelines/adaptive-peer.json" ] \
+  && ok "Claude + Codex still runs its proven stage list" || bad "resolve adaptive-peer: $(tool resolve adaptive-peer)"
+tool check review-team && ok "it can be chosen: the door lets it through" || bad "check review-team refused it"
+tool validate "$RT" > "$TMP/vt.json"
+jq -e '.ok and (.issues|length)==0 and ([.guarantees[].k] == ["review","team","scope","verify"]) and ([.guarantees[]|select(.k=="team")][0].t.uk == "Команда з 3")' "$TMP/vt.json" >/dev/null \
+  && ok "valid, and it says a team of 3 reviews" || bad "validate review-team: $(jq -c '{issues,guarantees}' "$TMP/vt.json")"
+tool compile "$RT" --out "$TMP/ct.json" >/dev/null
+[ "$(jq -c "$proj" "$TMP/ct.json")" = "$(jq -c "$proj" "$ENGINE_ROOT/supervisor/pipelines/adaptive-peer.json")" ] \
+  && ok "its stages are exactly Claude + Codex's" || bad "review-team stages differ from adaptive-peer.json"
+jq -e '.gates.review == true and .gates.maxRounds == 3 and .gates.reviewTeam == "contract security state"' "$TMP/ct.json" >/dev/null \
+  && ok "its gates: reviewed, 3 rounds, by contract, security and state" || bad "review-team gates: $(jq -c .gates "$TMP/ct.json")"
+jq -e '.gates | has("reviewTeam") | not' "$TMP/c.json" >/dev/null && ok "Claude + Codex names no team: the engine decides, as before" || bad "adaptive-peer gates name a team"
+tool list | jq -e '[.pipelines[] | select(.id=="review-team")][0] | .kind == "builtin" and .name == "Claude + команда Codex" and .i18n.en.name == "Claude + a Codex team"' >/dev/null \
+  && ok "the library lists it as built in, named in both languages" || bad "library entry: $(tool list | jq -c '.pipelines[]|select(.id=="review-team")')"
+tool save review-team --in "$RT/pipeline.json" >/dev/null 2>&1 && bad "a built-in could be overwritten" || ok "and it cannot be overwritten"
+for t in one specialists specialists-general all; do
+  "$PY" - "$ENGINE_ROOT/supervisor/pipelines/manifests/adaptive-peer/pipeline.json" "$t" > "$TMP/m-$t.json" <<'PYEOF'
+import json, sys
+m = json.load(open(sys.argv[1])); m.pop("builtin", None); m.pop("executes", None)
+next(n for n in m["nodes"] if n["id"] == "review")["params"] = {"team": sys.argv[2]}
+print(json.dumps(m))
+PYEOF
+  mkdir -p "$TMP/p-$t"; cp "$TMP/m-$t.json" "$TMP/p-$t/pipeline.json"
+  tool compile "$TMP/p-$t" --out "$TMP/c-$t.json" >/dev/null
+done
+[ "$(jq -r .gates.reviewTeam "$TMP/c-one.json")" = off ] && ok "one reviewer is said as off, so a server default does not apply" || bad "one: $(jq -c .gates "$TMP/c-one.json")"
+[ "$(jq -r .gates.reviewTeam "$TMP/c-specialists-general.json")" = "contract security state general" ] && ok "the specialists and an ordinary reviewer" || bad "specialists-general"
+[ "$(jq -r .gates.reviewTeam "$TMP/c-all.json" | wc -w | tr -d ' ')" = 7 ] && ok "all seven focuses" || bad "all: $(jq -c .gates "$TMP/c-all.json")"
+tool registry | jq -e '.modules["gate.review"].p[0] | .k == "team" and .type == "select" and .default == "one" and (.options | length) == 4 and .ol.specialists.uk != null' >/dev/null 2>&1 \
+  && ok "the editor gets the choice with its labels" || bad "registry gate.review: $(tool registry | jq -c '.modules["gate.review"].p' 2>/dev/null)"
+
 echo "===== every broken description fails with its own code ====="
 "$PY" - "$TOOL" "$ENGINE_ROOT" > "$TMP/cases.txt" 2>&1 <<'PYEOF'
 import json, subprocess, sys, copy, os
@@ -106,6 +140,8 @@ def no_trigger(m):
     m["nodes"] = [n for n in m["nodes"] if n["id"] != "chat"]; m["edges"] = [e for e in m["edges"] if not e["from"].startswith("chat.")]
 case("no trigger", ["V11"], no_trigger)
 case("a module this engine cannot run", ["V18"], lambda m: node(m, "deliver").update(module="bulava/agent.codex@1"))
+case("an unknown review team", ["V30"], lambda m: node(m, "review").update(params={"team": "everyone"}))
+case("a known review team", [], lambda m: node(m, "review").update(params={"team": "specialists-general"}))
 PYEOF
 while IFS= read -r line; do
   case "$line" in PASS*) ok "${line#PASS }" ;; FAIL*) bad "${line#FAIL }" ;; *) bad "validator harness: $line" ;; esac
@@ -278,6 +314,17 @@ last_ms="$(jq -r --arg m "$MID" 'select(.message_id == $m) | .ms' "$EV" | tail -
 echo "===== the snapshot is what the run used, whatever happens to the file later ====="
 printf 'CHANGED-AFTER\n' > "$P/prompts/web.md"
 grep -q RESEARCH-PROMPT-SENTINEL "$ART/pipeline/prompts/web.md" && ok "editing the pipeline afterwards does not touch the run's copy" || bad "the snapshot followed the live file"
+
+echo "===== the built-in review team runs through the same route and hands its team to the gate ====="
+MID2="bbbbbbbb-1111-2222-3333-444444444444"
+out="$(send "Додай перевірку пароля" "$MID2" "review-team")"; rc=$?
+case "$out" in *"TIER=preparing"*) ok "review-team is accepted for preparation" ;; *) bad "send review-team: rc=$rc $out" ;; esac
+wait_quiet 120 || bad "the pump never finished review-team"
+ART2="$(find "$IDIR/messages" -maxdepth 1 -type d -name "*-$MID2" | head -1)"
+[ "$(jq -c '[.stages[].id]' "$ART2/pipeline.compiled.json" 2>/dev/null)" = '["context","peer-claude","peer-codex","align","compose","deliver"]' ] \
+  && ok "it compiled Claude + Codex's stages from the engine's own description" || bad "review-team stages: $(jq -c '[.stages[].id]' "$ART2/pipeline.compiled.json" 2>/dev/null)"
+jq -e '.pipeline == "review-team" and .pipeline_gates.reviewTeam == "contract security state" and .pipeline_gates.maxRounds == 3' "$IDIR/dispatch.json" >/dev/null \
+  && ok "the dispatch record names the team the gate must use" || bad "dispatch gates: $(jq -c '{pipeline,pipeline_gates}' "$IDIR/dispatch.json")"
 
 echo "===== a required stage failing inside a parallel group stops the run ====="
 ENG="$TMP/engine"; mkdir -p "$ENG"

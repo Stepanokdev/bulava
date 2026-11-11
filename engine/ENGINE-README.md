@@ -432,6 +432,10 @@ Every default lives in **one file** — `supervisor/config.sh` (the single sourc
 - `SUPERVISOR_REVIEW_TEAM` — Codex's final code review by a team of focused reviewers instead of
   one, their findings joined with no vote (`bin/lib/review-team.sh`, `SERVER.md`). Default
   `contract security state` on a server, empty (one reviewer) everywhere else; three calls a round.
+  A pipeline's review step can choose for itself ("Who reviews": one reviewer, the three
+  specialists, the specialists and an ordinary reviewer, all seven focuses), and then its choice
+  wins. The built-in pipeline `review-team` ("Claude + a Codex team") is `adaptive-peer` with the
+  three specialists at the review; `adaptive-peer` stays the default.
 - `SUPERVISOR_MAX_ROUNDS` — base patience: this many FAIL rounds are always allowed (default 3)
 - `SUPERVISOR_MAX_ROUNDS_HARD` — the absolute ceiling of rounds per session, protection against a
   loop (default 12)

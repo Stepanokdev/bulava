@@ -1,0 +1,160 @@
+{
+  "schema": "bulava.pipeline/1",
+  "id": "review-team",
+  "name": "Claude + команда Codex",
+  "description": "Те саме, що «Claude + Codex», тільки фінальне рев'ю роблять три рев'юери Codex, кожен під своїм кутом: контракт і бізнес-логіка, безпека й дані, стани та інтеграції. Якщо хоч один знайшов дефект, робота повертається. На стенді з посадженими багами команда ловила 72% проти 62–67% в одного рев'юера, хоча перевага поки невелика. Кожне рев'ю коштує три виклики Codex, а не один.",
+  "i18n": {
+    "en": {
+      "description": "Same as Claude + Codex, except three Codex reviewers do the final review, each from its own angle: contract and business logic, security and data, state and integrations. If any one of them finds a defect, the work goes back. On a bench of planted bugs the team caught 72% against 62–67% for a single reviewer, a small edge so far. Each review costs three Codex calls instead of one.",
+      "node.chat": "Chat message",
+      "node.context": "Neutral context",
+      "node.peer-claude": "Claude's position",
+      "node.peer-codex": "Codex's position",
+      "node.align": "Align the positions",
+      "node.compose": "Brief for the worker",
+      "node.deliver": "Claude does the work",
+      "node.scope": "Scope of changes",
+      "node.verify": "Build proof",
+      "node.review": "Review by a Codex team",
+      "node.report": "Report",
+      "node.merge": "Merge the branch",
+      "name": "Claude + a Codex team"
+    }
+  },
+  "version": "1.0.0",
+  "revision": 1,
+  "builtin": true,
+  "nodes": [
+    {
+      "id": "chat",
+      "module": "bulava/trigger.chat@1",
+      "title": "Повідомлення в чаті"
+    },
+    {
+      "id": "context",
+      "module": "bulava/prep.context@1",
+      "title": "Нейтральний контекст"
+    },
+    {
+      "id": "peer-claude",
+      "module": "bulava/prep.position@1",
+      "title": "Позиція Claude",
+      "params": {
+        "engine": "claude",
+        "skipOnFollowup": true
+      }
+    },
+    {
+      "id": "peer-codex",
+      "module": "bulava/prep.position@1",
+      "title": "Позиція Codex",
+      "params": {
+        "engine": "codex",
+        "skipOnFollowup": true
+      }
+    },
+    {
+      "id": "align",
+      "module": "bulava/prep.align@1",
+      "title": "Звірка позицій",
+      "params": {
+        "skipOnFollowup": true
+      }
+    },
+    {
+      "id": "compose",
+      "module": "bulava/prep.compose@1",
+      "title": "Бриф виконавцю"
+    },
+    {
+      "id": "deliver",
+      "module": "bulava/agent.claude@1",
+      "title": "Claude виконує"
+    },
+    {
+      "id": "scope",
+      "module": "bulava/gate.scope@1",
+      "title": "Межі змін"
+    },
+    {
+      "id": "verify",
+      "module": "bulava/gate.verify@1",
+      "title": "Доказ збіркою"
+    },
+    {
+      "id": "review",
+      "module": "bulava/gate.review@1",
+      "title": "Рев'ю командою Codex",
+      "params": {
+        "team": "specialists"
+      }
+    },
+    {
+      "id": "report",
+      "module": "bulava/out.report@1",
+      "title": "Звіт"
+    },
+    {
+      "id": "merge",
+      "module": "bulava/out.merge@1",
+      "title": "Злиття гілки"
+    }
+  ],
+  "edges": [
+    {
+      "from": "chat.task",
+      "to": "context.task"
+    },
+    {
+      "from": "context.context",
+      "to": "peer-claude.context"
+    },
+    {
+      "from": "context.context",
+      "to": "peer-codex.context"
+    },
+    {
+      "from": "peer-claude.position",
+      "to": "align.positions"
+    },
+    {
+      "from": "peer-codex.position",
+      "to": "align.positions"
+    },
+    {
+      "from": "align.checks",
+      "to": "compose.in"
+    },
+    {
+      "from": "compose.brief",
+      "to": "deliver.brief"
+    },
+    {
+      "from": "deliver.work",
+      "to": "scope.work"
+    },
+    {
+      "from": "scope.work",
+      "to": "verify.work"
+    },
+    {
+      "from": "verify.work",
+      "to": "review.work"
+    },
+    {
+      "from": "review.pass",
+      "to": "report.in"
+    },
+    {
+      "from": "review.pass",
+      "to": "merge.work"
+    },
+    {
+      "from": "review.fail",
+      "to": "deliver.feedback",
+      "loop": {
+        "max": 3
+      }
+    }
+  ]
+}
