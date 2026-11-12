@@ -54,7 +54,7 @@ declare_done(){ jq -nc --arg r "$RID" --arg n "$RANDOM$RANDOM" '{result:"succeed
 rungate(){
   rm -f "$PROMPT"
   printf '{"session_id":"%s","transcript_path":"%s","cwd":"%s","stop_hook_active":false}' "$RID" "$TR" "$PROJ" \
-    | ORCHESTRATOR_RUN_ID="$RID" SUPERVISOR_VERIFIER_ENABLED=0 SUPERVISOR_CLAUDE_CHECKS=0 PATH="$FAKE:$PATH" "$GATE" 2>/dev/null
+    | ORCHESTRATOR_RUN_ID="$RID" SUPERVISOR_VERIFIER_ENABLED=0 PATH="$FAKE:$PATH" "$GATE" 2>/dev/null
 }
 round(){ printf '%s\n' "$@" > "$REVIEW"; work "round $RANDOM"; declare_done; OUT="$(rungate)"; }
 stall(){ cut -d' ' -f2 "$SUPERVISOR_STATE_DIR/rounds-meta-$RID" 2>/dev/null; }

@@ -6514,8 +6514,6 @@ detect_stacks() {  # $1=project dir
 
 # Tasks that outlive their sessions (a bridge's PRJ-123): bin/lib/tasks.sh.
 [ -f "$_SUP_BIN_DIR/lib/tasks.sh" ] && . "$_SUP_BIN_DIR/lib/tasks.sh"
-# Independent Claude checks before the Codex review: bin/lib/claude-checks.sh.
-[ -f "$_SUP_BIN_DIR/lib/claude-checks.sh" ] && . "$_SUP_BIN_DIR/lib/claude-checks.sh"
 # The checks a worker registered outlive the run folder that held them. Stop, the idle teardown, the
 # stale cleanup and a resume all take that folder away, and a conversation continued in a new
 # session started with none (Tenders 5 Nov, 6 Nov; VSO-2023 on the factory) — each cost a review

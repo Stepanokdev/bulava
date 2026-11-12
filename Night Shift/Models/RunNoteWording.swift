@@ -230,6 +230,7 @@ nonisolated enum RunNoteWording {
         Template("Нічого зібрати чи протестувати \\((.*)\\)") { g, b in
             String(localized: "Nothing to build or test (\(g[0] ?? ""))", bundle: b)
         },
+        // The separate Claude checks were removed from the engine in 1.19.2; these read the runs before it.
         Template("Незалежні перевірки пропущено: збірка червона") { _, b in
             String(localized: "Independent checks skipped: the build is red", bundle: b)
         },

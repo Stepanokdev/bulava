@@ -18,7 +18,7 @@ export SUPERVISOR_STATE_DIR="$(mktemp -d)"
 . "$ROOT/bin/supervisor-lib.sh"
 GATE="$ROOT/hooks/review-gate.sh"
 export SUPERVISOR_CODEX_USAGE_CMD="/usr/bin/true" SUPERVISOR_CLAUDE_USAGE_CMD="/usr/bin/true"
-export CODEX_SESSIONS_DIR="$(mktemp -d)" SUPERVISOR_CLAUDE_CHECKS=0
+export CODEX_SESSIONS_DIR="$(mktemp -d)"
 # A real inject would type into tmux; any call to it here is a delivery that should not happen.
 export SUPERVISOR_INJECT_CMD="$SUPERVISOR_STATE_DIR/inject-should-not-run"
 printf '#!/bin/bash\necho typed >> "%s/typed"\nexit 0\n' "$SUPERVISOR_STATE_DIR" > "$SUPERVISOR_INJECT_CMD"; chmod +x "$SUPERVISOR_INJECT_CMD"

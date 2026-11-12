@@ -73,7 +73,7 @@ mkcase(){
 }
 rungate(){
   printf '{"session_id":"%s","transcript_path":"%s","cwd":"%s","stop_hook_active":false}' "s-$RANDOM" "$TR" "$PROJ" \
-    | ORCHESTRATOR_RUN_ID="$RID" SUPERVISOR_VERIFIER_ENABLED=0 SUPERVISOR_CLAUDE_CHECKS=0 PATH="$FAKE:$PATH" "$GATE" 2>/dev/null
+    | ORCHESTRATOR_RUN_ID="$RID" SUPERVISOR_VERIFIER_ENABLED=0 PATH="$FAKE:$PATH" "$GATE" 2>/dev/null
 }
 calls(){ grep -c . "$CALLS" 2>/dev/null || echo 0; }
 done_is(){ [ "$(cat "$IDIR/done" 2>/dev/null)" = "$1" ]; }

@@ -1212,12 +1212,9 @@ def cmd_doctor_server(args):
     policy = os.environ.get("SUPERVISOR_CODEX_UNAVAILABLE", "fail" if prof == "server" else "")
     add("engine.codex_policy", "ok" if policy in ("wait", "fail") else "warn",
         {"policy": policy or None, "after_hours": os.environ.get("SUPERVISOR_CODEX_UNAVAILABLE_AFTER_HOURS", "3")})
-    checks_on = os.environ.get("SUPERVISOR_CLAUDE_CHECKS", "1" if prof == "server" else "0") == "1"
-    add("engine.claude_checks", "ok" if checks_on or prof != "server" else "warn",
-        {"enabled": checks_on, "list": os.environ.get("SUPERVISOR_CLAUDE_CHECKS_LIST", "code security").split(),
-         "min_severity": os.environ.get("SUPERVISOR_CLAUDE_CHECKS_MIN_SEVERITY", "high"),
-         "rounds": os.environ.get("SUPERVISOR_CLAUDE_CHECKS_ROUNDS", "1"),
-         "required": os.environ.get("SUPERVISOR_CLAUDE_CHECKS_REQUIRED", "0") == "1"})
+    # The separate Claude checks before Codex were removed (1.19.2): Codex alone reviews the work. The
+    # key stays so a runner that compares it with its own setting reads "off", not a missing line.
+    add("engine.claude_checks", "ok", {"enabled": False, "removed": True})
     team_raw = os.environ.get("SUPERVISOR_REVIEW_TEAM", "contract security state" if prof == "server" else "")
     team = [m for m in team_raw.split() if m in ("contract", "security", "state", "general", "negative", "legacy", "outcome")]
     team = list(dict.fromkeys(team))
