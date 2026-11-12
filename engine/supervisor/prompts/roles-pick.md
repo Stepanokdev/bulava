@@ -23,4 +23,5 @@ How to decide:
 - Testing and review steps are cheap insurance for anything that changes behaviour.
 
 Answer ONLY the JSON the schema asks for: every step listed above exactly once, with `run`
-true or false and `why` — one short sentence in Ukrainian that the director will read.
+true or false and `why` — one short sentence in {{LANGUAGE}} that the director will read: it is
+shown under each step left out, so write it in that language whatever the task is written in.
