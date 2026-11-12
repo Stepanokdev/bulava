@@ -184,8 +184,6 @@ piece_after_pass() {
   reset_review_budget "$IDIR_SCOPE" "шматок $n прийнято"
   [ -s "$IDIR_SCOPE/outcome.json" ] && mv -f "$IDIR_SCOPE/outcome.json" "$IDIR_SCOPE/outcome.piece-$n.json" 2>/dev/null
   rm -f "$(review_frames_file "$IDIR_SCOPE")" 2>/dev/null
-  # The independent Claude checks keep their own budget with the task; a new piece gets them again.
-  declare -F claude_checks_home >/dev/null && rm -f "$(claude_checks_home "$IDIR_SCOPE")/rounds" 2>/dev/null
   gate_event gate.piece accepted "Шматок $n «${title}» прийнято — далі «${next}»"
   journal_event "$IDIR_SCOPE" piece "accepted $n: $title; next: $next" '{"source":"gate"}' 2>/dev/null || true
   # The director has sent a new task meanwhile. Opening the next piece would keep this turn — and his
@@ -1646,66 +1644,6 @@ $_spec_note}" \
   exit 0
 fi
 
-# Independent checks: a code review and a security review in Claude sessions of their own, before
-# Codex (bin/lib/claude-checks.sh). Advice only — what they find above the threshold goes back to
-# the worker while the task's budget lasts, and Codex is shown all of it with the worker's answers.
-# Not on a red build: that is Codex's to return, and the checks would read code about to change.
-CHECKS_BLOCK=""
-if [ -n "${IDIR_SCOPE:-}" ] && claude_checks_enabled; then
-  claude_checks_take_reply "$IDIR_SCOPE" "$transcript"
-  _cc_home="$(claude_checks_home "$IDIR_SCOPE")"
-  _cc_sum=""
-  if [ "${verify_status:-}" = fail ]; then
-    _cc_sum="$(cat "$_cc_home/last-summary" 2>/dev/null || true)"
-    gate_event gate.check skipped "Незалежні перевірки пропущено: збірка червона"
-  elif [ "$(claude_checks_rounds_used "$IDIR_SCOPE")" -ge "$(claude_checks_rounds_max)" ]; then
-    # The budget is spent: no new reading, Codex gets the last one and what the worker answered.
-    _cc_sum="$(cat "$_cc_home/last-summary" 2>/dev/null || true)"
-    gate_event gate.check skipped "Незалежні перевірки вже були — їхні знахідки йдуть Codex"
-  else
-    review_stage checking
-    gate_event gate.check running "Незалежні перевірки Claude: код і безпека"
-    _cc_sum="$(claude_checks_run "$IDIR_SCOPE" "$cwd" "$BASE_SHA" 2>>"$LOG" || true)"
-    [ -s "$_cc_sum" ] && printf '%s\n' "$_cc_sum" > "$_cc_home/last-summary"
-    _cc_failed="$(jq -r '[.checks[]? | select(.state == "failed") | .kind] | join(", ")' "$_cc_sum" 2>/dev/null)"
-    [ -s "$_cc_sum" ] || _cc_failed="усі"
-    log "claude checks: $(jq -c '[.checks[]? | {kind, state}]' "$_cc_sum" 2>/dev/null) ($_cc_sum)"
-    if [ -n "$_cc_failed" ] && [ "${SUPERVISOR_CLAUDE_CHECKS_REQUIRED:-0}" = 1 ]; then
-      gate_event gate.check failed "Незалежна перевірка не відпрацювала: $_cc_failed"
-      emit_review_json BLOCKED N/A needs-user "independent check failed ($_cc_failed) and SUPERVISOR_CLAUDE_CHECKS_REQUIRED=1"
-      mark_done needs-user
-      log "claude checks failed ($_cc_failed), required — parked for a person"
-      exit 0
-    fi
-    _cc_ret="$(claude_checks_returnable "$IDIR_SCOPE" "$_cc_sum" 2>/dev/null || echo '[]')"
-    case "$_cc_ret" in '['*) ;; *) _cc_ret='[]' ;; esac
-    _cc_n="$(printf '%s' "$_cc_ret" | jq 'length' 2>/dev/null || echo 0)"
-    if [ "${_cc_n:-0}" -gt 0 ]; then
-      claude_checks_spend_round "$IDIR_SCOPE"
-      claude_checks_record_returned "$IDIR_SCOPE" "$_cc_ret" "$transcript"
-      gate_event gate.check findings "Незалежні перевірки знайшли $_cc_n — повернуто виконавцю" \
-        "$(jq -nc --argjson n "$_cc_n" '{findings:$n}')"
-      log "claude checks: $_cc_n finding(s) at or above ${SUPERVISOR_CLAUDE_CHECKS_MIN_SEVERITY:-high} — back to the worker"
-      _cc_list="$(printf '%s' "$_cc_ret" | jq -r 'to_entries[] | "\(.key + 1). [\(.value.severity), \(.value.kind)] \(.value.file):\(.value.line) — \(.value.title)\n   Чому: \(.value.why)\n   Що зробити: \(.value.fix)"')"
-      jq -n --arg reason "🔎 Незалежні перевірки Claude (окремі сесії, які не бачили цієї розмови) знайшли в зміні:
-
-$_cc_list
-
-Розбери кожен пункт: виправ і закоміть, або відхили з причиною, якщо це хибна тривога. В останньому повідомленні цього ходу напиши по кожному номеру: «N. виправлено — що зроблено» або «N. відхилено — чому». Потім оголоси результат ще раз. Ці пункти більше не повертатимуться; приймати роботу чи ні вирішить Codex, і він побачить і їх, і твої відповіді." \
-        '{decision: "block", reason: $reason}'
-      exit 0
-    fi
-    if [ -n "$_cc_failed" ]; then
-      gate_event gate.check failed "Незалежна перевірка не відпрацювала: $_cc_failed — далі Codex"
-    elif [ "$(jq -r '.state // ""' "$_cc_sum" 2>/dev/null)" = empty ]; then
-      gate_event gate.check done "Незалежним перевіркам нічого перевіряти: diff порожній"
-    else
-      gate_event gate.check done "Незалежні перевірки: нічого, що треба повертати"
-    fi
-  fi
-  [ -s "$_cc_sum" ] && CHECKS_BLOCK="$(claude_checks_codex_block "$IDIR_SCOPE" "$_cc_sum" 2>/dev/null)"
-fi
-
 finding_classes=""
 if [ -n "${IDIR_SCOPE:-}" ] && runspec_present "$IDIR_SCOPE" && [ "${RS_MODE:-broad}" != broad ]; then
   finding_classes="FINDING CLASSES — tag EVERY numbered defect with exactly one:
@@ -1825,7 +1763,7 @@ ${CONTRACT_TEXT:-(no acceptance contract recorded for this run)}
 
 AGREED PLAN (pre-flight notes, if any — context, not the contract):
 ${PLAN_TEXT:-(no plan)}
-${OWED_BLOCK}${FINDINGS_BLOCK}${PREVIOUS_BLOCK}${CHALLENGE_BLOCK}${CHECKS_BLOCK}
+${OWED_BLOCK}${FINDINGS_BLOCK}${PREVIOUS_BLOCK}${CHALLENGE_BLOCK}
 
 VERIFIER EVIDENCE (machine-collected by running real build/test/lint — this OUTRANKS any
 claim in the report; opinion is not evidence):
@@ -1888,7 +1826,7 @@ fi
 # Checked BEFORE either reviewer: the stand-in takes broken text without complaint, so a check
 # that only Codex's parser made would let the same bytes through whenever Claude was reading.
 review_prompt_fit prompt persona PLAN_TEXT CONTRACT_TEXT CHALLENGES_TEXT CHALLENGE_BLOCK OWED_BLOCK FINDINGS_BLOCK \
-  CHECKS_BLOCK last_msg recent_user_turns diff_summary verify_json verify_fail_logs
+  last_msg recent_user_turns diff_summary verify_json verify_fail_logs
 # A team, when one is set (SUPERVISOR_REVIEW_TEAM) and Codex is the reviewer; the Claude stand-in reads
 # alone, as it always has. The pipeline the message went through has the last word when its review step
 # chose ("Who reviews"): a built-in "Claude + a Codex team", or "one reviewer" even on a server.

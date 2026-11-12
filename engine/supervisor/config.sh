@@ -22,17 +22,12 @@ if [ "${SUPERVISOR_PROFILE:-}" = server ]; then
   # service's environment (the sign-in token among it) rather than whatever an older server had.
   : "${SUPERVISOR_TMUX_SOCKET:=bulava}"
   export SUPERVISOR_TMUX_SOCKET
-  # Its tasks come from a tracker anyone can write in, so the work gets a code review and a security
-  # review by sessions that never saw the ticket's text (bin/lib/claude-checks.sh). Off with =0.
-  : "${SUPERVISOR_CLAUDE_CHECKS:=1}"
   # The final code review by three specialists instead of one reviewer (bin/lib/review-team.sh): on
   # the bench it found 72.5% of planted defects against 61.8%. Three calls a round. Off with =off.
   : "${SUPERVISOR_REVIEW_TEAM:=contract security state}"
 fi
-# Off everywhere else — the Mac app and a terminal — unless turned on with =1.
-: "${SUPERVISOR_CLAUDE_CHECKS:=0}"
-export SUPERVISOR_CLAUDE_CHECKS
-# …and the review team, unless named, e.g. SUPERVISOR_REVIEW_TEAM="contract security state".
+# Off everywhere else — the Mac app and a terminal — unless named, e.g.
+# SUPERVISOR_REVIEW_TEAM="contract security state".
 : "${SUPERVISOR_REVIEW_TEAM:=}"
 export SUPERVISOR_REVIEW_TEAM
 

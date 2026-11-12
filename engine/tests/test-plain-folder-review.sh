@@ -125,7 +125,7 @@ rungate() {
   rm -f "$CODEX_CALLED"
   printf '{"session_id":"s1","transcript_path":"%s","cwd":"%s","stop_hook_active":false}' "$TR" "$G" \
     | ORCHESTRATOR_RUN_ID="$RID" SUPERVISOR_VERIFIER_ENABLED=0 SUPERVISOR_CODEX_USAGE_CMD=/usr/bin/true \
-      SUPERVISOR_CLAUDE_CHECKS=0 PATH="$FAKE:$PATH" "$GATE" 2>/dev/null
+      PATH="$FAKE:$PATH" "$GATE" 2>/dev/null
 }
 done_is() { [ "$(cat "$GIDIR/done" 2>/dev/null)" = "$1" ]; }
 reviewed() { [ -s "$CODEX_CALLED" ]; }
@@ -306,7 +306,7 @@ srungate() {   # $1 = verdict
   rm -f "$CODEX_CALLED" "$CODEX_PROMPT"
   printf '{"session_id":"s2","transcript_path":"%s","cwd":"%s","stop_hook_active":false}' "$TR" "$S" \
     | ORCHESTRATOR_RUN_ID="$(cat "$SIDIR/run-id")" SUPERVISOR_VERIFIER_ENABLED=0 SUPERVISOR_CODEX_USAGE_CMD=/usr/bin/true \
-      SUPERVISOR_CLAUDE_CHECKS=0 FAKE_VERDICT="$1" PATH="$FAKE:$PATH" "$GATE" >/dev/null 2>&1
+      FAKE_VERDICT="$1" PATH="$FAKE:$PATH" "$GATE" >/dev/null 2>&1
 }
 srungate FAIL
 reviewed && ok "the change was reviewed and returned" || bad "not reviewed"

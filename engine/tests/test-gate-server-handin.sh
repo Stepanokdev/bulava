@@ -17,8 +17,6 @@ export SUPERVISOR_STATE_DIR="$(mktemp -d)"
 GATE="$ROOT/hooks/review-gate.sh"
 export SUPERVISOR_CODEX_USAGE_CMD="/usr/bin/true" SUPERVISOR_CLAUDE_USAGE_CMD="/usr/bin/true"
 export CODEX_SESSIONS_DIR="$(mktemp -d)"
-# The server profile turns the independent Claude checks on; these are about the hand-in, not them.
-export SUPERVISOR_CLAUDE_CHECKS=0; unset SUPERVISOR_CLAUDE_CHECKS_REQUIRED
 
 pass=0; fail=0
 ok(){ echo "  ✅ $1"; pass=$((pass+1)); }
