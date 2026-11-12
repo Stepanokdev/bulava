@@ -135,7 +135,7 @@ stage_log_for() {   # $1 = stage name
 }
 
 render() { TASK="$task" perl -0777 -pe '
-  for my $k (qw(TASK CONTEXT RECENT RESEARCH DESIGN ARGUE PLAN_A PLAN_B BRIEF_A BRIEF_B SCALE TOUCHES_UI CATALOG)) { my $v = defined $ENV{$k} ? $ENV{$k} : ""; s/\Q{{$k}}\E/$v/g; }
+  for my $k (qw(TASK CONTEXT RECENT RESEARCH DESIGN ARGUE PLAN_A PLAN_B BRIEF_A BRIEF_B SCALE TOUCHES_UI CATALOG LANGUAGE)) { my $v = defined $ENV{$k} ? $ENV{$k} : ""; s/\Q{{$k}}\E/$v/g; }
   ' "$1" 2>/dev/null; }
 # Nothing reaches a peer's argv unchecked.
 #
@@ -313,6 +313,8 @@ carry_task_material() {
 # the scale it just judged and what each step is for — its name and its prompt — and says which
 # ones this task needs. A typo does not need a business analyst; a new screen needs the designer.
 # The answer goes to roles-chosen.json, which pipeline.sh reads before starting each such step.
+# Its reasons are shown in the run view under each step left out, so they are written in the
+# language the app runs the engine in (SUPERVISOR_REPORT_LANGUAGE), not the engine's own.
 # When the choice cannot be made — Codex unavailable, an answer that does not parse — nothing is
 # written and every step runs: leaving out a step nobody decided against is the worse mistake.
 pick_roles() {   # $1 = scale  $2 = touches the interface (true|false)
@@ -330,7 +332,8 @@ ${about:-(свого промпту немає: суди з назви)}
   t="$(budget "${SUPERVISOR_PICK_TIMEOUT:-180}")"
   if [ "$t" -le 5 ]; then log "pick: SKIPPED — preflight budget exhausted; every step runs"; return 0; fi
   ( cd "$PROJ" && codex_ro "$t" --output-schema "$SCHEMAS/roles-pick.schema.json" -o "$ART/.roles-chosen.partial" \
-      "$(SCALE="$1" TOUCHES_UI="$2" CATALOG="$catalog" render "$PROMPTS/roles-pick.md")" ) >/dev/null 2>&1
+      "$(SCALE="$1" TOUCHES_UI="$2" CATALOG="$catalog" LANGUAGE="${SUPERVISOR_REPORT_LANGUAGE:-Ukrainian}" \
+         render "$PROMPTS/roles-pick.md")" ) >/dev/null 2>&1
   ids="$(printf '%s\n' "$PICK_ROLES" | cut -f1 | sed '/^$/d' | jq -R . | jq -sc .)"
   # Kept only when it answers for exactly the steps it was asked about.
   if jq -e --argjson ids "$ids" '(.roles | map(.id) | sort) == ($ids | sort) and all(.roles[]; (.run | type) == "boolean")' \

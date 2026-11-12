@@ -145,6 +145,32 @@ p="$(grep -l "THE STEPS TO DECIDE ABOUT" "$REC"/codex-*.prompt 2>/dev/null | hea
 grep -q -- "--sandbox read-only" "$(dirname "$p")/$(basename "$p" .prompt).argv" 2>/dev/null \
   && ok "the triage only reads" || bad "the pick ran without the read-only sandbox"
 
+# Its reasons are shown under each step it leaves out, so they are in the language the app runs the
+# engine in — an English Bulava used to show «Тріаж: … — <a Ukrainian sentence>» there.
+pick_prompt_in() {   # $1 = SUPERVISOR_REPORT_LANGUAGE ("" = not set) → the pick prompt it produced
+  local a="$TMP/art-lang-${1:-unset}" before
+  mkdir -p "$a"; before="$(ls "$REC" | grep -c '^codex-.*prompt$')"
+  if [ -n "$1" ]; then
+    ( cd "$PROJ" && SUPERVISOR_REPORT_LANGUAGE="$1" bash "$BIN/${argv[0]}" --art "$a" "${argv[@]:1}" "$PROJ" "Update the product card" ) >/dev/null 2>&1
+  else
+    ( cd "$PROJ" && env -u SUPERVISOR_REPORT_LANGUAGE NIGHT_SHIFT_CONFIG="$TMP/no-config.json" \
+        bash "$BIN/${argv[0]}" --art "$a" "${argv[@]:1}" "$PROJ" "Онови вигляд картки товару" ) >/dev/null 2>&1
+  fi
+  for f in $(ls -t "$REC"/codex-*.prompt | head -n "$(( $(ls "$REC" | grep -c '^codex-.*prompt$') - before ))"); do
+    grep -q "THE STEPS TO DECIDE ABOUT" "$f" && { cat "$f"; return; }
+  done
+}
+p_en="$(pick_prompt_in English)"
+case "$p_en" in
+  *"one short sentence in English that the director will read"*) ok "an English Bulava asks the triage for its reasons in English" ;;
+  *) bad "the English pick prompt: $(printf '%s' "$p_en" | tail -3)" ;;
+esac
+case "$p_en" in *"in Ukrainian"*|*"{{LANGUAGE}}"*) bad "and still names Ukrainian, or the placeholder" ;; *) ok "and names no other language" ;; esac
+p_ru="$(pick_prompt_in Russian)"
+case "$p_ru" in *"one short sentence in Russian"*) ok "a Russian one, in Russian" ;; *) bad "the Russian pick prompt: $(printf '%s' "$p_ru" | tail -3)" ;; esac
+p_uk="$(pick_prompt_in "")"
+case "$p_uk" in *"one short sentence in Ukrainian"*) ok "with no language given, the engine's own Ukrainian, as before" ;; *) bad "the default pick prompt: $(printf '%s' "$p_uk" | tail -3)" ;; esac
+
 ART2="$TMP/art2"; mkdir -p "$ART2"
 ( cd "$PROJ" && STUB_PICK='{"roles":[{"id":"ba","run":false,"why":"x"}]}' bash "$BIN/${argv[0]}" --art "$ART2" "${argv[@]:1}" "$PROJ" "Онови вигляд картки товару" ) >/dev/null 2>&1
 [ ! -e "$ART2/roles-chosen.json" ] && ok "an answer that leaves a step out of the choice is not used: every step runs" || bad "a partial answer was kept: $(cat "$ART2/roles-chosen.json")"

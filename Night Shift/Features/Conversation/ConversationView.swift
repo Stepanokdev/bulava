@@ -775,7 +775,7 @@ private struct SessionStatusRow: View {
     private var label: String {
         if phase == .needsReview, case .waitingForYou(let why)? = run?.graph.overall,
            let why, !why.isEmpty {
-            return String(format: String(localized: "Work stopped: %@"), why)
+            return String(format: String(localized: "Work stopped: %@"), RunNoteWording.interfaceText(why))
         }
         return phase.label
     }

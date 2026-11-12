@@ -75,7 +75,7 @@ extension RunOverall {
 
     var detail: String? {
         switch self {
-        case .waitingForYou(let note), .failed(let note): note
+        case .waitingForYou(let note), .failed(let note): note.map { RunNoteWording.interfaceText($0) }
         default: nil
         }
     }
@@ -233,13 +233,13 @@ struct RunGraphView: View {
 }
 
 extension RunGraphView {
-    /// The engine writes its notes for the log; a few say something the interface can put in its
-    /// own words, in its own language.
+    /// The engine writes its notes for the log, in its own language; the interface says them in
+    /// the person's (`RunNoteWording`), and in its own words where it has them.
     fileprivate func noteText(_ status: RunNodeStatus) -> String? {
         if status.state == .retrying, let n = status.findings, n > 0 {
             return String(localized: "Sent back with \(n) findings")
         }
-        return status.note
+        return status.note.map { RunNoteWording.interfaceText($0) }
     }
 }
 

@@ -361,6 +361,22 @@
         }
       }
     },
+    "The agent handed the turn back — asked it to keep working" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агент отдал ход — попросил работать дальше"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Віддав хід — попросив працювати далі"
+          }
+        }
+      }
+    },
     "The agent is still working in this chat. Change the folder once it has finished." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1195,6 +1211,22 @@
         }
       }
     },
+    "“%@”" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«%@»"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«%@»"
+          }
+        }
+      }
+    },
     "“%@” already has an automation called “%@”." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1835,6 +1867,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ символів контексту в кожній сесії"
+          }
+        }
+      }
+    },
+    "%@ did not start: the CLI refused the call itself (code %@)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ не запустился: CLI отклонил сам вызов (код %@)"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ не запустився: CLI відхилив сам виклик (код %@)"
           }
         }
       }
@@ -6019,6 +6067,22 @@
         }
       }
     },
+    "your decision is needed" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "нужно твоё решение"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "потрібне твоє рішення"
+          }
+        }
+      }
+    },
     "~/.claude/supervisor" : {
 
     },
@@ -7089,6 +7153,38 @@
         }
       }
     },
+    "Accepted" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Принято"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прийнято"
+          }
+        }
+      }
+    },
+    "Accepted by the reviewer, but not everything is committed: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Принято рецензентом, но не всё закоммичено: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прийнято рецензентом, але не все закомічено: %@"
+          }
+        }
+      }
+    },
     "Accepted decisions travel into every run of this product. Anything left here does not." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7626,6 +7722,22 @@
         }
       }
     },
+    "aligning the positions" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "сверка позиций"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "звірка позицій"
+          }
+        }
+      }
+    },
     "all of the work lands in “%@”, and it is read-only — there is nowhere to write" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7977,6 +8089,22 @@
         }
       }
     },
+    "and %lld more" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "и ещё %lld"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "і ще %lld"
+          }
+        }
+      }
+    },
     "and not a single message from you" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8024,6 +8152,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "у «%@» уже йде інша робота"
+          }
+        }
+      }
+    },
+    "An independent check did not finish: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Независимая проверка не отработала: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Незалежна перевірка не відпрацювала: %@"
+          }
+        }
+      }
+    },
+    "An independent check did not finish: %@ — Codex is next" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Независимая проверка не отработала: %@ — дальше Codex"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Незалежна перевірка не відпрацювала: %@ — далі Codex"
           }
         }
       }
@@ -9250,6 +9410,54 @@
         }
       }
     },
+    "Build and checks passed" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сборка и проверки прошли"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Збірка й перевірки пройшли"
+          }
+        }
+      }
+    },
+    "Build check is turned off" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверка сборкой выключена"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перевірку збіркою вимкнено"
+          }
+        }
+      }
+    },
+    "Build or checks failed — the reviewer will see it" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сборка или проверки не прошли — рецензент это увидит"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Збірка або перевірки не пройшли — рецензент це побачить"
+          }
+        }
+      }
+    },
     "Build the project and run its tests. If something fails, find the cause and fix it when the fix is clear. Never weaken or delete a test to make it pass. If everything passes, say so and change nothing. If the build or the tests cannot run on this Mac, say exactly what is missing." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10399,6 +10607,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не можна оновити, поки %@."
+          }
+        }
+      }
+    },
+    "Cannot check: the session transcript is unavailable" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не могу проверить: транскрипт сессии недоступен"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не можу перевірити: транскрипт сесії недоступний"
           }
         }
       }
@@ -11671,6 +11895,22 @@
         }
       }
     },
+    "Claude did the final review instead of Codex." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Финальное ревью выполнил Claude вместо Codex."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Фінальне ревʼю виконав Claude замість Codex."
+          }
+        }
+      }
+    },
     "Claude does not answer" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12043,6 +12283,22 @@
         }
       }
     },
+    "Claude's independent checks: code and security" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Независимые проверки Claude: код и безопасность"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Незалежні перевірки Claude: код і безпека"
+          }
+        }
+      }
+    },
     "Claude's login has run out, so this was never answered. Sign in and send it again." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12091,6 +12347,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "На запити дозволів від Claude відповідає Bulava: власний браузер автоматизації дозволено, решту відхилено й перелічено у звіті запуску."
+          }
+        }
+      }
+    },
+    "Claude's usage window is used up — work continues when it is back" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Окно Claude исчерпано — продолжит, когда вернётся"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вікно Claude вичерпано — продовжить, коли повернеться"
           }
         }
       }
@@ -12464,6 +12736,22 @@
         }
       }
     },
+    "Codex did not take part in everything." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex участвовал не во всём."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex брав участь не в усьому."
+          }
+        }
+      }
+    },
     "Codex does not answer" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12477,6 +12765,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Codex не відповідає"
+          }
+        }
+      }
+    },
+    "Codex has been unavailable for over %@ h (%@) — the task was stopped without its review; the work stays on its branch." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex недоступен больше %@ ч (%@) — задача остановлена без его ревью; работа осталась в ветке."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex недоступний понад %@ год (%@) — задачу зупинено без його ревʼю; робота лишилась у гілці."
           }
         }
       }
@@ -12990,6 +13294,22 @@
         }
       }
     },
+    "Codex stopped the review: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex остановил ревью: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex зупинив рев'ю: %@"
+          }
+        }
+      }
+    },
     "Codex stopped with an error — wait for it, or go on with Claude?" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13071,6 +13391,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Codex, токенів"
+          }
+        }
+      }
+    },
+    "Codex's part" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "часть Codex"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "частина Codex"
           }
         }
       }
@@ -13644,6 +13980,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Продовжити"
+          }
+        }
+      }
+    },
+    "Continuing an open task" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Продолжение открытой задачи"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Продовження відкритої задачі"
           }
         }
       }
@@ -14605,6 +14957,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Пораховано за транскриптами, які вже є на цій машині."
+          }
+        }
+      }
+    },
+    "consultation" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "консультация"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "консультація"
           }
         }
       }
@@ -17705,6 +18073,22 @@
         }
       }
     },
+    "final review" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "финальное ревью"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "фінальне ревʼю"
+          }
+        }
+      }
+    },
     "fix round %1$@ of %2$@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -18294,6 +18678,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "генерує зображення"
+          }
+        }
+      }
+    },
+    "Full log: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Полный лог: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Повний лог: %@"
           }
         }
       }
@@ -20054,6 +20454,70 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "непевно"
+          }
+        }
+      }
+    },
+    "Independent checks already ran — their findings go to Codex" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Независимые проверки уже были — их находки идут Codex"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Незалежні перевірки вже були — їхні знахідки йдуть Codex"
+          }
+        }
+      }
+    },
+    "Independent checks found %@ — sent back to the worker" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Независимые проверки нашли %@ — возвращено исполнителю"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Незалежні перевірки знайшли %@ — повернуто виконавцю"
+          }
+        }
+      }
+    },
+    "Independent checks skipped: the build is red" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Независимые проверки пропущены: сборка красная"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Незалежні перевірки пропущено: збірка червона"
+          }
+        }
+      }
+    },
+    "Independent checks: nothing that needs sending back" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Независимые проверки: ничего, что нужно возвращать"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Незалежні перевірки: нічого, що треба повертати"
           }
         }
       }
@@ -22148,6 +22612,22 @@
         }
       }
     },
+    "Message withdrawn" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщение отозвано"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Повідомлення забрано"
+          }
+        }
+      }
+    },
     "Minimal" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -23476,6 +23956,22 @@
         }
       }
     },
+    "No changes and no declared result — asked the agent to declare one" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет ни изменений, ни заявленного результата — попросил заявить"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нема ні змін, ні заявленого результату — попросив заявити"
+          }
+        }
+      }
+    },
     "No chat is working in that project now." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -23506,6 +24002,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Без глибини"
+          }
+        }
+      }
+    },
+    "No git and no code — nothing to check; what the run declared stands" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Без git и без кода — проверять нечего, остаётся то, что заявил прогон"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Без git і без коду — перевіряти нічого, лишається те, що прогін заявив"
           }
         }
       }
@@ -23660,6 +24172,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Звіту для цієї задачі ще немає"
+          }
+        }
+      }
+    },
+    "No report found" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отчёт не найден"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Звіту не знайдено"
+          }
+        }
+      }
+    },
+    "No report found — asked for its path" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отчёт не найден — попросил назвать путь"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Звіту не знайдено — попросив назвати шлях"
           }
         }
       }
@@ -24478,6 +25022,22 @@
         }
       }
     },
+    "Nothing for the independent checks to check: the diff is empty" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Независимым проверкам нечего проверять: diff пустой"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Незалежним перевіркам нічого перевіряти: diff порожній"
+          }
+        }
+      }
+    },
     "Nothing happens until you answer. The run stays parked." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -24880,6 +25440,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Поки що нічого не запускається само"
+          }
+        }
+      }
+    },
+    "Nothing to build or test (%@)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нечего собирать или тестировать (%@)"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нічого зібрати чи протестувати (%@)"
           }
         }
       }
@@ -26818,6 +27394,38 @@
         }
       }
     },
+    "Piece %@ “%@” accepted — next: “%@”" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Кусок %@ «%@» принят — дальше «%@»"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шматок %@ «%@» прийнято — далі «%@»"
+          }
+        }
+      }
+    },
+    "Piece %@ “%@” accepted. You sent a new task — taking it on instead of “%@”" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Кусок %@ «%@» принят. Ты прислал новую задачу — берусь за неё вместо «%@»"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шматок %@ «%@» прийнято. Ти надіслав нову задачу — беруся за неї замість «%@»"
+          }
+        }
+      }
+    },
     "Pin to top" : {
       "localizations" : {
         "ru" : {
@@ -26847,6 +27455,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Пайплайн"
+          }
+        }
+      }
+    },
+    "Pipeline “%@” not found" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пайплайн «%@» не найден"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пайплайн «%@» не знайдено"
           }
         }
       }
@@ -26981,6 +27605,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Підготовка"
+          }
+        }
+      }
+    },
+    "Preparation finished" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подготовка завершена"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Підготовку завершено"
           }
         }
       }
@@ -27300,6 +27940,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Промпт"
+          }
+        }
+      }
+    },
+    "preparation" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "подготовка"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "підготовка"
           }
         }
       }
@@ -28917,6 +29573,22 @@
         }
       }
     },
+    "Report sent back · findings: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отчёт возвращён · замечаний: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Звіт повернуто · зауважень: %@"
+          }
+        }
+      }
+    },
     "Report written by" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -29031,6 +29703,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Дослідження — без мерджу"
+          }
+        }
+      }
+    },
+    "Required step %@ failed" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обязательный шаг %@ не удался"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обов'язковий крок %@ не вдався"
+          }
+        }
+      }
+    },
+    "Required step %@ failed — the message is held; the worker did not get it" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обязательный шаг %@ не удался — сообщение задержано, исполнитель его не получил"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обов'язковий крок %@ не вдався — повідомлення затримано, виконавець його не отримав"
           }
         }
       }
@@ -30463,6 +31167,38 @@
         }
       }
     },
+    "Sent back for fixes" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Возвращено на исправление"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Повернуто на виправлення"
+          }
+        }
+      }
+    },
+    "Sent back for more work · findings: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Возвращено на доработку · замечаний: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Повернуто на доопрацювання · зауважень: %@"
+          }
+        }
+      }
+    },
     "Sent back with %lld findings" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -31267,6 +32003,54 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Сайти, сторінки, нотатки й файли, які виставляє агент або які ти відкриваєш з чату, відкриваються на телефоні лише в цій Wi‑Fi. Посилання відкриває тільки те, для чого його зробили. Якщо вимкнено, ніщо не відповідає."
+          }
+        }
+      }
+    },
+    "Skill called: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скил вызван: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скіл викликано: %@"
+          }
+        }
+      }
+    },
+    "Skill not called: %@ — work sent back" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет вызова: %@ — работа возвращена"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Немає виклику: %@ — роботу повернуто"
+          }
+        }
+      }
+    },
+    "Skill not called: %@ — your decision is needed" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет вызова: %@ — нужно твоё решение"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Немає виклику: %@ — потрібне твоє рішення"
           }
         }
       }
@@ -33279,6 +34063,38 @@
         }
       }
     },
+    "The agent is waiting for its background helpers — the checks start after them" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агент ждёт своих фоновых помощников — проверки начнутся после них"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агент чекає на своїх фонових помічників — перевірки почнуться після них"
+          }
+        }
+      }
+    },
+    "The agent stopped without handing the work in (%@) — sent back without checks" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агент остановился, но работу не сдал (%@) — вернул без проверок"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агент зупинився, але роботу не здав (%@) — повернув без перевірок"
+          }
+        }
+      }
+    },
     "The agent's advice" : {
       "localizations" : {
         "ru" : {
@@ -33603,6 +34419,22 @@
         }
       }
     },
+    "The check ran into the checking tool itself, not the work, %@ times in a row: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверка %@ раза подряд упиралась в сам инструмент проверки, а не в работу: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перевірка %@ рази поспіль упиралась у сам інструмент перевірки, а не в роботу: %@"
+          }
+        }
+      }
+    },
     "The checkpoint would be too big because of files git already tracks. Nothing was changed." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -33752,6 +34584,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "основної гілки"
+          }
+        }
+      }
+    },
+    "The description of pipeline “%@” is not valid" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Описание пайплайна «%@» не проходит проверку"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Опис пайплайна «%@» не проходить перевірку"
           }
         }
       }
@@ -34007,6 +34855,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Файл прийшов не повністю. Спробуйте ще раз."
+          }
+        }
+      }
+    },
+    "The final review did not take place." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Финальное ревью не проводилось."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Фінальне ревʼю не проводилось."
           }
         }
       }
@@ -35029,6 +35893,22 @@
         }
       }
     },
+    "The brief did not arrive — it is queued for redelivery" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Бриф не дошёл — он в очереди на повторную доставку"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Бриф не дійшов — він у черзі повторної доставки"
+          }
+        }
+      }
+    },
     "The brief was changed while this form was open." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -35369,6 +36249,38 @@
         }
       }
     },
+    "The report reviewer is unavailable — waiting" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рецензент отчёта недоступен — жду"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рецензент звіту недоступний — чекаю"
+          }
+        }
+      }
+    },
+    "The report reviewer is unavailable — waiting (%@)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рецензент отчёта недоступен — жду (%@)"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рецензент звіту недоступний — чекаю (%@)"
+          }
+        }
+      }
+    },
     "The report's decisions are not there any more." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -35416,6 +36328,54 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Запит не вдалося прочитати."
+          }
+        }
+      }
+    },
+    "The review stopped — your decision is needed" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ревью остановилось — нужно твоё решение"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рев'ю зупинилось — потрібне твоє рішення"
+          }
+        }
+      }
+    },
+    "The reviewer is not away, and waiting will not fix this — the CLI or the engine needs an update." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Это не недоступность рецензента, ожидание это не исправит — нужно обновить CLI или движок."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Це не недоступність рецензента, очікування цього не виправить — потрібне оновлення CLI або рушія."
+          }
+        }
+      }
+    },
+    "The reviewer is unavailable — %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рецензент недоступен — %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рецензент недоступний — %@"
           }
         }
       }
@@ -35569,6 +36529,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Окремої копії, в якій ішла ця задача, вже немає, тож продовжити її там не можна. Запусти задачу ще раз — вона почне з того, що зараз у теці."
+          }
+        }
+      }
+    },
+    "The session confirmed it received the brief" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сессия подтвердила, что получила бриф"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сесія підтвердила, що отримала бриф"
           }
         }
       }
@@ -35948,6 +36924,22 @@
         }
       }
     },
+    "The worker handed the turn back several times in a row — your decision is needed" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Исполнитель несколько раз подряд отдал ход — нужно твоё решение"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Виконавець кілька разів поспіль віддав хід — потрібне твоє рішення"
+          }
+        }
+      }
+    },
     "The worker is on it" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -35978,6 +36970,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Воркер на ній зупиниться."
+          }
+        }
+      }
+    },
+    "The worker stopped — the checks are running" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Исполнитель остановился — идут проверки"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Виконавець зупинився — ворота перевіряють"
           }
         }
       }
@@ -36062,6 +37070,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "У теці є незакомічені зміни, але прочитати їх не вдалося. Нічого не закомічено."
+          }
+        }
+      }
+    },
+    "the worker's question" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "вопрос исполнителя"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "питання воркера"
           }
         }
       }
@@ -37735,6 +38759,38 @@
         }
       }
     },
+    "Triage: not needed for this task" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Триаж: не нужен для этой задачи"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тріаж: не потрібен для цієї задачі"
+          }
+        }
+      }
+    },
+    "Triage: not needed for this task — %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Триаж: не нужен для этой задачи — %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тріаж: не потрібен для цієї задачі — %@"
+          }
+        }
+      }
+    },
     "Triggers" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -38911,6 +39967,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Чекає"
+          }
+        }
+      }
+    },
+    "Waiting for Codex — work is not accepted without it" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ждёт Codex — без него работа не принимается"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чекає на Codex — без нього роботу не прийнято"
           }
         }
       }
@@ -40516,6 +41588,22 @@
         }
       }
     },
+    "Without Codex: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Без Codex: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Без Codex: %@"
+          }
+        }
+      }
+    },
     "Without me" : {
       "localizations" : {
         "ru" : {
@@ -40579,6 +41667,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Роботу прийнято"
+          }
+        }
+      }
+    },
+    "Work accepted with a note: the checking tool itself stopped the check, not the work — %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Работа принята с замечанием: проверку остановил сам инструмент проверки, а не работа — %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Робота прийнята із зауваженням: перевірку зупинив сам інструмент перевірки, а не робота — %@"
           }
         }
       }
@@ -42145,6 +43249,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "У цьому движку ще немає Jev."
+          }
+        }
+      }
+    },
+    "Passed your clarification to the agent — the review comes once it has taken it in" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Передал агенту твоё уточнение — ревью после того, как он его учтёт"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Передав агентові твоє уточнення — рев'ю після того, як він його врахує"
           }
         }
       }
