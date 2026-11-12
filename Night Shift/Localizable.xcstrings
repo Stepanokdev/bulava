@@ -43316,6 +43316,678 @@
           }
         }
       }
+    },
+    "The triage chose no roles for this task — there is nothing to agree on" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Триаж не выбрал ни одной роли для этой задачи — договариваться не о чем"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тріаж не вибрав жодної ролі для цієї задачі — домовлятися нема про що"
+          }
+        }
+      }
+    },
+    "Fewer than two roles gave a result — there is nothing to agree on" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Меньше двух ролей дали результат — договариваться не о чем"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Менше двох ролей дали результат — домовлятися нема про що"
+          }
+        }
+      }
+    },
+    "Only one position — there is nothing to compare" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Одна позиция — сверять нечего"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Одна позиція — звіряти нічого"
+          }
+        }
+      }
+    },
+    "%@ had nothing to read — the preparation left no question text" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ нечего было читать — подготовка не оставила текста вопроса"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ не отримав чого читати — підготовка не залишила тексту питання"
+          }
+        }
+      }
+    },
+    "%@ did not start: the prepared question is not valid UTF-8, and the CLI would have refused the call before the session began. This is not the model failing — the broken bytes came from the saved context, and the source is what needs fixing" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ не запускался: подготовленный текст вопроса не является корректным UTF-8, и CLI отклонил бы вызов ещё до старта сессии. Это не сбой модели — испорченные байты пришли из сохранённого контекста, и исправлять нужно источник"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ не запускався: підготовлений текст питання не є коректним UTF-8, і CLI відхилив би виклик ще до старту сесії. Це не збій моделі — зіпсуті байти прийшли зі збереженого контексту, і виправляти треба джерело"
+          }
+        }
+      }
+    },
+    "codex is not signed in — `codex login status` says “Not logged in”, so there are no credentials for the call. Codex needs signing in again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "codex не авторизован — `codex login status` говорит «Not logged in», так что учётных данных для вызова нет. Нужен повторный вход в Codex."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "codex не авторизований — `codex login status` каже «Not logged in», тож облікових даних для виклику немає. Потрібен повторний вхід у Codex."
+          }
+        }
+      }
+    },
+    "%@ did not start — there was no time left for the preparation" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ не запускался — на подготовку уже не оставалось времени"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ не запускався — на підготовку вже не лишалось часу"
+          }
+        }
+      }
+    },
+    "%@ is unavailable now — its usage window is used up; it is back around %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ сейчас недоступен — окно исчерпано, восстановление около %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ зараз недоступний — вичерпано вікно, відновлення близько %@"
+          }
+        }
+      }
+    },
+    "%@ is unavailable now — its usage window is used up" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ сейчас недоступен — окно исчерпано"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ зараз недоступний — вичерпано вікно"
+          }
+        }
+      }
+    },
+    "%@ is unavailable now — its limits could not be read" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ сейчас недоступен — не удалось прочитать его лимиты"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ зараз недоступний — не вдалося прочитати його ліміти"
+          }
+        }
+      }
+    },
+    "%@ went silent for %@ s and showed no sign of work — the call was stopped" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ замолчал на %@ с и не подавал признаков работы — вызов остановлен"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ замовк на %@с і не подавав ознак роботи — виклик зупинено"
+          }
+        }
+      }
+    },
+    "%@ ended without an error but said nothing" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ завершился без ошибки, но ничего не сказал"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ завершився без помилки, але не сказав нічого"
+          }
+        }
+      }
+    },
+    "%@ did not start: the prepared question is not valid UTF-8, and the CLI would have refused the call before the session began. This is not the model failing — the broken text came from the saved context, and it needs fixing at the source" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ не запускался: подготовленный текст вопроса не является корректным UTF-8, и CLI отклонил бы вызов ещё до старта сессии. Это не сбой модели — испорченный текст пришёл из сохранённого контекста, и его нужно исправить в источнике"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ не запускався: підготовлений текст питання не є коректним UTF-8, і CLI відхилив би виклик ще до старту сесії. Це не збій моделі — зіпсутий текст прийшов із збереженого контексту, і його треба виправити в джерелі"
+          }
+        }
+      }
+    },
+    "%@ stopped with an error (code %@) after %@ s" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ остановился с ошибкой (код %@) через %@ с"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ зупинився з помилкою (код %@) через %@с"
+          }
+        }
+      }
+    },
+    "Codex is not signed in — “%@” was not prepared; Claude does the whole task." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex не авторизован — «%@» не подготовлено; Claude делает задачу полностью."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex не авторизований — «%@» не підготовлено; Claude робить задачу повністю."
+          }
+        }
+      }
+    },
+    "Codex is unavailable now (%@) — “%@” was not prepared; Claude does the whole task." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex сейчас недоступен (%@) — «%@» не подготовлено; Claude делает задачу полностью."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex недоступний зараз (%@) — «%@» не підготовлено; Claude робить задачу повністю."
+          }
+        }
+      }
+    },
+    "Could not write the brief into %@ — “%@” was not prepared." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось записать бриф в %@ — «%@» не подготовлено."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не вдалося записати бриф у %@ — «%@» не підготовлено."
+          }
+        }
+      }
+    },
+    "The text for Codex is not valid UTF-8 — “%@” was not prepared." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Текст для Codex не является корректным UTF-8 — «%@» не подготовлено."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Текст для Codex не є коректним UTF-8 — «%@» не підготовлено."
+          }
+        }
+      }
+    },
+    "Codex ended without saying anything" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex завершился, ничего не сказав"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex завершився, нічого не сказавши"
+          }
+        }
+      }
+    },
+    "Codex did not finish “%@” in %@ s" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex не закончил «%@» за %@ с"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex не закінчив «%@» за %@с"
+          }
+        }
+      }
+    },
+    "Codex answered with no patch between ===PATCH=== and ===END===" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex ответил без патча между ===PATCH=== и ===END==="
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex відповів без патча між ===PATCH=== і ===END==="
+          }
+        }
+      }
+    },
+    "Codex's patch for “%@” does not apply to the current folder" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Патч Codex для «%@» не накладывается на текущую папку"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Патч Codex для «%@» не накладається на поточну теку"
+          }
+        }
+      }
+    },
+    "Could not add to the brief — Claude would not have learned of the patch “%@”." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось дописать бриф — Claude не узнал бы о патче «%@»."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не вдалося дописати бриф — Claude не дізнався б про патч «%@»."
+          }
+        }
+      }
+    },
+    "This is not a code error: the subscription is not signed in (Codex needs signing in again)." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Это не ошибка кода: подписка не авторизована (нужен повторный вход в Codex)."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Це не помилка коду: підписку не авторизовано (потрібен повторний вхід у Codex)."
+          }
+        }
+      }
+    },
+    "the incomplete answer was discarded, because half a position is not a position" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "неполный ответ отброшен, потому что половина позиции — не позиция"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "неповну відповідь відкинуто, бо половина позиції — не позиція"
+          }
+        }
+      }
+    },
+    "full log: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "полный лог: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "повний лог: %@"
+          }
+        }
+      }
+    },
+    "today at %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "сегодня в %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "сьогодні о %@"
+          }
+        }
+      }
+    },
+    "tomorrow at %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "завтра в %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "завтра о %@"
+          }
+        }
+      }
+    },
+    "%@ at %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ в %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ о %@"
+          }
+        }
+      }
+    },
+    "%@ is available" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ доступен"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ доступний"
+          }
+        }
+      }
+    },
+    "the roles were not brought into one decision — Claude works from the roles' results" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "роли не сведены в одно решение — Claude работает по результатам ролей"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ролі не зведено в одне рішення — Claude працює за результатами ролей"
+          }
+        }
+      }
+    },
+    "Codex did not compare the two positions — Claude works from its own" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex не сверил две позиции — Claude работает по своей"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex не звірив дві позиції — Claude працює за своєю"
+          }
+        }
+      }
+    },
+    "there is no position from Codex" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "позиции Codex нет"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "позиції Codex немає"
+          }
+        }
+      }
+    },
+    "Claude checked the report — the director allowed it to stand in for Codex" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "отчёт проверял Claude — директор разрешил заменить Codex"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "звіт перевіряв Claude — директор дозволив замінити Codex"
+          }
+        }
+      }
+    },
+    "Claude checked the code — the director allowed it to stand in for Codex" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "код проверял Claude — директор разрешил заменить Codex"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "код перевіряв Claude — директор дозволив замінити Codex"
+          }
+        }
+      }
+    },
+    "“%@” was declared with no code changes — the engine accepted it without a review" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "заявлено «%@» без изменений в коде — движок принял это без ревью"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "заявлено «%@» без змін у коді — рушій прийняв це без рев'ю"
+          }
+        }
+      }
+    },
+    "Claude decided alone: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Claude решил сам: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Claude вирішив сам: %@"
+          }
+        }
+      }
+    },
+    "the request to Codex returned no answer" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "запрос к Codex не вернул ответа"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "запит до Codex не повернув відповіді"
+          }
+        }
+      }
+    },
+    "Codex did not answer in %@ s — the call was stopped on its timeout" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex не ответил за %@ с — вызов остановлен по таймауту"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex не відповів за %@с — виклик зупинено за таймаутом"
+          }
+        }
+      }
+    },
+    "The question was not passed on: the prepared text is not valid UTF-8, and codex exec would have refused the call before the session began. The broken bytes came from the saved context — fix the source, not the question." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вопрос не передан: подготовленный текст не является корректным UTF-8, и codex exec отклонил бы вызов ещё до старта сессии. Испорченные байты пришли из сохранённого контекста — исправь источник, а не вопрос."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Питання не передано: підготовлений текст не є коректним UTF-8, і codex exec відхилив би виклик ще до старту сесії. Зіпсуті байти прийшли зі збереженого контексту — виправ джерело, а не питання."
+          }
+        }
+      }
+    },
+    "Codex is not signed in — `codex login status` says “Not logged in”, so there is nothing to call it with — there are simply no credentials." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex не авторизован — `codex login status` говорит «Not logged in», так что вызывать нечем — учётных данных просто нет."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex не авторизований — `codex login status` каже «Not logged in», тож викликати нема чим — облікових даних просто немає."
+          }
+        }
+      }
+    },
+    "Codex is unavailable now (%@)." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex сейчас недоступен (%@)."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex недоступний зараз (%@)."
+          }
+        }
+      }
     }
   },
   "version" : "1.1"

@@ -99,6 +99,39 @@ nonisolated final class RunNoteWordingTests: XCTestCase {
         "codex не запустився: CLI відхилив сам виклик (код 2). Це не недоступність рецензента, очікування цього не виправить — потрібне оновлення CLI або рушія.",
         "codex не запустився: CLI відхилив сам виклик (код 2) — unknown flag. Це не недоступність рецензента, очікування цього не виправить — потрібне оновлення CLI або рушія. Повний лог: /tmp/i/review-stderr.log",
         "codex не запустився: CLI відхилив сам виклик (код 2). Це не недоступність рецензента, очікування цього не виправить — потрібне оновлення CLI або рушія. Повний лог: /tmp/i/review-stderr.log",
+        // preflight.sh, through `.skip-<stage>`
+        "Тріаж не вибрав жодної ролі для цієї задачі — домовлятися нема про що",
+        "Менше двох ролей дали результат — домовлятися нема про що",
+        "Одна позиція — звіряти нічого",
+        // preflight.sh, through `.unavailable-<stage>`
+        "codex не отримав чого читати — підготовка не залишила тексту питання",
+        "claude не запускався: підготовлений текст питання не є коректним UTF-8, і CLI відхилив би виклик ще до старту сесії. Це не збій моделі — зіпсуті байти прийшли зі збереженого контексту, і виправляти треба джерело",
+        "codex не авторизований — `codex login status` каже «Not logged in», тож облікових даних для виклику немає. Потрібен повторний вхід у Codex.",
+        "codex не запускався — на підготовку вже не лишалось часу",
+        "codex зараз недоступний — вичерпано вікно, відновлення близько сьогодні о 14:30",
+        "codex зараз недоступний — вичерпано вікно, відновлення близько завтра о 09:05",
+        "claude зараз недоступний — вичерпано вікно, відновлення близько 13.11 о 18:00",
+        "codex зараз недоступний — вичерпано вікно",
+        "codex зараз недоступний — не вдалося прочитати його ліміти",
+        "codex доступний",
+        "codex замовк на 600с і не подавав ознак роботи — виклик зупинено",
+        "codex завершився без помилки, але не сказав нічого",
+        "codex завершився без помилки, але не сказав нічого; неповну відповідь відкинуто, бо половина позиції — не позиція",
+        "claude не запускався: підготовлений текст питання не є коректним UTF-8, і CLI відхилив би виклик ще до старту сесії. Це не збій моделі — зіпсутий текст прийшов із збереженого контексту, і його треба виправити в джерелі",
+        "codex зупинився з помилкою (код 1) через 42с",
+        "codex зупинився з помилкою (код 1) через 42с — error: 401 Unauthorized Це не помилка коду: підписку не авторизовано (потрібен повторний вхід у Codex).; повний лог: /tmp/i/peer-codex.log",
+        "codex замовк на 600с і не подавав ознак роботи — виклик зупинено — stream idle; неповну відповідь відкинуто, бо половина позиції — не позиція; повний лог: /tmp/i/peer-codex.log",
+        // pipeline-codex-part.sh, through `.unavailable-<stage>`
+        "Codex не авторизований — «Design» не підготовлено; Claude робить задачу повністю.",
+        "Codex недоступний зараз (codex зараз недоступний — вичерпано вікно) — «Design» не підготовлено; Claude робить задачу повністю.",
+        "Не вдалося записати бриф у /tmp/i/art — «Design» не підготовлено.",
+        "Текст для Codex не є коректним UTF-8 — «Design» не підготовлено.",
+        "Codex завершився, нічого не сказавши",
+        "Codex не закінчив «Design» за 1800с",
+        "Codex зупинився з помилкою (код 2) через 12с",
+        "Codex відповів без патча між ===PATCH=== і ===END===",
+        "Патч Codex для «Design» не накладається на поточну теку",
+        "Не вдалося дописати бриф — Claude не дізнався б про патч «Design».",
         // supervisor-lib.sh
         "Codex недоступний понад 12 год (rate limit) — задачу зупинено без його ревʼю; робота лишилась у гілці.",
         "Фінальне ревʼю не проводилось. Без Codex: фінальне ревʼю — limit",
@@ -107,6 +140,11 @@ nonisolated final class RunNoteWordingTests: XCTestCase {
         // A verdict with Codex's participation after it, as `mark_done` joins them.
         "Прийнято — Фінальне ревʼю виконав Claude замість Codex. Без Codex: фінальне ревʼю — limit",
         "Codex зупинив рев'ю: потрібне твоє рішення — Codex брав участь не в усьому. Без Codex: підготовка",
+        // A reason the tool gave, then the participation: the reason's open end must not take it.
+        "Перевірка 3 рази поспіль упиралась у сам інструмент перевірки, а не в роботу: sandbox denied — Codex брав участь не в усьому. Без Codex: частина Codex — codex зараз недоступний — вичерпано вікно",
+        "Перевірка 3 рази поспіль упиралась у сам інструмент перевірки, а не в роботу: sandbox denied — Фінальне ревʼю не проводилось. Без Codex: фінальне ревʼю",
+        "Перевірка 3 рази поспіль упиралась у сам інструмент перевірки, а не в роботу: sandbox denied — Фінальне ревʼю виконав Claude замість Codex. Без Codex: фінальне ревʼю ×2",
+        "Рецензент недоступний — codex зараз недоступний — не вдалося прочитати його ліміти",
     ]
 
     func testTheContinuedTaskOnTheScreenshotReadsInEnglish() {
@@ -149,6 +187,27 @@ nonisolated final class RunNoteWordingTests: XCTestCase {
         XCTAssertEqual(en("Codex зупинив рев'ю: потрібне твоє рішення"), "Codex stopped the review: your decision is needed")
         XCTAssertEqual(en("Фінальне ревʼю виконав Claude замість Codex. Без Codex: підготовка ×2 — ліміт; і ще 3"),
                        "Claude did the final review instead of Codex. Without Codex: preparation ×2 — ліміт; and 3 more")
+    }
+
+    /// A tool's words are carried over as written even when they hold Cyrillic and «—»; the
+    /// participation the gate adds after them is still the engine's and is said in the interface's
+    /// language.
+    func testAToolsReasonAndCodexsParticipationAreToldApart() throws {
+        let tool = "доступ заборонено — пісочниця"
+        let note = "Перевірка 3 рази поспіль упиралась у сам інструмент перевірки, а не в роботу: \(tool) — Codex брав участь не в усьому. Без Codex: підготовка"
+        XCTAssertEqual(en(note),
+                       "The check ran into the checking tool itself, not the work, 3 times in a row: \(tool) — Codex did not take part in everything. Without Codex: preparation")
+        XCTAssertEqual(RunNoteWording.interfaceText(note, bundle: try language("uk")), note)
+        let ru = RunNoteWording.interfaceText(note, bundle: try language("ru"))
+        XCTAssertTrue(ru.contains(": \(tool) — "), ru)
+        XCTAssertFalse(ru.contains("Codex брав участь"), ru)
+    }
+
+    func testAPeerFailureKeepsWhatTheCLISaid() {
+        XCTAssertEqual(en("codex зупинився з помилкою (код 1) через 42с — помилка мережі; повний лог: /tmp/л.log"),
+                       "codex stopped with an error (code 1) after 42 s — помилка мережі; full log: /tmp/л.log")
+        XCTAssertEqual(en("codex зараз недоступний — вичерпано вікно, відновлення близько завтра о 09:05"),
+                       "codex is unavailable now — its usage window is used up; it is back around tomorrow at 09:05")
     }
 
     /// The worker's summary, a reviewer's sentence, anything else: shown as it is, never guessed at.
@@ -219,26 +278,163 @@ nonisolated final class RunNoteWordingTests: XCTestCase {
     /// Every sentence the engine's scripts journal into a run, read from the scripts themselves:
     /// a new sentence there that the interface cannot say fails here, not on somebody's screen.
     func testEverySentenceInTheEnginesScriptsHasInterfaceWords() throws {
-        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        let scripts = ["engine/bin/pipeline.sh", "engine/bin/pipeline-deliver.sh", "engine/hooks/review-gate.sh"]
-        var seen = 0
-        for script in scripts {
+        let found = try Self.engineLiterals()
+        for s in found {
+            let said = en(s.sample)
+            XCTAssertFalse(Self.hasCyrillic(said), "\(s.script): «\(s.sample)» → «\(said)»")
+        }
+        XCTAssertGreaterThan(found.count, 60, "the scan found the engine's sentences")
+        XCTAssertTrue(found.contains { $0.gapStage != nil && $0.script.hasSuffix("review-gate.sh") }, "the scan reads codex_gap")
+    }
+
+    /// Why a step went without Codex reaches the card inside the participation note, after the
+    /// engine itself has stored it (`codex_gap`, clipped to 400 bytes) and summed it up
+    /// (`codex_participation_note`). Every reason the scripts give is put through that real path,
+    /// and what comes out reads in the interface's language: English and Russian with nothing of
+    /// the engine's Ukrainian left, Ukrainian exactly as the engine wrote it.
+    func testEveryReasonForGoingWithoutCodexReadsThroughTheRealSummary() throws {
+        let repo = Self.repo
+        let uk = try language("uk"), ru = try language("ru")
+        let ukrainianOnly = CharacterSet(charactersIn: "іїєґІЇЄҐʼ'")
+        var checked = 0
+        for s in try Self.engineLiterals() {
+            guard let stage = s.gapStage else { continue }
+            let note = try Self.participationNote(stage: stage, reason: s.sample, repo: repo)
+            XCTAssertTrue(note.hasPrefix("Codex брав участь не в усьому. Без Codex: ") || note.hasPrefix("Фінальне ревʼю"), note)
+            checked += 1
+            let english = en(note)
+            XCTAssertFalse(Self.hasCyrillic(english), "\(s.script) (\(stage)): «\(note)» → «\(english)»")
+            XCTAssertEqual(RunNoteWording.interfaceText(note, bundle: uk), note, "\(s.script) (\(stage))")
+            let russian = RunNoteWording.interfaceText(note, bundle: ru)
+            XCTAssertNil(russian.rangeOfCharacter(from: ukrainianOnly), "ru: «\(note)» → «\(russian)»")
+        }
+        XCTAssertGreaterThan(checked, 25, "the reasons were put through the engine")
+    }
+
+    /// A reason with «; » of its own stays one step, and the steps after it are still steps.
+    func testAReasonWithASemicolonStaysOneStep() {
+        let note = "Codex брав участь не в усьому. Без Codex: консультація ×2 — Codex не авторизований — `codex login status` каже «Not logged in», тож викликати нема чим — облікових даних просто немає. Потрібен повторний вхід у Codex; лічильник цього не бачить; звірка позицій — Codex не звірив дві позиції — Claude працює за своєю"
+        XCTAssertEqual(en(note), "Codex did not take part in everything. Without Codex: consultation ×2 — Codex is not signed in — `codex login status` says “Not logged in”, so there is nothing to call it with — there are simply no credentials. …; aligning the positions — Codex did not compare the two positions — Claude works from its own")
+    }
+
+    // MARK: - Reading the engine
+
+    private static let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+
+    /// One sentence the engine writes, as a sample with its blanks filled; `gapStage` when it also
+    /// becomes a reason Codex was missing from that step.
+    struct EngineLiteral { let script: String; let sample: String; let gapStage: String? }
+
+    /// The journal's own writers, the ones whose words reach it through a file the pipeline
+    /// journals (`.skip-<stage>`, `.unavailable-<stage>`), and every reason given to `codex_gap`
+    /// directly or through the variable it is handed.
+    static func engineLiterals() throws -> [EngineLiteral] {
+        // script → the stage `codex_gap` files its unavailable/failed reasons under
+        let scripts: [(String, String?)] = [
+            ("engine/bin/pipeline.sh", nil), ("engine/bin/pipeline-deliver.sh", nil), ("engine/hooks/review-gate.sh", nil),
+            ("engine/bin/preflight.sh", "preflight"), ("engine/bin/pipeline-codex-part.sh", "part"),
+            ("engine/bin/consult-codex.sh", "consultation"), ("engine/hooks/answer-question.sh", "question"),
+        ]
+        let writer = try! NSRegularExpression(pattern:
+            #"(^|[\s;&|{(])(run_event|gate_event|mark_done|stage_skip_note|peer_unavailable|unavailable|decline|codex_gap)\s"#)
+        let gapCall = try! NSRegularExpression(pattern: #"codex_gap\s+"[^"]*"\s+([a-z]+)\s"#)
+        // A reason assigned before it is handed on: a case arm, or a sentence of its own.
+        let assigned = try! NSRegularExpression(pattern: #"^(?:[0-9*]+\)\s+(?:status=\S+;\s+)?)?(?:reason|_why_degraded)="[^$]"#)
+        var out: [EngineLiteral] = []
+        for (script, stage) in scripts {
             let url = repo.appendingPathComponent(script)
-            try XCTSkipUnless(FileManager.default.fileExists(atPath: url.path), "no checkout beside the tests")
-            let text = try String(contentsOf: url, encoding: .utf8)
+            guard FileManager.default.fileExists(atPath: url.path) else { throw XCTSkip("no checkout beside the tests") }
+            // A call continued on the next line is one call.
+            let text = try String(contentsOf: url, encoding: .utf8).replacingOccurrences(of: "\\\n", with: " ")
             for line in text.split(separator: "\n") {
-                let code = line.drop { $0 == " " || $0 == "\t" }
-                guard !code.hasPrefix("#"),
-                      code.range(of: #"(^|[\s;&|{(])(run_event|gate_event|mark_done)\s"#, options: .regularExpression) != nil,
-                      let literal = Self.quotedStrings(in: code).first(where: Self.hasCyrillic)
+                let code = String(line.drop { $0 == " " || $0 == "\t" })
+                let whole = NSRange(code.startIndex..., in: code)
+                guard !code.hasPrefix("#") else { continue }
+                let writes = writer.firstMatch(in: code, range: whole) != nil
+                // Only where such a reason goes on to `codex_gap`: the gate's own `reason=` is what
+                // it tells the worker, never a note of the run.
+                let isReason = stage != nil && assigned.firstMatch(in: code, range: whole) != nil
+                guard writes || isReason,
+                      let literal = quotedStrings(in: Substring(code)).first(where: hasCyrillic)
                 else { continue }
-                seen += 1
-                let sample = Self.expand(literal)
-                let said = en(sample)
-                XCTAssertFalse(Self.hasCyrillic(said), "\(script): «\(sample)» → «\(said)»")
+                let fn = writer.firstMatch(in: code, range: whole).flatMap { Range($0.range(at: 2), in: code) }.map { String(code[$0]) }
+                var gap: String?
+                if let m = gapCall.firstMatch(in: code, range: whole), let r = Range(m.range(at: 1), in: code) {
+                    gap = String(code[r])
+                } else if isReason || ["peer_unavailable", "unavailable", "decline"].contains(fn ?? "") {
+                    gap = stage
+                }
+                out.append(EngineLiteral(script: script, sample: expand(literal), gapStage: gap))
             }
         }
-        XCTAssertGreaterThan(seen, 30, "the scan found the engine's sentences")
+        return out
+    }
+
+    /// The participation note the engine itself writes after `codex_gap <stage> <reason>`.
+    private static func participationNote(stage: String, reason: String, repo: URL) throws -> String {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("gap-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        // The reason goes through the environment: an argument is handed over decomposed, and the
+        // engine never sees its own sentences that way.
+        p.arguments = ["-c", #"source "$0" >/dev/null 2>&1; codex_gap "$1" "$2" "$GAP_REASON" && codex_participation_note "$(codex_participation "$1")""#,
+                       repo.appendingPathComponent("engine/bin/supervisor-lib.sh").path, dir.path, stage]
+        p.environment = ProcessInfo.processInfo.environment.merging(["GAP_REASON": reason]) { $1 }
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        try p.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// `supervisor-lib.sh` builds two sentences the run's notes carry: what a spent window says
+    /// (`provider_unavailable_note`) and which steps went without Codex (`codex_participation_note`).
+    /// Their words are read from the functions themselves.
+    func testTheLibrarysSentencesHaveInterfaceWords() throws {
+        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let url = repo.appendingPathComponent("engine/bin/supervisor-lib.sh")
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: url.path), "no checkout beside the tests")
+        let text = try String(contentsOf: url, encoding: .utf8)
+
+        let provider = try XCTUnwrap(Self.body(of: "provider_unavailable_note", in: text))
+        var said = 0
+        for format in Self.matches(#"printf '([^']*)'"#, in: provider) where Self.hasCyrillic(format) {
+            var note = format
+            for fill in ["codex", "сьогодні о 14:30"] {
+                if let r = note.range(of: "%s") { note.replaceSubrange(r, with: fill) }
+            }
+            said += 1
+            XCTAssertFalse(Self.hasCyrillic(en(note)), "provider_unavailable_note: «\(note)» → «\(en(note))»")
+        }
+        XCTAssertGreaterThanOrEqual(said, 3, "the scan found provider_unavailable_note's sentences")
+
+        let participation = try XCTUnwrap(Self.body(of: "codex_participation_note", in: text))
+        let openings = Self.matches(#""([^"]+\. )""#, in: participation)
+        let stages = Self.matches(#"[a-z]+:"([^"]+)""#, in: participation)
+        XCTAssertEqual(openings.count, 3, "the participation's openings")
+        XCTAssertEqual(stages.count, 6, "the participation's stages")
+        for opening in openings {
+            let note = opening + "Без Codex: " + stages.joined(separator: "; ")
+            XCTAssertFalse(Self.hasCyrillic(en(note)), "codex_participation_note: «\(note)» → «\(en(note))»")
+        }
+    }
+
+    /// The lines of a shell function, from its `name() {` to the first `}` at the start of a line.
+    private static func body(of function: String, in text: String) -> String? {
+        guard let start = text.range(of: "\n\(function)() {") else { return nil }
+        let rest = text[start.upperBound...]
+        guard let end = rest.range(of: "\n}") else { return nil }
+        return String(rest[..<end.lowerBound])
+    }
+
+    private static func matches(_ pattern: String, in text: String) -> [String] {
+        let regex = try! NSRegularExpression(pattern: pattern)
+        return regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap {
+            Range($0.range(at: 1), in: text).map { String(text[$0]) }
+        }
     }
 
     /// The double-quoted strings of a shell line, `$(…)` and `${…}` inside them kept whole.
@@ -272,6 +468,9 @@ nonisolated final class RunNoteWordingTests: XCTestCase {
     /// What the engine puts in a variable when that is one of its own sentences, not a free one.
     private static let samples = [
         "_cpn": "Codex брав участь не в усьому. Без Codex: підготовка",  // codex_participation_note
+        "_why_degraded": "запит до Codex не повернув відповіді",
+        // Numbers the engine fills in before a «с» of seconds.
+        "PEER_IDLE_FOR": "600", "elapsed": "42", "TIMEOUT": "1800",
     ]
 
     /// A shell word with every expansion filled in: a variable or a command is «S» (or its sample),
@@ -282,6 +481,8 @@ nonisolated final class RunNoteWordingTests: XCTestCase {
         while i < s.endIndex {
             let c = s[i]
             let next = s.index(after: i)
+            // An escaped character is the character itself: «\`codex login status\`».
+            if c == "\\", next < s.endIndex { out.append(s[next]); i = s.index(after: next); continue }
             guard c == "$", next < s.endIndex else { out.append(c); i = next; continue }
             let open = s[next]
             if open == "{" || open == "(" {
