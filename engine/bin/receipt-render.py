@@ -123,7 +123,7 @@ elif lede:
 
 # Why the review did not accept it. A verdict he cannot act on is not a verdict.
 review_why = (R.get("review_why") or "").strip()
-if review_why and review in ("failed", "debt"):
+if review_why and (review in ("failed", "debt") or R.get("accepted_with_notes")):
     card(t("What the review said", "Що сказала перевірка", "Что сказала проверка"),
          f'<pre class="task">{esc(review_why[:4000])}</pre>', accent=True)
 

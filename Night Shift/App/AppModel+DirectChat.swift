@@ -770,6 +770,7 @@ extension AppModel {
         // What this chat runs on, fixed for this send: a choice made a second later belongs to the
         // next one. The first message is also where a chat stops following the default.
         settleRunChoices(for: chat.id)
+        settlePipeline(for: chat.id)
         let run = snapshot ?? runChoices(for: chat.id)
         claudeDeliveryStarted?(chat.id, run)
 

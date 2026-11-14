@@ -34,7 +34,7 @@ nonisolated final class PreparedMessageTests: XCTestCase {
     // MARK: - Which route a message takes
 
     func testOnlyTheTwoEngineModePaysForTwoIndependentPositions() {
-        XCTAssertEqual(ChatEngineMode.claudeAndCodex.messagePipeline, "adaptive-peer")
+        XCTAssertEqual(ChatEngineMode.claudeAndCodex.messagePipeline, "review-team")
         XCTAssertEqual(ChatEngineMode.claude.messagePipeline, "plain",
                        "Claude alone has no second engine to disagree with — it must not pay for one")
         XCTAssertEqual(ChatEngineMode.codex.messagePipeline, "plain")

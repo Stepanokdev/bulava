@@ -7219,6 +7219,23 @@
         }
       }
     },
+    "Accepted with the reviewer’s notes: the report’s review limit (%@) was reached" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Принято с замечаниями рецензента: лимит кругов проверки отчёта (%@) исчерпан"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прийнято із зауваженнями рецензента: ліміт кіл рев'ю звіту (%@) вичерпано"
+          }
+        }
+      }
+    },
     "Accepting work" : {
       "localizations" : {
         "ru" : {
@@ -9101,6 +9118,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Назад"
+          }
+        }
+      }
+    },
+    "back · no limit" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "назад · без лимита"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "назад · без ліміту"
           }
         }
       }
@@ -30275,6 +30309,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "коло %1$lld з %2$lld"
+          }
+        }
+      }
+    },
+    "Rounds back to the worker: no limit" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Кругов возврата исполнителю: без лимита"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Кіл повернення виконавцю: без ліміту"
           }
         }
       }

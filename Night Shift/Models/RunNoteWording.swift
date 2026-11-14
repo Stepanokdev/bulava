@@ -166,6 +166,9 @@ nonisolated enum RunNoteWording {
             String(localized: "Piece \(g[0] ?? "") “\(g[1] ?? "")” accepted — next: “\(g[2] ?? "")”", bundle: b)
         },
         Template("Прийнято") { _, b in String(localized: "Accepted", bundle: b) },
+        Template("Прийнято із зауваженнями рецензента: ліміт кіл рев'ю звіту \\((.+?)\\) вичерпано") { g, b in
+            String(localized: "Accepted with the reviewer’s notes: the report’s review limit (\(g[0] ?? "")) was reached", bundle: b)
+        },
         Template("Прийнято із зауваженнями") { _, b in String(localized: "Accepted with notes", bundle: b) },
         Template("Прийнято рецензентом, але не все закомічено: (.+)") { g, b in
             String(localized: "Accepted by the reviewer, but not everything is committed: \(g[0] ?? "")", bundle: b)

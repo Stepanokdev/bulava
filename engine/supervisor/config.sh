@@ -31,8 +31,12 @@ fi
 : "${SUPERVISOR_REVIEW_TEAM:=}"
 export SUPERVISOR_REVIEW_TEAM
 
-: "${SUPERVISOR_MAX_ROUNDS:=3}"          # base patience: always allow at least this many FAIL rounds
-: "${SUPERVISOR_MAX_ROUNDS_HARD:=12}"    # absolute ceiling per session (runaway protection)
+# Review rounds. Quota is not what these protect: the director's rule is fewer bugs, not fewer
+# tokens. A run that keeps getting better keeps going; one that does not is stopped by the stall
+# limit, whatever the ceiling. 0 for either ceiling means no limit.
+: "${SUPERVISOR_MAX_ROUNDS:=5}"          # base patience: always allow at least this many FAIL rounds
+: "${SUPERVISOR_MAX_ROUNDS_HARD:=20}"    # absolute ceiling per session (0 = none; the stall limit still stops a loop)
+: "${SUPERVISOR_REPORT_REVIEW_ROUNDS:=5}" # rounds a research report gets when its task or pipeline names none (0 = none)
 : "${SUPERVISOR_STALL_LIMIT:=2}"         # consecutive no-progress FAIL rounds → park as genuinely stuck
 : "${SUPERVISOR_MAX_RUN_SECONDS:=28800}" # 8h of review rounds → park for a person (0 disables). A long
                                          # project (a plan of pieces) has none: rounds and stalls bound it
@@ -63,7 +67,7 @@ export SUPERVISOR_REVIEW_TEAM
 : "${SUPERVISOR_SCOPE_GATE:=1}"            # 1 = enforce RunSpec write_paths (write-gate + scope-gate); 0 = off (kill switch)
 : "${SUPERVISOR_BLOCK_DECISIONS:=0}"       # 1 = also block worker writes to DECISIONS.md (enable once the findings channel replaces it)
 : "${SUPERVISOR_BOUNDED_REVIEW:=1}"        # 1 = scoped runs (mode patch/remediation/audit) use the bounded 1-remediation machine; 0 = force legacy loop
-: "${SUPERVISOR_MAX_REMEDIATIONS:=1}"      # scoped runs: max reopen cycles for acceptance/regression findings
+: "${SUPERVISOR_MAX_REMEDIATIONS:=4}"      # scoped runs: fixes after the first review (5 reviews, as SUPERVISOR_MAX_ROUNDS); a pipeline's or task's number of rounds replaces it; the stall limit still stops a loop
 : "${SUPERVISOR_LEGACY_REPO_NOTES:=0}"     # 1 = also dual-write blocked/debt into the repo during the §10.2 transition (#6)
 
 : "${SUPERVISOR_OUTCOME_PROTOCOL:=1}"      # 1 = honor a worker-declared outcome + nudge/park a no-outcome stop; 0 = legacy silent-stop
@@ -175,7 +179,7 @@ if [ "${SUPERVISOR_PROFILE:-}" = server ]; then
   export SUPERVISOR_PROFILE SUPERVISOR_CODEX_UNAVAILABLE SUPERVISOR_CODEX_UNAVAILABLE_AFTER_HOURS
 fi
 
-export SUPERVISOR_MAX_ROUNDS SUPERVISOR_MAX_ROUNDS_HARD SUPERVISOR_STALL_LIMIT \
+export SUPERVISOR_MAX_ROUNDS SUPERVISOR_MAX_ROUNDS_HARD SUPERVISOR_REPORT_REVIEW_ROUNDS SUPERVISOR_STALL_LIMIT \
        SUPERVISOR_MAX_RUN_SECONDS \
   SUPERVISOR_USAGE_GUARD SUPERVISOR_USAGE_WEEK_GUARD \
   SUPERVISOR_PEER_IDLE_TIMEOUT SUPERVISOR_PEER_IDLE_TIMEOUT_CODEX SUPERVISOR_PEER_POLL \

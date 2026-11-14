@@ -78,7 +78,7 @@ nonisolated enum PipelineChatPrompt {
         - An edge is {"from":"<node>.<outPort>","to":"<node>.<inPort>"}. The out type must be one the
           in port accepts. Exactly one trigger and one worker (agent.*) per pipeline.
         - Sending work back is an edge from a check's "fail" port to the worker's "feedback" port with
-          "loop":{"max":N}, N from 1 to \(registry.reviewCeiling).
+          "loop":{"max":N}, \(registry.reviewCeiling > 0 ? "N from 1 to \(registry.reviewCeiling)" : "N from 1 up"), or 0 for no limit on rounds.
         - A prompt is plain text in the node's "prompt". Never put keys, tokens or passwords anywhere.
         - Give new nodes "x","y" near the steps they connect to: about 220 apart left to right,
           120 apart top to bottom.

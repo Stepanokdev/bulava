@@ -250,5 +250,14 @@ case "$out" in *"SUPERVISOR_CODEX_EFFORT	high"*) ok "a saved level the model no 
   *) bad "start passed an unsupported level: $out" ;; esac
 unset CODEX_HOME
 
+echo "===== review rounds: 0 is no limit, the report's own count is a setting ====="
+export NIGHT_SHIFT_CONFIG="$TMP/rounds.json"
+python3 "$CLI" config set review.report-rounds 9 >/dev/null 2>&1 && ok "review.report-rounds takes 9" || bad "review.report-rounds 9 refused"
+python3 "$CLI" config set review.max-rounds-hard 0 >/dev/null 2>&1 && ok "review.max-rounds-hard takes 0 (no ceiling)" || bad "review.max-rounds-hard 0 refused"
+out="$(python3 "$CLI" env 2>&1)"
+case "$out" in *"SUPERVISOR_REPORT_REVIEW_ROUNDS	9"*) ok "and a start gets the report's 9" ;; *) bad "start lost report rounds: $out" ;; esac
+case "$out" in *"SUPERVISOR_MAX_ROUNDS_HARD	0"*) ok "and the ceiling's 0" ;; *) bad "start lost the ceiling: $out" ;; esac
+grep -q 'SUPERVISOR_REPORT_REVIEW_ROUNDS' "$NS" && ok "night-shift lets the setting through to the run" || bad "SUPERVISOR_REPORT_REVIEW_ROUNDS is not settable in night-shift.sh"
+
 printf '\n%s\n' "failures: $fails"
 [ "$fails" -eq 0 ]

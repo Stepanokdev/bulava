@@ -165,7 +165,7 @@ struct PipelineCanvas: View {
                     .stroke(selected ? Palette.accent : (loop ? Palette.orange : Palette.textFaint.opacity(0.7)),
                             style: StrokeStyle(lineWidth: selected ? 2 : 1.4, lineCap: .round, dash: loop ? [5, 4] : []))
                 if let max = edge.loop?.max {
-                    Text(verbatim: Fmt.count("back · at most %lld", max))
+                    Text(verbatim: max == 0 ? String(localized: "back · no limit") : Fmt.count("back · at most %lld", max))
                         .font(Typo.panelMeta)
                         .foregroundStyle(Palette.orange)
                         .padding(.horizontal, 5)

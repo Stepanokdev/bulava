@@ -46,7 +46,7 @@ if [ "$(jq -c "$proj" "$TMP/c.json")" = "$(jq -c "$proj" "$ENGINE_ROOT/superviso
 else
   bad "compiled stages differ from adaptive-peer.json"
 fi
-jq -e '.gates.review == true and .gates.maxRounds == 3 and (.needs == ["codex"])' "$TMP/c.json" >/dev/null \
+jq -e '.gates.review == true and .gates.maxRounds == 5 and .gates.reportMaxRounds == 5 and (.needs == ["codex"])' "$TMP/c.json" >/dev/null \
   && ok "and its gates say: reviewed, up to 3 rounds; it needs Codex" || bad "gates/needs: $(jq -c '{gates,needs}' "$TMP/c.json")"
 
 echo "===== the built-in with a review team: the same stages, a team at the review ====="
@@ -61,7 +61,7 @@ jq -e '.ok and (.issues|length)==0 and ([.guarantees[].k] == ["review","team","s
 tool compile "$RT" --out "$TMP/ct.json" >/dev/null
 [ "$(jq -c "$proj" "$TMP/ct.json")" = "$(jq -c "$proj" "$ENGINE_ROOT/supervisor/pipelines/adaptive-peer.json")" ] \
   && ok "its stages are exactly Claude + Codex's" || bad "review-team stages differ from adaptive-peer.json"
-jq -e '.gates.review == true and .gates.maxRounds == 3 and .gates.reviewTeam == "contract security state"' "$TMP/ct.json" >/dev/null \
+jq -e '.gates.review == true and .gates.maxRounds == 5 and .gates.reviewTeam == "contract security state"' "$TMP/ct.json" >/dev/null \
   && ok "its gates: reviewed, 3 rounds, by contract, security and state" || bad "review-team gates: $(jq -c .gates "$TMP/ct.json")"
 jq -e '.gates | has("reviewTeam") | not' "$TMP/c.json" >/dev/null && ok "Claude + Codex names no team: the engine decides, as before" || bad "adaptive-peer gates name a team"
 tool list | jq -e '[.pipelines[] | select(.id=="review-team")][0] | .kind == "builtin" and .name == "Claude + команда Codex" and .i18n.en.name == "Claude + a Codex team"' >/dev/null \
@@ -80,6 +80,12 @@ done
 [ "$(jq -r .gates.reviewTeam "$TMP/c-one.json")" = off ] && ok "one reviewer is said as off, so a server default does not apply" || bad "one: $(jq -c .gates "$TMP/c-one.json")"
 [ "$(jq -r .gates.reviewTeam "$TMP/c-specialists-general.json")" = "contract security state general" ] && ok "the specialists and an ordinary reviewer" || bad "specialists-general"
 [ "$(jq -r .gates.reviewTeam "$TMP/c-all.json" | wc -w | tr -d ' ')" = 7 ] && ok "all seven focuses" || bad "all: $(jq -c .gates "$TMP/c-all.json")"
+# The compiler and the gate read the same numbers: what this run was started with, not the literals
+# in config.sh.
+SUPERVISOR_REPORT_REVIEW_ROUNDS=9 SUPERVISOR_MAX_ROUNDS_HARD=0 tool registry | jq -e '.review_ceiling == 0' >/dev/null 2>&1 \
+  && ok "the registry reports the run's ceiling, 0 = none" || bad "registry ceiling: $(SUPERVISOR_MAX_ROUNDS_HARD=0 tool registry | jq .review_ceiling)"
+SUPERVISOR_REPORT_REVIEW_ROUNDS=9 SUPERVISOR_MAX_ROUNDS_HARD=0 tool compile "$ENGINE_ROOT/supervisor/pipelines/manifests/adaptive-peer" --out "$TMP/c90.json" >/dev/null
+jq -e '.gates.reportMaxRounds == 9' "$TMP/c90.json" >/dev/null && ok "a report's default rounds come from the run's setting (9)" || bad "compiled report rounds: $(jq .gates.reportMaxRounds "$TMP/c90.json")"
 tool registry | jq -e '.modules["gate.review"].p[0] | .k == "team" and .type == "select" and .default == "one" and (.options | length) == 4 and .ol.specialists.uk != null' >/dev/null 2>&1 \
   && ok "the editor gets the choice with its labels" || bad "registry gate.review: $(tool registry | jq -c '.modules["gate.review"].p' 2>/dev/null)"
 
@@ -108,8 +114,14 @@ def unbounded(m):
         e.pop("loop", None)
 case("loop without a bound", ["V5"], unbounded)
 def too_many(m):
-    next(e for e in m["edges"] if e.get("loop"))["loop"]["max"] = 20
+    next(e for e in m["edges"] if e.get("loop"))["loop"]["max"] = 21
 case("loop over the ceiling", ["V6"], too_many)
+def no_limit(m):
+    next(e for e in m["edges"] if e.get("loop"))["loop"]["max"] = 0
+case("a loop of 0 rounds is said on purpose: no limit", [], no_limit)
+def no_number(m):
+    next(e for e in m["edges"] if e.get("loop"))["loop"]["max"] = "many"
+case("a loop with no number is a mistake", ["V6"], no_number)
 def cross(m):
     m["edges"].append({"from": "review.fail", "to": "align.positions", "loop": {"max": 2}})
 case("loop across phases", ["V7"], cross)
@@ -323,7 +335,7 @@ wait_quiet 120 || bad "the pump never finished review-team"
 ART2="$(find "$IDIR/messages" -maxdepth 1 -type d -name "*-$MID2" | head -1)"
 [ "$(jq -c '[.stages[].id]' "$ART2/pipeline.compiled.json" 2>/dev/null)" = '["context","peer-claude","peer-codex","align","compose","deliver"]' ] \
   && ok "it compiled Claude + Codex's stages from the engine's own description" || bad "review-team stages: $(jq -c '[.stages[].id]' "$ART2/pipeline.compiled.json" 2>/dev/null)"
-jq -e '.pipeline == "review-team" and .pipeline_gates.reviewTeam == "contract security state" and .pipeline_gates.maxRounds == 3' "$IDIR/dispatch.json" >/dev/null \
+jq -e '.pipeline == "review-team" and .pipeline_gates.reviewTeam == "contract security state" and .pipeline_gates.maxRounds == 5' "$IDIR/dispatch.json" >/dev/null \
   && ok "the dispatch record names the team the gate must use" || bad "dispatch gates: $(jq -c '{pipeline,pipeline_gates}' "$IDIR/dispatch.json")"
 
 echo "===== a required stage failing inside a parallel group stops the run ====="

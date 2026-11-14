@@ -17,13 +17,14 @@ read_default(){ ( for v in $(compgen -v | grep '^SUPERVISOR_'); do unset "$v" 2>
                   . "$ROOT/supervisor/config.sh"; printf '%s' "${!1}" ); }
 
 echo "== documented defaults (INVARIANT: code == README §Налаштування) =="
-check "MAX_ROUNDS=3"                 '[ "$(read_default SUPERVISOR_MAX_ROUNDS)" = 3 ]'
-check "MAX_ROUNDS_HARD=12"           '[ "$(read_default SUPERVISOR_MAX_ROUNDS_HARD)" = 12 ]'
+check "MAX_ROUNDS=5"                 '[ "$(read_default SUPERVISOR_MAX_ROUNDS)" = 5 ]'
+check "MAX_ROUNDS_HARD=20"           '[ "$(read_default SUPERVISOR_MAX_ROUNDS_HARD)" = 20 ]'
+check "REPORT_REVIEW_ROUNDS=5"       '[ "$(read_default SUPERVISOR_REPORT_REVIEW_ROUNDS)" = 5 ]'
 check "STALL_LIMIT=2"                '[ "$(read_default SUPERVISOR_STALL_LIMIT)" = 2 ]'
 check "USAGE_GUARD=100"              '[ "$(read_default SUPERVISOR_USAGE_GUARD)" = 100 ]'
 check "USAGE_WEEK_GUARD=100"         '[ "$(read_default SUPERVISOR_USAGE_WEEK_GUARD)" = 100 ]'
 check "VERIFY_GUARD=100"             '[ "$(read_default SUPERVISOR_VERIFY_GUARD)" = 100 ]'
-check "MAX_REMEDIATIONS=1"           '[ "$(read_default SUPERVISOR_MAX_REMEDIATIONS)" = 1 ]'
+check "MAX_REMEDIATIONS=4"           '[ "$(read_default SUPERVISOR_MAX_REMEDIATIONS)" = 4 ]'
 check "OUTCOME_NUDGE_MAX=2"          '[ "$(read_default SUPERVISOR_OUTCOME_NUDGE_MAX)" = 2 ]'
 check "IDLE_KILL_HOURS=4"            '[ "$(read_default SUPERVISOR_IDLE_KILL_HOURS)" = 4 ]'
 check "STALE_DISABLE_HOURS=10"       '[ "$(read_default SUPERVISOR_STALE_DISABLE_HOURS)" = 10 ]'

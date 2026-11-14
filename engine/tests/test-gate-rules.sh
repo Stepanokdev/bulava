@@ -16,6 +16,9 @@
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export SUPERVISOR_STATE_DIR="$(mktemp -d)"
+# The rounds this suite counts were written for a patience of 3; the default is a separate
+# decision (config.sh, tests/test-config.sh), not what is checked here.
+export SUPERVISOR_MAX_ROUNDS=3
 . "$ROOT/bin/supervisor-lib.sh"
 GATE="$ROOT/hooks/review-gate.sh"
 export SUPERVISOR_CODEX_USAGE_CMD="/usr/bin/true"

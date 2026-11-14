@@ -95,7 +95,7 @@
       "from": "review.fail",
       "to": "deliver.feedback",
       "loop": {
-        "max": 3
+        "max": 5
       }
     }
   ]

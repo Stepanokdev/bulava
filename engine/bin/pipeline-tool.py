@@ -53,7 +53,12 @@ LEGACY_DIR = os.path.join(ROOT, "supervisor", "pipelines")
 
 
 def _config_int(name, default):
-    """A number from supervisor/config.sh, so the ceiling here is the engine's own."""
+    """The engine's effective number: what this run was started with (the environment, which
+    config.sh, the settings file and the run's own saved choices fill in), else the default written
+    in supervisor/config.sh, so the ceiling here is the one the gate will apply."""
+    env = os.environ.get(name, "").strip()
+    if env.isdigit():
+        return int(env)
     try:
         with open(os.path.join(ROOT, "supervisor", "config.sh"), encoding="utf-8") as fh:
             m = re.search(r"\$\{%s:=(\d+)\}" % re.escape(name), fh.read())
@@ -64,8 +69,9 @@ def _config_int(name, default):
     return default
 
 
-REVIEW_CEILING = _config_int("SUPERVISOR_MAX_ROUNDS_HARD", 12)
-REVIEW_DEFAULT = _config_int("SUPERVISOR_MAX_ROUNDS", 3)
+REVIEW_CEILING = _config_int("SUPERVISOR_MAX_ROUNDS_HARD", 20)
+REVIEW_DEFAULT = _config_int("SUPERVISOR_MAX_ROUNDS", 5)
+REPORT_DEFAULT = _config_int("SUPERVISOR_REPORT_REVIEW_ROUNDS", 5)
 
 TYPES = {
     "task": {"uk": "задача", "en": "task"},
@@ -459,13 +465,15 @@ def validate(m, require_exec=True):
             add("error", "V2", "«%s» дає «%s», а «%s» чекає %s." % (_title(na, ma), TYPES[po["type"]]["uk"], _title(nb, mb), " або ".join("«%s»" % TYPES[t]["uk"] for t in pi["types"])),
                 "'%s' gives '%s' but '%s' expects %s." % (_title(na, ma), TYPES[po["type"]]["en"], _title(nb, mb), " or ".join("'%s'" % TYPES[t]["en"] for t in pi["types"])), b, i)
         if e.get("loop"):
+            # 0 is said on purpose: no limit on rounds (the engine still stops a loop that makes no
+            # progress). A loop with no number, or a negative one, is a mistake.
             try:
                 mx = int((e.get("loop") or {}).get("max"))
             except (TypeError, ValueError):
-                mx = 0
-            if mx < 1:
+                mx = -1
+            if mx < 0:
                 add("error", "V6", "Петля %s → %s без межі кіл." % (e.get("from"), e.get("to")), "Loop %s → %s has no round limit." % (e.get("from"), e.get("to")), a, i)
-            elif mx > REVIEW_CEILING:
+            elif REVIEW_CEILING and mx > REVIEW_CEILING:
                 add("error", "V6", "Петля на %d кіл — більше за стелю %d." % (mx, REVIEW_CEILING), "A loop of %d rounds exceeds the ceiling of %d." % (mx, REVIEW_CEILING), a, i)
             if not loop_allowed(ma, mb):
                 add("error", "V7", "Петля з «%s» у «%s» перетинає фази." % (_title(na, ma), _title(nb, mb)),
@@ -837,7 +845,7 @@ def compile_manifest(m, prompt_dir=None):
             st["pick"] = True
         stages.append(st)
         node_stage[n["id"]] = n["id"]
-    gates = {"review": False, "maxRounds": REVIEW_DEFAULT, "reportReview": False, "reportMaxRounds": 2,
+    gates = {"review": False, "maxRounds": REVIEW_DEFAULT, "reportReview": False, "reportMaxRounds": REPORT_DEFAULT,
              "requiredSkills": [], "research": False, "reviewExtra": None, "reportCriteria": None}
     if agent is not None:
         stages.append({"id": agent["id"], "node": agent["id"], "title": "hand it to the worker", "run": ["pipeline-deliver.sh"]})
@@ -863,11 +871,13 @@ def compile_manifest(m, prompt_dir=None):
         for e in m.get("edges") or []:
             if e.get("loop") and split(e.get("to"))[0] == agent["id"]:
                 src = key_of(by_id.get(split(e.get("from"))[0]) or {})
-                mx = int((e.get("loop") or {}).get("max") or 0)
+                mx = max(0, int((e.get("loop") or {}).get("max") or 0))
+                # 0 stays 0: the gate reads it as no limit, not as one round.
+                bounded = mx if mx == 0 or REVIEW_CEILING == 0 else min(REVIEW_CEILING, mx)
                 if src == "gate.review":
-                    gates["maxRounds"] = max(1, min(REVIEW_CEILING, mx))
+                    gates["maxRounds"] = bounded
                 if src == "gate.reportReview":
-                    gates["reportMaxRounds"] = max(1, min(REVIEW_CEILING, mx))
+                    gates["reportMaxRounds"] = bounded
     for n in m.get("nodes") or []:
         node_stage.setdefault(n["id"], None)
     return {"name": m.get("id"), "description": m.get("description", ""), "source": "manifest",

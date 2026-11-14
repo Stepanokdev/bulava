@@ -401,6 +401,7 @@ final class AppModel {
                  + "(другі копії того самого прогону, ізольовані копії або зниклі теки).")
         }
         conversations.repairEnglishOutcomeLeaks()
+        keepPipelineOfChatsStartedBefore()
 
         if let last = products.lastVisited ?? products.sorted.first {
             route = .product(last.id)

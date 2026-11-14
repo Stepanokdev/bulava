@@ -156,7 +156,10 @@ or `unreviewed` (nobody reviewed it: a `succeeded_no_change` with an empty diff 
 gate as `debt`, and `review.json` names `gate`, not `codex`, as the reviewer). On a server a
 `succeeded_research` is reviewed by Codex: the report the worker names in `artifacts/`, or else its
 declared summary and last message — what the ticket gets — judged also on what data it changed, how,
-and how that was checked (`SUPERVISOR_SERVER_RESEARCH_REVIEW=0` turns this off). A
+and how that was checked (`SUPERVISOR_SERVER_RESEARCH_REVIEW=0` turns this off). It gets
+`SUPERVISOR_REPORT_REVIEW_ROUNDS` rounds (5) unless the task says otherwise (see "Review budget of a
+task" below); at the limit the task ends `failed` / `needs-user`, or `done` with the reviewer's notes
+when the task was sent with `--report-at-limit accept`. A
 `waiting_review` or `done` task with `status` other than `full` is still a pass — Codex reviewed the
 result — but put the gaps on the ticket next to it, so nobody reads it as an ordinary run.
 
@@ -200,6 +203,35 @@ them before dispatching.
 
 Text that came from people is framed as `<<UNTRUSTED_TRACKER_TEXT source=… author=…>>` for the worker
 and the reviewer.
+
+### Review budget of a task
+
+Four optional flags of `dispatch.sh` set how much review this one task gets. They are kept with the
+task, so its later attempts (`worker-send --relation continue`) and follow-ups are reviewed by the
+same budget; a task sent without them gets the engine's defaults, never a previous task's.
+
+| flag | what it sets | default |
+|---|---|---|
+| `--max-rounds N` | the most code-review rounds this task gets; not bounded by `SUPERVISOR_MAX_ROUNDS_HARD`, and it wins over a pipeline's own loop. A scoped task (runspec mode `patch`/`remediation`/`audit`) gets N−1 fixes, inside the same scope fence. Without it a scoped task gets its pipeline's number of rounds less one, none at all with no ceiling, else `SUPERVISOR_MAX_REMEDIATIONS` | that ceiling (20); scoped: 4 fixes (5 reviews) |
+| `--report-max-rounds N` | the most rounds a `succeeded_research` report gets; its own budget, not cut by the code-review ceiling or by `--max-rounds` | `SUPERVISOR_REPORT_REVIEW_ROUNDS` (5) |
+| `--report-criteria FILE` | what the report is judged by; **replaces** the server's rule about data changes rather than adding to it. Copied when the task is accepted: editing the file later changes nothing for it | the server's rule |
+| `--report-at-limit accept\|ask` | `accept`: a report still failing at its last round is accepted with the reviewer's notes: the task ends `done`, `review.json` keeps `verdict: FAIL` and the findings, with `disposition: passed` and `accepted_with_notes: true`; the receipt (`last_receipt`) says `review: passed`, `accepted_with_notes: true` and the notes in `review_why`, for the ticket. Only a readable verdict (`STATE: COMPLETE`, `VERDICT: FAIL`) is let through; an answer without one ends `needs-user`, recorded as `UNREADABLE`. `ask`: the task ends `failed` / `needs-user` | `ask` |
+
+`0` for either count means no limit. A run that stops making progress is still parked after
+`SUPERVISOR_STALL_LIMIT` rounds without progress (code review, scoped fixes included), and every run still ends after
+`SUPERVISOR_MAX_RUN_SECONDS` of review rounds (8 h), so `0` is safe to try. Any `--report-*` flag
+also asks for the report to be reviewed. A criteria file that cannot be read, or a count that is not
+a whole number, is refused with exit 2 before anything starts.
+
+```bash
+dispatch.sh --task-id QA-42 --message-id yt-QA-42 --source youtrack --author alice \
+            --report-max-rounds 3 --report-criteria /srv/runner/criteria/test-run.md \
+            --report-at-limit accept \
+            /work/acme/api "Run the regression suite on the test stand and report"
+```
+
+An engine that predates these flags reads the first of them as the folder and refuses the task
+(exit 1, «Нема такої теки»): update the engine before the runner sends them.
 
 ### No main repository: the workspace layout
 
@@ -311,6 +343,9 @@ finishes without the reviewer.
 
 ```
 SUPERVISOR_SERVER_RESEARCH_REVIEW=1            # Codex reviews a research result (and the data it changed); 0: settled unreviewed
+SUPERVISOR_MAX_ROUNDS=5                        # code-review rounds always allowed before a stall can park a run
+SUPERVISOR_MAX_ROUNDS_HARD=20                  # code-review ceiling per task; 0: none (the stall limit still stops a loop)
+SUPERVISOR_REPORT_REVIEW_ROUNDS=5              # rounds a research report gets when its task names none; 0: no limit
 SUPERVISOR_SERVER_UNDECLARED_MAX=4             # stops with nothing declared (or a DRAFT) sent back before a review is spent
 SUPERVISOR_BG_WAIT_SECONDS=5400                # how long the Stop hook waits, per run, for the worker's background subagents
 SUPERVISOR_BULAVA_REPORT=1                     # workers get the bulava-report MCP tool (bin/bulava-report-mcp.py); 0: not

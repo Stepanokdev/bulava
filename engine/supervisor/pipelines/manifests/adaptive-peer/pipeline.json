@@ -2,10 +2,10 @@
   "schema": "bulava.pipeline/1",
   "id": "adaptive-peer",
   "name": "Claude + Codex",
-  "description": "Дві незалежні позиції, звірка, Claude виконує, Codex перевіряє і може повернути. За замовчуванням так працює кожен чат і кожна автоматизація.",
+  "description": "Дві незалежні позиції, звірка, Claude виконує, Codex перевіряє і може повернути.",
   "i18n": {
     "en": {
-      "description": "Two independent positions, an alignment, Claude does the work, Codex reviews and can send it back. Every chat and automation runs this way unless you choose another.",
+      "description": "Two independent positions, an alignment, Claude does the work, Codex reviews and can send it back.",
       "node.chat": "Chat message",
       "node.context": "Neutral context",
       "node.peer-claude": "Claude's position",
@@ -150,7 +150,7 @@
       "from": "review.fail",
       "to": "deliver.feedback",
       "loop": {
-        "max": 3
+        "max": 5
       }
     }
   ]

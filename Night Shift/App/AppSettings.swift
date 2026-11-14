@@ -264,12 +264,14 @@ nonisolated enum ChatEngineMode: String, Codable, CaseIterable, Identifiable, Se
 
     var reviewsWork: Bool { self == .claudeAndCodex }
 
-    /// Which engine pipeline a message from this mode goes through.
+    /// Which engine pipeline a message from this mode goes through when nothing else was chosen.
     ///
-    /// Only the mode where both engines are involved pays for two independent positions. Claude
-    /// alone takes the plain route — the one the engine has always had — and Codex alone never
-    /// reaches the supervisor at all.
-    var messagePipeline: String { self == .claudeAndCodex ? "adaptive-peer" : "plain" }
+    /// Only the mode where both engines are involved pays for two independent positions, and its
+    /// final review is done by the Codex team (`review-team`): three reviewers, each from its own
+    /// angle, caught 72% of planted defects against 62–67% for one, and the director's rule is
+    /// fewer bugs, not fewer Codex calls. Claude alone takes the plain route — the one the engine
+    /// has always had — and Codex alone never reaches the supervisor at all.
+    var messagePipeline: String { self == .claudeAndCodex ? "review-team" : "plain" }
 
     /// What the engine should call collaboration for a run started from this mode. It decides
     /// whether the worker's prompt offers the consultation channel at all.
@@ -560,6 +562,16 @@ nonisolated struct AppSettings: Codable, Equatable {
         let name = "com.nightshift.settings.fixture."
             + digest.map { String(format: "%02x", $0) }.joined().prefix(16)
         return UserDefaults(suiteName: name) ?? .standard
+    }
+
+    /// Set once the chats already under way were pinned to the pipeline they were running on. Until
+    /// then a chat with no pipeline of its own followed the default on every message, so changing
+    /// the default — or the built-in one becoming the Codex team — would have moved them too.
+    /// Beside the settings rather than in them: it is written during launch, and a change to the
+    /// settings there would re-point the engine client at the settings' paths behind a caller's back.
+    static var startedChatsKeepPipeline: Bool {
+        get { store.bool(forKey: "com.nightshift.started-chats-keep-pipeline.v1") }
+        set { store.set(newValue, forKey: "com.nightshift.started-chats-keep-pipeline.v1") }
     }
 
     static func load() -> AppSettings {

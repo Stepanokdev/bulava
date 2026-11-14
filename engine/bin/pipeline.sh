@@ -229,6 +229,9 @@ record_dispatch() {
     && cp -f "$IDIR/dispatch.json.tmp" "$IDIR/dispatches/$DISPATCH_ID.json" 2>/dev/null \
     && mv -f "$IDIR/dispatch.json.tmp" "$IDIR/dispatch.json" \
     || rm -f "$IDIR/dispatch.json.tmp" 2>/dev/null || true
+  # A follow-up to a task a bridge sent is reviewed by the budget the task was sent with.
+  [ -s "$IDIR/task-id" ] && review_policy_apply "$IDIR"
+  return 0
 }
 
 mark_stage() {   # $1=stage id  $2=state  (for the app and for the tests)

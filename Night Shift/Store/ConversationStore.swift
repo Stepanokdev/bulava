@@ -318,6 +318,22 @@ final class ConversationStore {
         persistChats()
     }
 
+    /// Pin every chat that has already been written in, and chose no pipeline of its own, to the one
+    /// it has been running on. A chat nobody has written in yet is left to follow the default.
+    /// Returns how many were pinned.
+    @discardableResult
+    func keepPipelineOfStartedChats(_ pipelineID: String) -> Int {
+        guard !pipelineID.isEmpty else { return 0 }
+        let started = Set(entries.compactMap(\.chatID))
+        var n = 0
+        for i in chats.indices where (chats[i].pipelineID ?? "").isEmpty && started.contains(chats[i].id) {
+            chats[i].pipelineID = pipelineID
+            n += 1
+        }
+        if n > 0 { persistChats() }
+        return n
+    }
+
     func setPipeline(_ pipelineID: String?, for chatID: UUID) {
         guard let i = chats.firstIndex(where: { $0.id == chatID }), chats[i].pipelineID != pipelineID else { return }
         chats[i].pipelineID = pipelineID

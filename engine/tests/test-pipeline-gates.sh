@@ -31,6 +31,7 @@ if [ "${1:-}" = login ]; then echo "Logged in using ChatGPT"; exit 0; fi
 prompt=""; for a in "$@"; do prompt="$a"; done
 if printf '%s' "$prompt" | grep -q "RESEARCH REPORT"; then
   printf '%s' "$prompt" > "$CODEX_CALLED.report-prompt"
+  [ -n "${FAKE_REPORT_GARBLED:-}" ] && { echo "Я подумав і, здається, тут щось не так."; exit 0; }
   echo "STATE: COMPLETE"; echo "VERDICT: ${FAKE_REPORT_VERDICT:-PASS}"
   [ "${FAKE_REPORT_VERDICT:-PASS}" = FAIL ] && echo "1. «ринок зріс на 40%» — без джерела"
   exit 0
@@ -167,6 +168,106 @@ mkcase '{"review":true,"reportReview":false,"research":true}'
 outcome succeeded_research "Готово"
 out="$(rungate s-res-4)"
 check "without a report reviewer research stays what it always was: debt for a person" 'done_is debt'
+
+echo "== review budgets: defaults, 0 = no limit, a task's own ceiling =="
+mkcase '{"reportReview":true,"research":true}'
+mkdir -p "$PROJ/artifacts"; printf '# Звіт\nРинок зріс на 40%%.\n' > "$PROJ/artifacts/report.md"
+outcome succeeded_research "Готово: artifacts/report.md"
+out="$(unset SUPERVISOR_REPORT_REVIEW_ROUNDS; FAKE_REPORT_VERDICT=FAIL rungate s-bud-1)"
+check "a report with no number of its own gets the engine's default, 5 rounds (it was a fixed 2)" '[ "$(ev gate.reportReview retrying | jq -r ".round,.max" | tr "\n" " ")" = "1 5 " ]'
+mkcase '{"reportReview":true,"research":true,"reportMaxRounds":0}'
+mkdir -p "$PROJ/artifacts"; printf '# Звіт\nРинок зріс на 40%%.\n' > "$PROJ/artifacts/report.md"
+outcome succeeded_research "Готово: artifacts/report.md"
+for i in 1 2 3 4; do out="$(SUPERVISOR_MAX_ROUNDS_HARD=3 FAKE_REPORT_VERDICT=FAIL rungate s-bud-2)"; done
+check "a report limit of 0 is no limit: the 4th FAIL still goes back, past the code ceiling of 3" 'printf "%s" "$out" | grep -q "\"decision\": \"block\"" && [ ! -s "$IDIR/done" ]'
+check "…the chat is told the round with no maximum"   '[ "$(jq -c "select(.stage==\"gate.reportReview\" and .state==\"retrying\") | .max" "$IDIR/run-events.jsonl" | tail -1)" = null ]'
+check "…and the reviewer is not told of a limit"      '! grep -q "of at most" "$CODEX_CALLED.report-prompt"'
+
+mkcase '{"reportReview":true,"research":true,"reportMaxRounds":1,"reportAtLimit":"accept"}'
+mkdir -p "$PROJ/artifacts"; printf '# Звіт\nРинок зріс на 40%%.\n' > "$PROJ/artifacts/report.md"
+outcome succeeded_research "Готово: artifacts/report.md"
+mkdir -p "$IDIR/report"; printf '{"result":"succeeded_research"}' > "$IDIR/report/receipt.json"
+out="$(FAKE_REPORT_VERDICT=FAIL rungate s-bud-3)"
+RJ="$(run_reports_dir "$(slug_for "$PROJ")")/review.json"
+check "…and the receipt the bridge reads carries the flag and the notes" 'jq -e ".review == \"passed\" and .accepted_with_notes == true and (.review_why | test(\"40%\"))" "$IDIR/report/receipt.json" >/dev/null' 
+check "a task that asked for it: a report failing at its limit is accepted" 'done_is passed'
+check "…the record keeps the FAIL and the notes, and says it was let through" 'jq -e ".verdict == \"FAIL\" and .disposition == \"passed\" and .accepted_with_notes == true and (.findings | test(\"40%\"))" "$RJ" >/dev/null'
+check "…and the run view says so in words"            'ev run passed | jq -r .note | grep -q "із зауваженнями"'
+mkcase '{"reportReview":true,"research":true,"reportMaxRounds":1,"reportAtLimit":"accept"}'
+mkdir -p "$PROJ/artifacts"; printf '# Звіт\nРинок зріс на 40%%.\n' > "$PROJ/artifacts/report.md"
+outcome succeeded_research "Готово: artifacts/report.md"
+out="$(FAKE_REPORT_GARBLED=1 rungate s-bud-3b)"
+RJ="$(run_reports_dir "$(slug_for "$PROJ")")/review.json"
+check "an answer with no readable verdict is never accepted with notes" 'done_is needs-user && ! jq -e .accepted_with_notes "$RJ" >/dev/null 2>&1'
+check "…and is not recorded as a FAIL the reviewer never gave" '[ "$(jq -r .verdict "$RJ")" = N/A ] && [ "$(jq -r .state "$RJ")" = UNREADABLE ]'
+mkcase '{"reportReview":true,"research":true,"reportMaxRounds":1}'
+mkdir -p "$PROJ/artifacts"; printf '# Звіт\nРинок зріс на 40%%.\n' > "$PROJ/artifacts/report.md"
+outcome succeeded_research "Готово: artifacts/report.md"
+out="$(FAKE_REPORT_VERDICT=FAIL rungate s-bud-4)"
+RJ="$(run_reports_dir "$(slug_for "$PROJ")")/review.json"
+check "without that, the same report waits for a person, as before" 'done_is needs-user && ! jq -e .accepted_with_notes "$RJ" >/dev/null 2>&1'
+
+mkcase '{"review":true,"maxRounds":0}'
+for i in 1 2 3; do work; out="$(SUPERVISOR_MAX_ROUNDS_HARD=2 FAKE_VERDICT=FAIL FAKE_FINDING="[acceptance_failure] пункт $i" rungate s-bud-5)"; done
+check "a pipeline loop of 0 lifts the ceiling: round 3 goes back past a ceiling of 2" 'printf "%s" "$out" | grep -q "\"decision\": \"block\"" && [ ! -s "$IDIR/done" ]'
+check "…and the worker is told there is no ceiling"   'printf "%s" "$out" | grep -q "стелі раундів немає"'
+mkcase '{"review":true,"maxRounds":0}'
+for i in 1 2 3 4 5 6; do work; out="$(SUPERVISOR_MAX_ROUNDS=2 SUPERVISOR_MAX_ROUNDS_HARD=0 FAKE_VERDICT=FAIL FAKE_FINDING="[repeat] [acceptance_failure] те саме" rungate s-bud-6)"; [ -s "$IDIR/done" ] && break; done
+check "with no ceiling, the same finding coming back still parks the run for a person" 'done_is needs-user'
+
+mkcase '{"roundsCeiling":2}'
+work; out="$(FAKE_VERDICT=FAIL FAKE_FINDING="[acceptance_failure] перше" rungate s-bud-7)"
+check "a task's own ceiling of 2: round 1 goes back"  'printf "%s" "$out" | grep -q "\"decision\": \"block\""'
+work; out="$(FAKE_VERDICT=FAIL FAKE_FINDING="[acceptance_failure] друге" rungate s-bud-7)"
+check "…round 2 is the last one"                      'done_is debt'
+mkcase '{"roundsCeiling":30}'
+work; out="$(SUPERVISOR_MAX_ROUNDS_HARD=12 FAKE_VERDICT=FAIL FAKE_FINDING="[acceptance_failure] x" rungate s-bud-8)"
+check "a task's ceiling is its own, above the engine's" 'printf "%s" "$out" | grep -q "ще 29 можливих"'
+
+mkcase '{"review":true,"maxRounds":0,"roundsCeiling":2}'
+work; out="$(FAKE_VERDICT=FAIL FAKE_FINDING="[acceptance_failure] перше" rungate s-bud-9)"
+work; out="$(FAKE_VERDICT=FAIL FAKE_FINDING="[acceptance_failure] друге" rungate s-bud-9)"
+check "a task's --max-rounds wins over its pipeline's loop of 0: round 2 is the last" 'done_is debt'
+mkcase '{"review":true,"maxRounds":5,"roundsCeiling":0}'
+for i in 1 2 3; do work; out="$(SUPERVISOR_MAX_ROUNDS_HARD=2 FAKE_VERDICT=FAIL FAKE_FINDING="[acceptance_failure] пункт $i" rungate s-bud-10)"; done
+check "…and its 0 wins over the pipeline's number"   'printf "%s" "$out" | grep -q "стелі раундів немає" && [ ! -s "$IDIR/done" ]'
+
+mkcase '{"roundsCeiling":3,"reportReview":true,"reportMaxRounds":5,"reportAtLimit":"accept"}'
+mkdir -p "$PROJ/artifacts"; printf '# Звіт\nРинок зріс на 40%%.\n' > "$PROJ/artifacts/report.md"
+outcome succeeded_research "Готово: artifacts/report.md"
+for i in 1 2 3 4; do out="$(SUPERVISOR_MAX_ROUNDS_HARD=20 FAKE_REPORT_VERDICT=FAIL rungate s-rep-5)"; done
+check "--max-rounds 3 --report-max-rounds 5: the report's 4th FAIL still goes back, not accepted early" 'printf "%s" "$out" | grep -q "коло 4 з 5" && [ ! -s "$IDIR/done" ]'
+out="$(FAKE_REPORT_VERDICT=FAIL rungate s-rep-5)"
+check "…its 5th is the limit, and only then accepted with notes" 'done_is passed && jq -e .accepted_with_notes "$(run_reports_dir "$(slug_for "$PROJ")")/review.json" >/dev/null'
+mkcase '{"roundsCeiling":3,"reportReview":true,"reportMaxRounds":5}'
+mkdir -p "$PROJ/artifacts"; printf '# Звіт\nРинок зріс на 40%%.\n' > "$PROJ/artifacts/report.md"
+outcome succeeded_research "Готово: artifacts/report.md"
+for i in 1 2 3 4; do out="$(FAKE_REPORT_VERDICT=FAIL rungate s-rep-5b)"; done
+out="$(FAKE_REPORT_VERDICT=PASS rungate s-rep-5b)"
+check "…and a PASS on that 5th round passes"          'done_is passed && ! jq -e .accepted_with_notes "$(run_reports_dir "$(slug_for "$PROJ")")/review.json" >/dev/null 2>&1'
+mkcase '{"reportReview":true,"reportMaxRounds":30}'
+mkdir -p "$PROJ/artifacts"; printf '# Звіт\nРинок зріс на 40%%.\n' > "$PROJ/artifacts/report.md"
+outcome succeeded_research "Готово: artifacts/report.md"
+for i in $(seq 1 29); do out="$(SUPERVISOR_MAX_ROUNDS_HARD=20 FAKE_REPORT_VERDICT=FAIL rungate s-rep-30)"; done
+check "--report-max-rounds 30 with the code ceiling at 20: the 29th FAIL still goes back" 'printf "%s" "$out" | grep -q "коло 29 з 30" && [ ! -s "$IDIR/done" ]'
+out="$(SUPERVISOR_MAX_ROUNDS_HARD=20 FAKE_REPORT_VERDICT=PASS rungate s-rep-30)"
+check "…and a PASS on the 30th passes"               'done_is passed'
+
+echo "== a task's report criteria replace the server's rule =="
+printf 'Тестові дані на тестовому стенді допустимі, достатньо їх перелічити.\n' > "$FAKE/criteria.md"
+mkcase "$(jq -nc --arg c "$FAKE/criteria.md" '{reportReview:true, reportCriteria:$c}')"
+mkdir -p "$PROJ/artifacts"; printf '# Звіт\nПрогін тестів.\n' > "$PROJ/artifacts/report.md"
+outcome succeeded_research "Готово: artifacts/report.md"
+out="$(SUPERVISOR_PROFILE=server rungate s-crit-1)"
+check "on a server the task's criteria are what the report is judged by" 'grep -q "тестовому стенді" "$CODEX_CALLED.report-prompt"'
+check "…instead of the rule about changing data"      '! grep -q "If the task changed data" "$CODEX_CALLED.report-prompt"'
+mkcase '{"reportReview":true,"reportMaxRounds":3}'
+outcome succeeded_research "Видалив 3 тестові записи командою X і перевірив, що їх нема."
+printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Видалено 3 записи"}]}}' > "$TR"
+out="$(SUPERVISOR_PROFILE=server rungate s-crit-2)"
+check "with no criteria of its own the server's rule stays" 'grep -q "If the task changed data" "$CODEX_CALLED.report-prompt"'
+check "…and a summary with no report file is still read, as on any server research" 'grep -q "Видалив 3 тестові записи" "$CODEX_CALLED.report-prompt"'
+
 
 echo
 echo "pipeline gates: $pass passed, $fail failed"

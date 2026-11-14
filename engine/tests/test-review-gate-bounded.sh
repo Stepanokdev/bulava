@@ -85,7 +85,7 @@ rungate(){ # $1=session_id ; extra FAKE_*/SUPERVISOR_* env from the caller line
 # Every case here reuses one run id, so the gate's per-run counters (rounds, the no-progress meta,
 # remediations, harness attempts) leak from case to case. A case about ROUND BEHAVIOUR has to start
 # from zero or it is reading the previous case's history.
-freshcounters(){ rm -f "$SUPERVISOR_STATE_DIR"/rounds-* "$SUPERVISOR_STATE_DIR"/remediations-* \
+freshcounters(){ rm -f "$SUPERVISOR_STATE_DIR"/rounds-* "$SUPERVISOR_STATE_DIR"/remediations-* "$SUPERVISOR_STATE_DIR"/remed-meta-* \
                        "$SUPERVISOR_STATE_DIR"/harness-* 2>/dev/null || true; }
 done_is(){ [ "$(cat "$IDIR/done" 2>/dev/null)" = "$1" ]; }
 disp(){ jq -r '.disposition // ""' "$IDIR/reports/review.json" 2>/dev/null; }
@@ -130,8 +130,9 @@ check "review.json disposition = passed"    '[ "$(disp)" = passed ]'
 check "review.json exists"                  '[ -s "$IDIR/reports/review.json" ]'
 check "NO deep-audit (audit-state marker absent)" '[ ! -f "$SUPERVISOR_STATE_DIR/audit-state-p_pass" ]'
 
-echo "== acceptance_failure → 1 remediation, then needs-user (no round 3) =="
+echo "== SUPERVISOR_MAX_REMEDIATIONS=1: acceptance_failure → 1 remediation, then needs-user (no round 3) =="
 mkcase; setspec '{"schema":1,"mode":"patch","write_paths":["src/**"]}'
+export SUPERVISOR_MAX_REMEDIATIONS=1
 inscope; out1=$(FAKE_STATE=COMPLETE FAKE_VERDICT=FAIL FAKE_FINDING="[acceptance_failure] header missing" rungate p_rem)
 check "round1 blocks (remediation)"         'printf "%s" "$out1" | grep -q "\"decision\": \"block\""'
 check "round1 disposition = remediation"    '[ "$(disp)" = remediation ]'
@@ -141,6 +142,48 @@ inscope; out2=$(FAKE_STATE=COMPLETE FAKE_VERDICT=FAIL FAKE_FINDING="[acceptance_
 check "round2 does NOT block (no round 3)"  '! printf "%s" "$out2" | grep -q "\"decision\""'
 check "round2 done = needs-user"            'done_is needs-user'
 check "remediation cap held at 1"           '[ "$(cat "$SUPERVISOR_STATE_DIR/remediations-$RID" 2>/dev/null)" = 1 ]'
+unset SUPERVISOR_MAX_REMEDIATIONS
+
+echo "== a scoped task with a review budget gets the fixes it was given =="
+gates(){ jq -nc --argjson g "$1" '{id:"d-b", at:"2026-01-01T00:00:00Z", task:"t", pipeline_gates:$g}' > "$IDIR/dispatch.json"; }
+mkcase; freshcounters; setspec '{"schema":1,"mode":"patch","write_paths":["src/**"]}'; gates '{"roundsCeiling":4}'
+for i in 1 2 3; do inscope; out=$(FAKE_STATE=COMPLETE FAKE_VERDICT=FAIL FAKE_FINDING="[acceptance_failure] новий пункт $i" rungate p_bud); done
+check "--max-rounds 4: the 3rd FAIL still goes back for a fix, while each round brings new findings" 'printf "%s" "$out" | grep -q "\"decision\": \"block\"" && [ ! -f "$IDIR/done" ]'
+check "…and says it is the last one"           'printf "%s" "$out" | grep -q "ітерація виправлень 3 з 3" && printf "%s" "$out" | grep -q "остання ітерація"'
+inscope; out=$(FAKE_STATE=COMPLETE FAKE_VERDICT=PASS rungate p_bud)
+check "a PASS on the 4th, last allowed review is accepted" 'done_is passed'
+mkcase; freshcounters; setspec '{"schema":1,"mode":"patch","write_paths":["src/**"]}'; gates '{"roundsCeiling":3}'
+for i in 1 2 3; do inscope; out=$(FAKE_STATE=COMPLETE FAKE_VERDICT=FAIL FAKE_FINDING="[acceptance_failure] пункт $i" rungate p_bud2); [ -f "$IDIR/done" ] && break; done
+check "--max-rounds 3: the 3rd FAIL is past the budget and goes to a person" 'done_is needs-user && [ "$(cat "$SUPERVISOR_STATE_DIR/remediations-$RID")" = 2 ]'
+mkcase; freshcounters; setspec '{"schema":1,"mode":"patch","write_paths":["src/**"]}'; gates '{"roundsCeiling":0}'
+for i in 1 2 3 4 5; do inscope; out=$(FAKE_STATE=COMPLETE FAKE_VERDICT=FAIL FAKE_FINDING="[acceptance_failure] пункт $i" rungate p_bud3); done
+check "--max-rounds 0: five FAILs in a row with progress all go back" 'printf "%s" "$out" | grep -q "ліміту немає" && [ ! -f "$IDIR/done" ]'
+for i in 1 2 3; do inscope; out=$(FAKE_STATE=COMPLETE FAKE_VERDICT=FAIL FAKE_FINDING="[acceptance_failure] [repeat] те саме" rungate p_bud3); [ -f "$IDIR/done" ] && break; done
+check "…and the same finding coming back still parks it for a person" 'done_is needs-user'
+check "the reviewer is shown what it asked for last time, to mark a repeat" '[ -s "$SUPERVISOR_STATE_DIR/rounds-findings-$RID" ]'
+# Without a task's own number: the pipeline's, the engine's ceiling, the engine's default.
+mkcase; freshcounters; setspec '{"schema":1,"mode":"patch","write_paths":["src/**"]}'; gates '{"review":true,"maxRounds":5}'
+for i in 1 2 3 4; do inscope; out=$(FAKE_STATE=COMPLETE FAKE_VERDICT=FAIL FAKE_FINDING="[acceptance_failure] пункт $i" rungate p_pipe); done
+check "a pipeline's 5 rounds: four FAILs with progress all go back for a fix" 'printf "%s" "$out" | grep -q "ітерація виправлень 4 з 4" && [ ! -f "$IDIR/done" ]'
+inscope; out=$(FAKE_STATE=COMPLETE FAKE_VERDICT=PASS rungate p_pipe)
+check "…and a PASS on the 5th, last review is accepted" 'done_is passed'
+mkcase; freshcounters; setspec '{"schema":1,"mode":"patch","write_paths":["src/**"]}'; gates '{"review":true,"maxRounds":5}'
+for i in 1 2 3 4 5; do inscope; out=$(FAKE_STATE=COMPLETE FAKE_VERDICT=FAIL FAKE_FINDING="[acceptance_failure] пункт $i" rungate p_pipe2); [ -f "$IDIR/done" ] && break; done
+check "…a 5th FAIL is past it and goes to a person"  'done_is needs-user && [ "$(cat "$SUPERVISOR_STATE_DIR/remediations-$RID")" = 4 ]'
+mkcase; freshcounters; setspec '{"schema":1,"mode":"patch","write_paths":["src/**"]}'; rm -f "$IDIR/dispatch.json"
+for i in 1 2 3 4 5 6; do inscope; out=$(SUPERVISOR_MAX_ROUNDS_HARD=0 FAKE_STATE=COMPLETE FAKE_VERDICT=FAIL FAKE_FINDING="[acceptance_failure] пункт $i" rungate p_eng0); done
+check "the engine's ceiling of 0: six FAILs with progress all go back" 'printf "%s" "$out" | grep -q "ліміту немає" && [ ! -f "$IDIR/done" ]'
+for i in 1 2 3; do inscope; out=$(SUPERVISOR_MAX_ROUNDS_HARD=0 FAKE_STATE=COMPLETE FAKE_VERDICT=FAIL FAKE_FINDING="[acceptance_failure] [repeat] те саме" rungate p_eng0); [ -f "$IDIR/done" ] && break; done
+check "…and a stall still parks it"                  'done_is needs-user'
+mkcase; freshcounters; setspec '{"schema":1,"mode":"patch","write_paths":["src/**"]}'; rm -f "$IDIR/dispatch.json"
+unset SUPERVISOR_MAX_REMEDIATIONS
+for i in 1 2 3 4; do inscope; out=$(SUPERVISOR_MAX_ROUNDS_HARD=20 FAKE_STATE=COMPLETE FAKE_VERDICT=FAIL FAKE_FINDING="[acceptance_failure] пункт $i" rungate p_def); done
+check "with nothing said anywhere, the engine's default: 4 fixes" 'printf "%s" "$out" | grep -q "ітерація виправлень 4 з 4" && [ ! -f "$IDIR/done" ]'
+inscope; out=$(SUPERVISOR_MAX_ROUNDS_HARD=20 FAKE_STATE=COMPLETE FAKE_VERDICT=FAIL FAKE_FINDING="[acceptance_failure] пункт 5" rungate p_def)
+check "…then a person"                               'done_is needs-user'
+mkcase; freshcounters; setspec '{"schema":1,"mode":"patch","write_paths":["src/**"]}'; gates '{"roundsCeiling":4}'
+inscope; outscope; out=$(FAKE_STATE=COMPLETE FAKE_VERDICT=FAIL FAKE_FINDING="[acceptance_failure] x" rungate p_bud4)
+check "the scope fence still holds under a bigger budget: the out-of-scope edit is reverted" '[ "$(cat "$PROJ/root.txt")" = base ]'
 
 echo "== scope_violation only → needs-user, disposition scope_violation, no reopen =="
 mkcase; setspec '{"schema":1,"mode":"patch","write_paths":["src/**"]}'; inscope

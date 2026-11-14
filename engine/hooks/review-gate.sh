@@ -63,12 +63,33 @@ if [ -n "${IDIR_SCOPE:-}" ] && [ -s "$IDIR_SCOPE/dispatch.json" ]; then
   PIPE_GATES="$(jq -c '.pipeline_gates // empty' "$IDIR_SCOPE/dispatch.json" 2>/dev/null || true)"
 fi
 gate_opt() { [ -n "$PIPE_GATES" ] && printf '%s' "$PIPE_GATES" | jq -r "$1 // empty" 2>/dev/null; return 0; }
+# A round limit of 0 means no limit: a bug-fixing task that keeps getting better is not cut off by a
+# count. What still ends it is the same as for any run: no progress for SUPERVISOR_STALL_LIMIT rounds,
+# the run's time limit, the director. Kept as a number far past any real run, so every comparison
+# below stays plain arithmetic; `rounds_unlimited` is how it is told apart.
+ROUNDS_UNLIMITED=1000000
+rounds_cap() { case "${1:-}" in 0) printf '%s' "$ROUNDS_UNLIMITED" ;; *) printf '%s' "$1" ;; esac; }
+rounds_unlimited() { [ "${1:-0}" -ge "$ROUNDS_UNLIMITED" ] 2>/dev/null; }
+rounds_max_json() { if rounds_unlimited "$1"; then printf 'null'; else printf '%s' "${1:-0}"; fi; }
+case "$SUPERVISOR_MAX_ROUNDS_HARD" in ''|*[!0-9]*) SUPERVISOR_MAX_ROUNDS_HARD=20 ;; esac
+SUPERVISOR_MAX_ROUNDS_HARD="$(rounds_cap "$SUPERVISOR_MAX_ROUNDS_HARD")"
+# A pipeline's loop: its number is the patience; 0 lifts the ceiling instead.
 _pg_rounds="$(gate_opt .maxRounds)"
 case "$_pg_rounds" in
   ''|*[!0-9]*) ;;
-  *) [ "$_pg_rounds" -lt 1 ] && _pg_rounds=1
-     [ "$_pg_rounds" -gt "$SUPERVISOR_MAX_ROUNDS_HARD" ] && _pg_rounds="$SUPERVISOR_MAX_ROUNDS_HARD"
+  0) SUPERVISOR_MAX_ROUNDS_HARD="$ROUNDS_UNLIMITED" ;;
+  *) [ "$_pg_rounds" -gt "$SUPERVISOR_MAX_ROUNDS_HARD" ] && _pg_rounds="$SUPERVISOR_MAX_ROUNDS_HARD"
      MAX_ROUNDS="$_pg_rounds"; SUPERVISOR_MAX_ROUNDS="$_pg_rounds" ;;
+esac
+# The ceiling a bridge gave this one task (dispatch --max-rounds). Its own number, not bounded by
+# the engine's: the operator who sets the engine's ceiling is the one sending the task. Applied after
+# the pipeline's loop, so a task's own number wins over the pipeline it happens to run through.
+_pg_ceiling="$(gate_opt .roundsCeiling)"
+case "$_pg_ceiling" in
+  ''|*[!0-9]*) ;;
+  *) SUPERVISOR_MAX_ROUNDS_HARD="$(rounds_cap "$_pg_ceiling")"
+     [ "$SUPERVISOR_MAX_ROUNDS" -gt "$SUPERVISOR_MAX_ROUNDS_HARD" ] && SUPERVISOR_MAX_ROUNDS="$SUPERVISOR_MAX_ROUNDS_HARD"
+     [ "$MAX_ROUNDS" -gt "$SUPERVISOR_MAX_ROUNDS_HARD" ] && MAX_ROUNDS="$SUPERVISOR_MAX_ROUNDS_HARD" ;;
 esac
 # A report the app's "Create report" button asked for is checked, but not for twelve rounds like
 # code: 13 Oct one report was sent back and rewritten for an hour and a half while the owner waited
@@ -143,7 +164,7 @@ review_stage() { # $1=preparing|verifying|reviewing
   case "$1" in
     verifying) gate_event gate.scope done; gate_event gate.verify running ;;
     reviewing) gate_event "$GATE_REVIEW_STAGE" running "" \
-                 "$(jq -nc --argjson r "$(( ${rounds:-0} + 1 ))" --argjson m "${MAX_ROUNDS:-3}" '{round:$r, max:$m}')" ;;
+                 "$(jq -nc --argjson r "$(( ${rounds:-0} + 1 ))" --argjson m "$(rounds_max_json "${MAX_ROUNDS:-3}")" '{round:$r, max:$m}')" ;;
   esac
   return 0
 }
@@ -359,10 +380,11 @@ emit_review_json() {
         --arg disp "${3:-}" --arg mode "$(runspec_mode "${IDIR_SCOPE:-}")" \
         --arg round "$(( ${rounds:-0} + 1 ))" --arg verify "${verify_status:-}" \
         --arg findings "${4:-}" --arg ts "$(date '+%F %T')" \
-        --arg reviewer "${REVIEWER:-codex}" \
+        --arg reviewer "${REVIEWER:-codex}" --arg awn "${ACCEPTED_WITH_NOTES:-0}" \
      '{session_id:$sid, ts:$ts, mode:$mode, round:($round|tonumber),
        state:$st, verdict:$vd, disposition:$disp, verify_status:$verify,
-       reviewer:$reviewer, findings:$findings}' > "$REVIEW_JSON" 2>/dev/null || true
+       reviewer:$reviewer, findings:$findings}
+      + (if $awn == "1" then {accepted_with_notes:true} else {} end)' > "$REVIEW_JSON" 2>/dev/null || true
 }
 
 note_progress() {
@@ -502,8 +524,11 @@ restamp_receipt() {  # $1 = passed | debt | needs-user | scope_violation
   esac
   [ -n "$review" ] || return 0
 
-  local why=""
-  if [ "$review" != passed ] && [ -f "$idir/reports/review.json" ]; then
+  local why="" awn=false
+  # A report its task let through at its limit is a pass that still carries the reviewer's notes:
+  # the bridge puts them on the ticket beside the result.
+  [ -f "$idir/reports/review.json" ] && jq -e '.accepted_with_notes == true' "$idir/reports/review.json" >/dev/null 2>&1 && awn=true
+  if { [ "$review" != passed ] || [ "$awn" = true ]; } && [ -f "$idir/reports/review.json" ]; then
     why="$(jq -r '.findings // ""' "$idir/reports/review.json" 2>/dev/null | clip_utf8 4000)"
   fi
 
@@ -516,10 +541,11 @@ restamp_receipt() {  # $1 = passed | debt | needs-user | scope_violation
   repos="$(repos_state_json "$idir" "$(run_project_dir "$idir" "${cwd:-$PWD}")" 2>/dev/null)"
   case "$repos" in '['*) ;; *) repos='[]' ;; esac
   jq -c --arg rv "$review" --arg why "$why" --argjson f "${findings:-[]}" --argjson repos "$repos" \
-        --argjson cx "${CODEX_PART:-null}" \
+        --argjson cx "${CODEX_PART:-null}" --argjson awn "$awn" \
         --arg at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
      '.review = $rv | .review_why = $why | .findings = $f | .repos = $repos | .reviewed_at = $at
-      | (if $cx == null then . else .codex = $cx end)' \
+      | (if $cx == null then . else .codex = $cx end)
+      | (if $awn then .accepted_with_notes = true else del(.accepted_with_notes) end)' \
      "$src" > "$src.tmp" 2>/dev/null \
     && mv -f "$src.tmp" "$src" 2>/dev/null || { rm -f "$src.tmp" 2>/dev/null; return 0; }
   python3 "$BIN_DIR/receipt-render.py" "$idir/report/report.html" < "$src" >/dev/null 2>&1 || true
@@ -633,6 +659,10 @@ if [ "${SUPERVISOR_OUTCOME_PROTOCOL:-1}" = 1 ] && [ -n "${IDIR_SCOPE:-}" ] && [ 
             # A research pipeline with a report reviewer: the report is what gets judged, further down,
             # once quota and the review-off switch have had their say like for any other review.
             REPORT_REVIEW=1
+            # On a server it is still a server's research: a summary with no report file is what the
+            # ticket gets and is read as such, and the data-change rule applies unless the task's own
+            # criteria replace it.
+            [ "${SUPERVISOR_PROFILE:-}" = server ] && [ "${SUPERVISOR_SERVER_RESEARCH_REVIEW:-1}" = 1 ] && SERVER_RESEARCH=1
             log "outcome: succeeded_research with a report reviewer in the pipeline — reviewing the report"
           elif [ "$oc_mode" = broad ] && [ "$oc_result" = succeeded_research ] \
                && [ "${SUPERVISOR_PROFILE:-}" = server ] && [ "${SUPERVISOR_SERVER_RESEARCH_REVIEW:-1}" = 1 ]; then
@@ -1165,7 +1195,8 @@ if [ "${SUPERVISOR_MAX_RUN_SECONDS:-0}" -gt 0 ] && [ -f "$IDIR_SCOPE/started-at"
   fi
 fi
 
-if [ "$rounds" -ge "$SUPERVISOR_MAX_ROUNDS_HARD" ]; then
+# A report's review keeps its own count and its own limit, further down.
+if [ "${REPORT_REVIEW:-0}" != 1 ] && [ "$rounds" -ge "$SUPERVISOR_MAX_ROUNDS_HARD" ]; then
   log "hard round ceiling ($SUPERVISOR_MAX_ROUNDS_HARD) reached for $session_id — allowing stop"
   mark_done debt
   exit 0
@@ -1321,8 +1352,16 @@ review_refused_park() {   # [$1=the sentence to say instead of the CLI's refusal
 # with the findings, up to the pipeline's own limit; then a person is asked.
 if [ "${REPORT_REVIEW:-0}" = 1 ] && [ -n "${IDIR_SCOPE:-}" ]; then
   GATE_REVIEW_STAGE=gate.reportReview
-  _rmax="$(gate_opt .reportMaxRounds)"; case "$_rmax" in ''|*[!0-9]*) _rmax=2 ;; esac
-  [ "$_rmax" -gt "$SUPERVISOR_MAX_ROUNDS_HARD" ] && _rmax="$SUPERVISOR_MAX_ROUNDS_HARD"
+  # The task's own number, else the engine's (SUPERVISOR_REPORT_REVIEW_ROUNDS); 0 is no limit. Two
+  # rounds was the old fixed number, and on the factory 28 of 29 reports in one evening (12 Nov)
+  # reached it and waited for a person.
+  _rmax="$(gate_opt .reportMaxRounds)"
+  case "$_rmax" in ''|*[!0-9]*) _rmax="${SUPERVISOR_REPORT_REVIEW_ROUNDS:-5}" ;; esac
+  case "$_rmax" in ''|*[!0-9]*) _rmax=5 ;; esac
+  _rmax="$(rounds_cap "$_rmax")"
+  # Its own budget, not the code review's: a task sent with --max-rounds 3 --report-max-rounds 5
+  # gets five rounds for its report.
+  _rmax_text="$_rmax"; rounds_unlimited "$_rmax" && _rmax_text="∞"
   MAX_ROUNDS="$_rmax"
   _summary="$(jq -r '.summary // ""' "$IDIR_SCOPE/outcome.json" 2>/dev/null)"
   _since="$(jq -r '.at // empty' "$IDIR_SCOPE/dispatch.json" 2>/dev/null)"
@@ -1359,14 +1398,18 @@ $_rlast"
   _crit=""
   _cf="$(gate_opt .reportCriteria)"
   [ -n "$_cf" ] && [ -f "$_cf" ] && _crit="$(clip_utf8 8000 < "$_cf" 2>/dev/null)"
+  # Criteria the task or the pipeline brought replace the server's own rule rather than add to it:
+  # a test run's report on a test stand is judged by what its sender asked, not by the rule written
+  # for production data fixes.
+  _own_crit=0; [ -n "$_crit" ] && _own_crit=1
   [ -n "$_crit" ] || _crit="Every factual claim has a source, and the source really supports it. The report answers every question the task asked. Facts are kept apart from assumptions and recommendations."
-  [ "${SERVER_RESEARCH:-0}" = 1 ] && _crit="$_crit
+  [ "${SERVER_RESEARCH:-0}" = 1 ] && [ "$_own_crit" = 0 ] && _crit="$_crit
 If the task changed data — in production or anywhere else — the report says exactly what was changed (which records, how many), by which command or script, that it is what the task asked for, how the result was checked afterwards, and how it would be undone. A data change the report does not account for, a count without its check, or a change the task did not ask for is grounds for FAIL."
   _task="$(jq -r '.task // ""' "$IDIR_SCOPE/dispatch.json" 2>/dev/null | clip_utf8 6000)"
   if [ -n "$_rtext" ]; then _text="$(printf '%s' "$_rtext" | clip_utf8 60000)"
   else _text="$(python3 "$BIN_DIR/pipeline-tool.py" report-text "$_report" --max 60000 2>/dev/null)"; fi
   rprompt="You are reviewing a RESEARCH REPORT, not code. The worker was asked to research a question and write
-a report; it changed no product code. Judge the report only. Round $((rounds + 1)) of at most $_rmax.
+a report; it changed no product code. Judge the report only. Round $((rounds + 1))$(rounds_unlimited "$_rmax" || printf ' of at most %s' "$_rmax").
 
 THE TASK:
 $_task
@@ -1429,10 +1472,29 @@ $review"
     exit 0
   fi
   _next=$((rounds + 1)); echo "$_next" > "$rounds_file"
+  # Let through with notes only on a verdict the reviewer actually gave: COMPLETE and FAIL in its
+  # header. An answer with no readable verdict is not a review, and nothing is accepted on it.
+  _rreadable=0
+  [ "$_rverdict" = FAIL ] && printf '%s\n' "$_rhead" | grep -qE '^[[:space:]]*STATE:[[:space:]]*COMPLETE' && _rreadable=1
+  [ "$_rreadable" = 1 ] || log "report review round $_next: no readable STATE: COMPLETE / VERDICT: FAIL — not a verdict to accept with notes"
+  if [ "$_next" -ge "$_rmax" ] && [ "$_rreadable" = 1 ] && [ "$(gate_opt .reportAtLimit)" = accept ]; then
+    # The sender asked for this: a report still failing at its limit goes out with the reviewer's
+    # notes instead of waiting for a person. The verdict stays FAIL in the record and the notes stay
+    # with it; only the disposition says it was let through, and why.
+    rm -f "$rounds_file" "$STATE_DIR/rounds-meta-$RUN_KEY" "$STATE_DIR/rounds-findings-$RUN_KEY" 2>/dev/null || true
+    ACCEPTED_WITH_NOTES=1
+    emit_review_json COMPLETE FAIL passed "$review"
+    log "report review FAIL at its limit ($_next/$_rmax_text) — accepted with the reviewer's notes, as the task asked"
+    piece_after_pass && exit 0
+    $oc_reset 2>/dev/null || true
+    mark_done passed "Прийнято із зауваженнями рецензента: ліміт кіл рев'ю звіту ($_rmax_text) вичерпано"
+    exit 0
+  fi
   if [ "$_next" -ge "$_rmax" ]; then
     { echo ""; echo "## $(date '+%F %T') — session $session_id (report review, $_next rounds)"; echo "$review"; } \
       | legacy_note "$BLOCKED_OUT" BLOCKED.md
-    emit_review_json COMPLETE FAIL needs-user "$review"
+    if [ "$_rreadable" = 1 ]; then emit_review_json COMPLETE FAIL needs-user "$review"
+    else emit_review_json UNREADABLE N/A needs-user "$review"; fi
     log "report review FAIL at its limit ($_next/$_rmax) — needs-user"
     mark_done needs-user
     exit 0
@@ -1440,8 +1502,8 @@ $review"
   _rf=$(printf '%s\n' "$review" | grep -cE '^[[:space:]]*[0-9]+[.)]' 2>/dev/null || echo 0)
   emit_review_json COMPLETE FAIL "remediation" "$review"
   gate_event gate.reportReview retrying "Звіт повернуто · зауважень: $_rf" \
-    "$(jq -nc --argjson r "$_next" --argjson m "$_rmax" --argjson f "${_rf:-0}" '{round:$r, max:$m, findings:$f}')"
-  jq -n --arg reason "🌙 Рецензент звіту не прийняв його (коло $_next з $_rmax):
+    "$(jq -nc --argjson r "$_next" --argjson m "$(rounds_max_json "$_rmax")" --argjson f "${_rf:-0}" '{round:$r, max:$m, findings:$f}')"
+  jq -n --arg reason "🌙 Рецензент звіту не прийняв його (коло $_next$(rounds_unlimited "$_rmax" || printf ' з %s' "$_rmax")):
 
 $review
 
@@ -1693,7 +1755,7 @@ fi
 prompt="$persona
 
 ---
-You are reviewing what Claude Code just did in: $cwd. Round $((rounds + 1)) (the gate keeps iterating while the worker makes real progress, up to $SUPERVISOR_MAX_ROUNDS_HARD).
+You are reviewing what Claude Code just did in: $cwd. Round $((rounds + 1)) (the gate keeps iterating while the worker makes real progress$(rounds_unlimited "$SUPERVISOR_MAX_ROUNDS_HARD" || printf ', up to %s' "$SUPERVISOR_MAX_ROUNDS_HARD")).
 
 TASK AUTHORITY AND BOUNDARY:
 If an acceptance contract is present below, it is authoritative. Otherwise the latest human turns
@@ -2118,17 +2180,56 @@ if [ "$verdict" = "FAIL" ]; then
       mark_done needs-user
       exit 0
     fi
-    if [ "$remediations" -lt "${SUPERVISOR_MAX_REMEDIATIONS:-1}" ]; then
-      echo $((remediations + 1)) > "$remed_file"
-      note_progress remediation "$((remediations + 1))" "${SUPERVISOR_MAX_REMEDIATIONS:-1}"
+    # How many fixes a scoped task gets. The engine's own number (SUPERVISOR_MAX_REMEDIATIONS),
+    # unless the task or its pipeline gave the review a budget: `--max-rounds N` is N reviews, so
+    # N-1 fixes, and 0 there (or a pipeline loop of 0) is no limit. The scope fence is untouched by
+    # any of it; what still stops a task that does not improve is the same check as for any run,
+    # the reviewer's findings coming back as [repeat] for SUPERVISOR_STALL_LIMIT rounds.
+    # In order: the task's own number; no ceiling at all (the engine's 0, or a pipeline loop of 0);
+    # the pipeline's number of reviews; the engine's own count of fixes. A finite one never goes past
+    # the ceiling of reviews.
+    _remax="${SUPERVISOR_MAX_REMEDIATIONS:-4}"; case "$_remax" in ''|*[!0-9]*) _remax=4 ;; esac
+    _tc="$(gate_opt .roundsCeiling)"; _pm="$(gate_opt .maxRounds)"
+    case "$_tc" in
+      0) _remax="$ROUNDS_UNLIMITED" ;;
+      ''|*[!0-9]*)
+        if rounds_unlimited "$SUPERVISOR_MAX_ROUNDS_HARD"; then _remax="$ROUNDS_UNLIMITED"
+        else case "$_pm" in ''|*[!0-9]*|0) ;; *) _remax=$((_pm - 1)) ;; esac; fi ;;
+      *) _remax=$((_tc - 1)) ;;
+    esac
+    [ "$_remax" -lt 0 ] && _remax=0
+    rounds_unlimited "$_remax" || rounds_unlimited "$SUPERVISOR_MAX_ROUNDS_HARD" \
+      || { [ "$_remax" -gt $((SUPERVISOR_MAX_ROUNDS_HARD - 1)) ] && _remax=$((SUPERVISOR_MAX_ROUNDS_HARD - 1)); }
+    _rmeta="$STATE_DIR/remed-meta-$RUN_KEY"
+    _rprev=$(cut -d' ' -f1 "$_rmeta" 2>/dev/null); [ -n "$_rprev" ] || _rprev=999999
+    _rstall=$(cut -d' ' -f2 "$_rmeta" 2>/dev/null); [ -n "$_rstall" ] || _rstall=0
+    _rfind=$(printf '%s\n' "$review" | grep -cE '^[[:space:]]*[0-9]+[.)]' 2>/dev/null || echo 1)
+    _rrep=$(printf '%s\n' "$review" | grep -E '^[[:space:]]*[0-9]+[.)]' 2>/dev/null | grep -c '\[repeat\]' || true)
+    case "$_rrep" in ''|*[!0-9]*) _rrep=0 ;; esac
+    if [ "$_rprev" -ge 999999 ] || [ "$_rrep" -lt "$_rprev" ]; then _rstall=0; else _rstall=$((_rstall + 1)); fi
+    printf '%s %s\n' "$_rfind" "$_rstall" > "$_rmeta"
+    # What the reviewer asked for, shown to it next round so a defect that came back is marked [repeat].
+    printf '%s\n' "$review" | grep -E '^[[:space:]]*[0-9]+[.)]' > "$STATE_DIR/rounds-findings-$RUN_KEY" 2>/dev/null || true
+    if [ "$remediations" -ge 1 ] && [ "$_rstall" -ge "$SUPERVISOR_STALL_LIMIT" ]; then
+      emit_review_json COMPLETE FAIL needs-user "$review"
+      log "bounded: the same findings came back for $_rstall rounds — stalled, returning to operator"
+      mark_done needs-user; exit 0
+    fi
+    if [ "$remediations" -lt "$_remax" ]; then
+      _rn=$((remediations + 1))
+      echo "$_rn" > "$remed_file"
+      note_progress remediation "$_rn" "$(rounds_max_json "$_remax")"
       emit_review_json COMPLETE FAIL "remediation" "$review"
       gate_event "$GATE_REVIEW_STAGE" retrying "Повернуто на виправлення" \
-        "$(jq -nc --argjson r "$((remediations + 1))" --argjson m "${SUPERVISOR_MAX_REMEDIATIONS:-1}" '{round:$r, max:$m}')"
-      jq -n --arg reason "🌙 Рев'ю не прийняло (єдина ітерація виправлень). Виправ САМЕ ці пункти в межах RunSpec (не розширюй обсяг):
+        "$(jq -nc --argjson r "$_rn" --argjson m "$(rounds_max_json "$_remax")" '{round:$r, max:$m}')"
+      if rounds_unlimited "$_remax"; then _rwhich="ітерація виправлень $_rn, ліміту немає"; _rlast="Якщо ті самі пункти повертатимуться, зупинюсь і покличу людину."
+      elif [ "$_rn" -ge "$_remax" ]; then _rwhich="ітерація виправлень $_rn з $_remax"; _rlast="Це остання ітерація."
+      else _rwhich="ітерація виправлень $_rn з $_remax"; _rlast="Якщо ті самі пункти повертатимуться, зупинюсь і покличу людину."; fi
+      jq -n --arg reason "🌙 Рев'ю не прийняло ($_rwhich). Виправ САМЕ ці пункти в межах RunSpec (не розширюй обсяг):
 
 $review
 
-Після виправлення заверши знову — це остання ітерація." \
+Після виправлення заверши знову. $_rlast" \
         '{decision: "block", reason: $reason}'
       exit 0
     fi
@@ -2174,7 +2275,8 @@ $review
   fi
   gate_event "$GATE_REVIEW_STAGE" retrying "Повернуто на доопрацювання · зауважень: $findings" \
     "$(jq -nc --argjson r "$next" --argjson m "$MAX_ROUNDS" --argjson f "${findings:-0}" '{round:$r, max:$m, findings:$f}')"
-  jq -n --arg reason "🌙 Codex-супервізор НЕ приймає роботу (раунд $next, ще $((SUPERVISOR_MAX_ROUNDS_HARD - next)) можливих):
+  _left="ще $((SUPERVISOR_MAX_ROUNDS_HARD - next)) можливих"; rounds_unlimited "$SUPERVISOR_MAX_ROUNDS_HARD" && _left="стелі раундів немає"
+  jq -n --arg reason "🌙 Codex-супервізор НЕ приймає роботу (раунд $next, $_left):
 
 $review
 
@@ -2224,14 +2326,14 @@ if [ "$BOUNDED" = 1 ]; then
     exit 0
   fi
   emit_review_json COMPLETE PASS passed "$review"
-  rm -f "$rounds_file" "$remed_file" "$harness_file" 2>/dev/null || true
+  rm -f "$rounds_file" "$remed_file" "$STATE_DIR/remed-meta-$RUN_KEY" "$harness_file" 2>/dev/null || true
   log "bounded PASS — task accepted"
   piece_after_pass && exit 0
   mark_done passed
   exit 0
 fi
 
-rm -f "$rounds_file" "$STATE_DIR/rounds-meta-$RUN_KEY" "$STATE_DIR/rounds-findings-$RUN_KEY" "$remed_file" "$harness_file" "$STATE_DIR/handoffs-$RUN_KEY"
+rm -f "$rounds_file" "$STATE_DIR/rounds-meta-$RUN_KEY" "$STATE_DIR/rounds-findings-$RUN_KEY" "$remed_file" "$STATE_DIR/remed-meta-$RUN_KEY" "$harness_file" "$STATE_DIR/handoffs-$RUN_KEY"
 log "targeted review PASS (state=COMPLETE); verify=$verify_status"
 if [ "${verify_status:-}" = inconclusive ]; then
   emit_review_json COMPLETE FAIL debt "$review"

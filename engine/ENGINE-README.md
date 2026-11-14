@@ -434,10 +434,19 @@ Every default lives in **one file** — `supervisor/config.sh` (the single sourc
   A pipeline's review step can choose for itself ("Who reviews": one reviewer, the three
   specialists, the specialists and an ordinary reviewer, all seven focuses), and then its choice
   wins. The built-in pipeline `review-team` ("Claude + a Codex team") is `adaptive-peer` with the
-  three specialists at the review; `adaptive-peer` stays the default.
-- `SUPERVISOR_MAX_ROUNDS` — base patience: this many FAIL rounds are always allowed (default 3)
+  three specialists at the review; it is what a new chat in the app uses until another pipeline is
+  chosen, and the app remembers the last one chosen for the next new chat.
+- `SUPERVISOR_MAX_ROUNDS` — base patience: this many FAIL rounds are always allowed (default 5)
 - `SUPERVISOR_MAX_ROUNDS_HARD` — the absolute ceiling of rounds per session, protection against a
-  loop (default 12)
+  loop (default 20; 0 means no ceiling, and the stall limit below still stops a loop). A pipeline's
+  loop of 0 rounds, or a task's `dispatch.sh --max-rounds 0`, lifts it for that run.
+- `SUPERVISOR_REPORT_REVIEW_ROUNDS` — rounds a research report gets when neither its pipeline nor
+  its task names a number (default 5; 0 means no limit). Per task: `dispatch.sh --report-max-rounds`,
+  `--report-criteria`, `--report-at-limit` (`SERVER.md`, "Review budget of a task").
+- `SUPERVISOR_MAX_REMEDIATIONS` — fixes a scoped run (runspec mode `patch`/`remediation`/`audit`)
+  gets after its first review (default 4, i.e. 5 reviews). A pipeline's or a task's number of rounds
+  replaces it (N rounds = N−1 fixes), no ceiling means no limit, and the stall limit still parks a
+  scoped run whose findings come back.
 - `SUPERVISOR_STALL_LIMIT` — how many rounds in a row without progress (the list of findings stops
   shrinking) before we park it as "genuinely stuck, a person is needed" (default 2). While there
   is progress the gate drives the work on up to the HARD ceiling rather than stopping at a fixed

@@ -109,7 +109,8 @@ _RUN_ENV_VARS="SUPERVISOR_CODEX_EFFORT SUPERVISOR_CODEX_MODEL \
 SUPERVISOR_CLAUDE_EFFORT SUPERVISOR_CLAUDE_MODEL \
 SUPERVISOR_REPORT_LANGUAGE SUPERVISOR_REPORT_WRITER \
 SUPERVISOR_COLLABORATION_MODE SUPERVISOR_CONSULT_TIMEOUT \
-SUPERVISOR_UNATTENDED SUPERVISOR_PLAIN_FOLDER SUPERVISOR_ALLOW_TOOLS SUPERVISOR_NO_WEB"
+SUPERVISOR_UNATTENDED SUPERVISOR_PLAIN_FOLDER SUPERVISOR_ALLOW_TOOLS SUPERVISOR_NO_WEB \
+SUPERVISOR_MAX_ROUNDS SUPERVISOR_MAX_ROUNDS_HARD SUPERVISOR_REPORT_REVIEW_ROUNDS SUPERVISOR_STALL_LIMIT"
 
 # SUPERVISOR_NO_WEB=1 is a run that must not reach the internet through either model: no server-side
 # search, no connectors, no browsing tools, in the worker and in every Codex and Claude call around
@@ -2616,7 +2617,7 @@ reset_review_budget() {  # $1=instance dir [$2=why, for the log]
     key="$(tr -d '[:space:]' < "$idir/claude-session-id")"
   fi
   [ -n "$key" ] || return 0
-  rm -f "$SUP_STATE/remediations-$key" "$SUP_STATE/rounds-$key" \
+  rm -f "$SUP_STATE/remediations-$key" "$SUP_STATE/remed-meta-$key" "$SUP_STATE/rounds-$key" \
         "$SUP_STATE/rounds-meta-$key" "$SUP_STATE/rounds-findings-$key" "$SUP_STATE/harness-$key" \
         "$SUP_STATE/handoffs-$key" "$SUP_STATE/misdeclared-$key" 2>/dev/null || true
   : > "$idir/started-at" 2>/dev/null || true

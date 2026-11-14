@@ -107,14 +107,29 @@ CLAUDE_CONFIG_DIR="$TMP/cc"; export CLAUDE_CONFIG_DIR; mkdir -p "$CLAUDE_CONFIG_
 # The server profile gives the engine a tmux server of its own; this suite looks at that one.
 export SUPERVISOR_TMUX_SOCKET=bulava
 tmux() { command tmux -L bulava "$@"; }
+printf 'Кожна знахідка підтверджена доказом на правильному кроці.\n' > "$TMP/criteria.md"
+out="$(bash "$BIN/dispatch.sh" --task-id PRJ-8 --report-max-rounds two "$PROJ" "x" 2>&1)"; rc=$?
+check "a review budget that is not a number is refused before anything starts" '[ "$rc" = 2 ] && ! task_exists PRJ-8'
+out="$(bash "$BIN/dispatch.sh" --task-id PRJ-8 --report-criteria "$TMP/nope.md" "$PROJ" "x" 2>&1)"; rc=$?
+check "…and so are criteria that cannot be read"     '[ "$rc" = 2 ] && ! task_exists PRJ-8'
+out="$(bash "$BIN/dispatch.sh" --task-id PRJ-8 --report-at-limit maybe "$PROJ" "x" 2>&1)"; rc=$?
+check "…and an unknown answer for the report's limit" '[ "$rc" = 2 ] && ! task_exists PRJ-8'
 out="$(bash "$BIN/dispatch.sh" --task-id PRJ-9 --message-id m-1 --source youtrack --author bob \
-        --branch agent/PRJ-9-x --base main "$PROJ" "Зроби PRJ-9" 2>&1)"; rc=$?
+        --branch agent/PRJ-9-x --base main \
+        --max-rounds 0 --report-max-rounds 3 --report-criteria "$TMP/criteria.md" --report-at-limit accept \
+        "$PROJ" "Зроби PRJ-9" 2>&1)"; rc=$?
 check "a new task is dispatched"                     '[ "$rc" = 0 ] && printf "%s" "$out" | grep -q "^TIER=dispatched"'
 check "…with a line the bridge can parse"            '[ "$(printf "%s" "$out" | tail -1 | jq -r ".task_id + \"/\" + (.attempt|tostring)")" = PRJ-9/1 ]'
 check "…on the branch it named, from the base it named" '[ "$(git -C "$PROJ" symbolic-ref --short HEAD)" = agent/PRJ-9-x ]'
 check "…framed as text from the tracker"             'jq -r .task "$(instance_dir "$(slug_for "$PROJ")")/dispatch.json" | grep -q "UNTRUSTED_TRACKER_TEXT source=youtrack author=bob"'
 check "…and named on the instance"                   '[ "$(cat "$(instance_dir "$(slug_for "$PROJ")")/task-id")" = PRJ-9 ] && [ "$(jq -r .task_id "$(instance_dir "$(slug_for "$PROJ")")/dispatch.json")" = PRJ-9 ]'
 check "its record is running"                        '[ "$(task_get PRJ-9 .state)" = running ]'
+I9G="$(instance_dir "$(slug_for "$PROJ")")"
+check "its review budget is in the dispatch the gate reads" 'jq -e ".pipeline_gates | .roundsCeiling == 0 and .reportMaxRounds == 3 and .reportReview == true and .reportAtLimit == \"accept\"" "$I9G/dispatch.json" >/dev/null'
+check "…with the criteria copied into the run"       '[ "$(jq -r .pipeline_gates.reportCriteria "$I9G/dispatch.json")" = "$I9G/report-criteria.md" ] && cmp -s "$TMP/criteria.md" "$I9G/report-criteria.md"'
+check "…and kept with the task"                      '[ -s "$(task_dir PRJ-9)/material/review-policy.json" ] && [ -s "$(task_dir PRJ-9)/material/report-criteria.md" ]'
+printf 'змінено пізніше\n' > "$TMP/criteria.md"
+check "editing the bridge's file later changes nothing for the task" 'grep -q "доказом" "$I9G/report-criteria.md"'
 out="$(bash "$BIN/dispatch.sh" --task-id PRJ-9 --message-id m-1 --source youtrack --author bob "$PROJ" "Зроби PRJ-9" 2>&1)"; rc=$?
 check "the same first message again is a duplicate, not a second task" '[ "$rc" = 0 ] && printf "%s" "$out" | grep -q "^TIER=duplicate" && [ "$(task_get PRJ-9 ".attempts | length")" = 1 ]'
 out="$(bash "$BIN/dispatch.sh" --task-id PRJ-9 "$PROJ" "інша задача" 2>&1)"; rc=$?
@@ -149,6 +164,7 @@ check "…even with the task's own unfinished work in the tree, which is kept as
 check "…and that work is the task's to be reviewed, not a draft hidden behind a snapshot" '[ ! -e "$I9/snapshot-ref" ] && git -C "$PROJ" diff "$(cat "$I9/base-sha")" --name-only | grep -qx h.txt'
 check "…in a fresh session on the same branch"       'tmux has-session -t "$SES" 2>/dev/null && [ "$(git -C "$PROJ" symbolic-ref --short HEAD)" = agent/PRJ-9-x ]'
 check "…reviewed from where the task began"          '[ "$(cat "$I9/base-sha")" = "$(task_get PRJ-9 .base_sha)" ]'
+check "…reviewed by the budget the task was sent with" 'jq -e ".pipeline_gates | .roundsCeiling == 0 and .reportMaxRounds == 3 and .reportAtLimit == \"accept\"" "$I9/dispatch.json" >/dev/null && grep -q "доказом" "$(jq -r .pipeline_gates.reportCriteria "$I9/dispatch.json")"'
 check "…briefed with the task's goal, not the comment" 'jq -r .task "$I9/dispatch.json" | head -3 | grep -q "ПРОДОВЖЕННЯ ЗАДАЧІ PRJ-9" && jq -r .task "$I9/dispatch.json" | grep -q "Зроби PRJ-9"'
 out="$(bash "$BIN/worker-send.sh" --task-id PRJ-9 --relation continue --message-id c-2 --source mr --author alice \
         "$PROJ" - - - "поправ назву" 2>&1)"; rc=$?

@@ -148,7 +148,7 @@ nonisolated final class PipelineEditorRaceTests: XCTestCase {
         state.saveDelay = .zero
         await state.load(m)
         let loopIndex = try XCTUnwrap(state.doc?.edges.firstIndex { $0.loop != nil })
-        XCTAssertEqual(state.doc?.edges[loopIndex].loop?.max, 3)
+        XCTAssertEqual(state.doc?.edges[loopIndex].loop?.max, 5)
 
         // Claude proposes: two rounds at most.
         let answer = #"{"say":"Two rounds.","patch":[{"op":"replace","path":"/edges/\#(loopIndex)/loop/max","value":2}]}"#
@@ -162,7 +162,7 @@ nonisolated final class PipelineEditorRaceTests: XCTestCase {
         let outcome = await session.apply(first.id, state: state, registry: registry)
         XCTAssertEqual(outcome, .reproposed, "the old proposal is not applied over his change")
         XCTAssertEqual(title(state.doc, "report"), "Renamed by hand")
-        XCTAssertEqual(state.doc?.edges[loopIndex].loop?.max, 3, "nothing applied yet: he sees it again first")
+        XCTAssertEqual(state.doc?.edges[loopIndex].loop?.max, 5, "nothing applied yet: he sees it again first")
         XCTAssertEqual(session.lines.first { $0.id == first.id }?.state, .superseded)
 
         let again = try XCTUnwrap(session.lines.last { $0.state == .open }, "the same change, shown again on top of his")
@@ -298,14 +298,14 @@ nonisolated final class PipelineEditorRaceTests: XCTestCase {
             let outcome = await session.apply(proposal.id, state: state, registry: registry)
             XCTAssertEqual(outcome, .failed, "an older proposal is not applied, and not reworked either")
             XCTAssertEqual(title(state.doc, "report"), "Unsaved by hand", "his edit stays")
-            XCTAssertEqual(state.doc?.edges[loopIndex].loop?.max, 3, "the proposal did not land")
+            XCTAssertEqual(state.doc?.edges[loopIndex].loop?.max, 5, "the proposal did not land")
             XCTAssertEqual(session.lines.first { $0.id == proposal.id }?.state, .open, "it waits until he can save")
         }
         XCTAssertEqual(asked, 1, "Claude was not asked again over an unsaved version")
         let onDisk = PipelineEditorState(id: id)
         await onDisk.load(m)
         XCTAssertEqual(title(onDisk.doc, "report"), original)
-        XCTAssertEqual(onDisk.doc?.edges[loopIndex].loop?.max, 3)
+        XCTAssertEqual(onDisk.doc?.edges[loopIndex].loop?.max, 5)
 
         // Writing works again: the edit goes to disk, the change is reworked on top and shown again.
         backend.refuseSaves = false

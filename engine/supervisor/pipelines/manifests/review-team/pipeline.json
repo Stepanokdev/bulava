@@ -2,10 +2,10 @@
   "schema": "bulava.pipeline/1",
   "id": "review-team",
   "name": "Claude + команда Codex",
-  "description": "Те саме, що «Claude + Codex», тільки фінальне рев'ю роблять три рев'юери Codex, кожен під своїм кутом: контракт і бізнес-логіка, безпека й дані, стани та інтеграції. Якщо хоч один знайшов дефект, робота повертається. На стенді з посадженими багами команда ловила 72% проти 62–67% в одного рев'юера, хоча перевага поки невелика. Кожне рев'ю коштує три виклики Codex, а не один.",
+  "description": "Те саме, що «Claude + Codex», тільки фінальне рев'ю роблять три рев'юери Codex, кожен під своїм кутом: контракт і бізнес-логіка, безпека й дані, стани та інтеграції. Якщо хоч один знайшов дефект, робота повертається. На стенді з посадженими багами команда ловила 72% проти 62–67% в одного рев'юера, хоча перевага поки невелика. Кожне рев'ю коштує три виклики Codex, а не один. Так працюють нові чати й автоматизації, поки ти не вибереш інший пайплайн.",
   "i18n": {
     "en": {
-      "description": "Same as Claude + Codex, except three Codex reviewers do the final review, each from its own angle: contract and business logic, security and data, state and integrations. If any one of them finds a defect, the work goes back. On a bench of planted bugs the team caught 72% against 62–67% for a single reviewer, a small edge so far. Each review costs three Codex calls instead of one.",
+      "description": "Same as Claude + Codex, except three Codex reviewers do the final review, each from its own angle: contract and business logic, security and data, state and integrations. If any one of them finds a defect, the work goes back. On a bench of planted bugs the team caught 72% against 62–67% for a single reviewer, a small edge so far. Each review costs three Codex calls instead of one. New chats and automations run this way until you choose another pipeline.",
       "node.chat": "Chat message",
       "node.context": "Neutral context",
       "node.peer-claude": "Claude's position",
@@ -153,7 +153,7 @@
       "from": "review.fail",
       "to": "deliver.feedback",
       "loop": {
-        "max": 3
+        "max": 5
       }
     }
   ]

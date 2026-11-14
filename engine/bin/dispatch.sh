@@ -11,6 +11,9 @@ CALLER_DISPATCH_ID=""
 # A bridge's own: which task this is, where its branch starts, what to do about a dirty tree, and
 # who wrote the text. The first three are handed to `start`; none is required off a server.
 TASK_ID=""; START_FLAGS=(); SOURCE=""; AUTHOR=""; MESSAGE_ID=""; CONTINUE_ATTEMPT=0; REVIEW_BASE=""
+# How much review this one task gets, for a bridge that knows its tickets better than the defaults
+# do (engine/SERVER.md, "Review budget of a task"). 0 means no limit on that count.
+MAX_ROUNDS_ARG=""; REPORT_MAX_ROUNDS_ARG=""; REPORT_CRITERIA_ARG=""; REPORT_AT_LIMIT_ARG=""
 while :; do
   case "${1:-}" in
     --runspec)     RUNSPEC_SRC="$2"; shift 2 ;;
@@ -27,6 +30,10 @@ while :; do
     # Internal: `worker-send` starting the next attempt of a task it found. Not for a bridge.
     --continue)    CONTINUE_ATTEMPT=1; shift ;;
     --review-base) REVIEW_BASE="${2:-}"; START_FLAGS+=("--review-base=${2:-}"); shift 2 ;;
+    --max-rounds)        MAX_ROUNDS_ARG="${2:-}"; shift 2 ;;
+    --report-max-rounds) REPORT_MAX_ROUNDS_ARG="${2:-}"; shift 2 ;;
+    --report-criteria)   REPORT_CRITERIA_ARG="${2:-}"; shift 2 ;;
+    --report-at-limit)   REPORT_AT_LIMIT_ARG="${2:-}"; shift 2 ;;
     *) break ;;
   esac
 done
@@ -37,6 +44,19 @@ done
 [ -z "$MESSAGE_ID" ] || printf '%s' "$MESSAGE_ID" | grep -qE '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$' \
   || { echo "❌ --message-id: «${MESSAGE_ID}» — лише літери, цифри, . _ : -" >&2; exit 2; }
 [ "$CONTINUE_ATTEMPT" = 0 ] || [ -n "$TASK_ID" ] || { echo "❌ --continue без --task-id" >&2; exit 2; }
+for _rv in "$MAX_ROUNDS_ARG" "$REPORT_MAX_ROUNDS_ARG"; do
+  [ -z "$_rv" ] || printf '%s' "$_rv" | grep -qE '^[0-9]{1,4}$' \
+    || { echo "❌ --max-rounds / --report-max-rounds: «${_rv}» — ціле число від 0 (0 — без ліміту)" >&2; exit 2; }
+done
+case "$REPORT_AT_LIMIT_ARG" in ''|accept|ask) ;;
+  *) echo "❌ --report-at-limit: «${REPORT_AT_LIMIT_ARG}» — accept або ask" >&2; exit 2 ;; esac
+# Criteria the review is to judge by and that cannot be read are refused before anything starts: a
+# task reviewed by the default criteria instead of the ones it was sent with would pass or fail on
+# the wrong question.
+if [ -n "$REPORT_CRITERIA_ARG" ] && ! { [ -f "$REPORT_CRITERIA_ARG" ] && [ -r "$REPORT_CRITERIA_ARG" ] \
+     && [ -n "$(tr -d '[:space:]' < "$REPORT_CRITERIA_ARG" 2>/dev/null | head -c 1)" ]; }; then
+  echo "❌ --report-criteria: «${REPORT_CRITERIA_ARG}» не читається або порожній — без нього не запускаю" >&2; exit 2
+fi
 
 PROJ="$(canon_path "${1:?usage: dispatch.sh <dir> <task>}")"; shift
 TASK="$*"
@@ -166,6 +186,20 @@ jq -nc --arg id "$DISPATCH_ID" --arg at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" --arg
   && cp -f "$idir/dispatch.json.tmp" "$idir/dispatches/$DISPATCH_ID.json" 2>/dev/null \
   && mv -f "$idir/dispatch.json.tmp" "$idir/dispatch.json" \
   || rm -f "$idir/dispatch.json.tmp" 2>/dev/null || true
+
+# The review budget of this task. Kept as a file beside the dispatch, and with the task's record, so
+# a later attempt of the same task (`--continue`) and a follow-up that rewrites the dispatch are
+# reviewed by the same rules; the criteria are copied, so editing the bridge's file afterwards
+# changes nothing for a task already running. A dispatch that names none starts with none: a
+# policy left by the previous task in this folder must not apply to the next one.
+if [ "$CONTINUE_ATTEMPT" = 1 ] && [ -z "$MAX_ROUNDS_ARG$REPORT_MAX_ROUNDS_ARG$REPORT_CRITERIA_ARG$REPORT_AT_LIMIT_ARG" ]; then
+  review_policy_restore "$TASK_ID" "$idir"
+else
+  review_policy_write "$idir" "$MAX_ROUNDS_ARG" "$REPORT_MAX_ROUNDS_ARG" "$REPORT_CRITERIA_ARG" "$REPORT_AT_LIMIT_ARG" \
+    || { echo "❌ не зміг записати правила рев'ю цієї задачі" >&2; exit 1; }
+  [ -n "$TASK_ID" ] && review_policy_save "$TASK_ID" "$idir"
+fi
+review_policy_apply "$idir"
 
 # A dispatch carries the task and nothing the product remembers about itself. Anything left by
 # an older version of the engine is removed here rather than ignored: a file that still exists is

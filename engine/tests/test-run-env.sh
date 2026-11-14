@@ -39,6 +39,16 @@ for pair in "SUPERVISOR_CODEX_EFFORT='low'" "SUPERVISOR_CODEX_MODEL='gpt-5-codex
   esac
 done
 
+echo "===== the review's rounds travel with the run, at start and on resume ====="
+rstamp="$(SUPERVISOR_REPORT_REVIEW_ROUNDS=9 SUPERVISOR_MAX_ROUNDS_HARD=0 SUPERVISOR_MAX_ROUNDS=7 SUPERVISOR_STALL_LIMIT=3 run_env_stamp)"
+for pair in "SUPERVISOR_REPORT_REVIEW_ROUNDS='9'" "SUPERVISOR_MAX_ROUNDS_HARD='0'" "SUPERVISOR_MAX_ROUNDS='7'" "SUPERVISOR_STALL_LIMIT='3'"; do
+  case "$rstamp" in *"$pair"*) ok "the launch line carries ${pair}" ;; *) bad "MISSING ${pair} (stamp: $rstamp)" ;; esac
+done
+RI="$TMP/inst-rounds"; mkdir -p "$RI"
+SUPERVISOR_REPORT_REVIEW_ROUNDS=9 SUPERVISOR_MAX_ROUNDS_HARD=0 run_env_save "$RI"
+back="$(SUPERVISOR_REPORT_REVIEW_ROUNDS=5 SUPERVISOR_MAX_ROUNDS_HARD=20 bash -c '. "'"$BIN_DIR"'/supervisor-lib.sh"; run_env_load "'"$RI"'"; printf "%s %s" "$SUPERVISOR_REPORT_REVIEW_ROUNDS" "$SUPERVISOR_MAX_ROUNDS_HARD"')"
+[ "$back" = "9 0" ] && ok "and the saved run gives them back over the defaults (9 and 0)" || bad "saved rounds came back as: $back"
+
 echo "===== an unmade choice is stamped as the engine's resolved default ====="
 
 # Never omitted: a missing variable would let whatever the long-lived tmux server happens to carry

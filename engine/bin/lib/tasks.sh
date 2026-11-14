@@ -194,6 +194,61 @@ task_material_restore() {   # $1=task id $2=instance dir
   return 0
 }
 
+# The review budget a bridge gave one task: `review-policy.json` in the run's folder, with the
+# criteria copied beside it as `report-criteria.md`. Keys, all optional:
+#   roundsCeiling     the most code-review rounds this task gets (0 = no ceiling)
+#   reportMaxRounds   the most report-review rounds (0 = no limit)
+#   reportCriteria    the copied criteria; they replace the server's own rule for reports
+#   reportAtLimit     "accept": a report still failing at its limit is accepted with the notes
+# Any report setting also asks for the report to be reviewed (`reportReview`).
+REVIEW_POLICY_FILES="review-policy.json report-criteria.md"
+review_policy_write() {   # $1=idir $2=rounds $3=report rounds $4=criteria file $5=at limit
+  local idir="$1" crit=""
+  rm -f "$idir/review-policy.json" "$idir/report-criteria.md" 2>/dev/null
+  [ -n "$2$3$4$5" ] || return 0
+  if [ -n "$4" ]; then
+    cp -f "$4" "$idir/report-criteria.md.tmp.$$" 2>/dev/null \
+      && mv -f "$idir/report-criteria.md.tmp.$$" "$idir/report-criteria.md" || return 1
+    crit="$idir/report-criteria.md"
+  fi
+  jq -nc --arg r "$2" --arg rr "$3" --arg c "$crit" --arg al "$5" '
+      (if $r  == "" then {} else {roundsCeiling: ($r|tonumber)} end)
+    + (if $rr == "" and $c == "" and $al == "" then {} else {reportReview: true} end)
+    + (if $rr == "" then {} else {reportMaxRounds: ($rr|tonumber)} end)
+    + (if $c  == "" then {} else {reportCriteria: $c} end)
+    + (if $al == "" then {} else {reportAtLimit: $al} end)' > "$idir/review-policy.json.tmp" 2>/dev/null \
+    && mv -f "$idir/review-policy.json.tmp" "$idir/review-policy.json"
+}
+review_policy_save() {   # $1=task id $2=idir — the task keeps the policy its first attempt was sent with
+  local m f; m="$(task_dir "$1")/material"; mkdir -p "$m" 2>/dev/null || return 0
+  rm -f "$m/review-policy.json" "$m/report-criteria.md" 2>/dev/null
+  for f in $REVIEW_POLICY_FILES; do [ -s "$2/$f" ] && cp -f "$2/$f" "$m/$f" 2>/dev/null; done
+  return 0
+}
+review_policy_restore() {   # $1=task id $2=idir
+  local m f; m="$(task_dir "$1")/material"
+  rm -f "$2/review-policy.json" "$2/report-criteria.md" 2>/dev/null
+  for f in $REVIEW_POLICY_FILES; do
+    [ -s "$m/$f" ] && cp -f "$m/$f" "$2/$f.tmp.$$" 2>/dev/null && mv -f "$2/$f.tmp.$$" "$2/$f"
+  done
+  # The criteria path inside the policy names the folder it was written in; the copy is here now.
+  if [ -s "$2/review-policy.json" ] && [ -s "$2/report-criteria.md" ]; then
+    jq -c --arg c "$2/report-criteria.md" '.reportCriteria = $c' "$2/review-policy.json" > "$2/review-policy.json.tmp" 2>/dev/null \
+      && mv -f "$2/review-policy.json.tmp" "$2/review-policy.json"
+  fi
+  return 0
+}
+# Put the task's policy into the current dispatch record, over whatever a pipeline set: the bridge
+# that sent the task spoke last. Unrelated pipeline gates stay as they are.
+review_policy_apply() {   # $1=idir
+  local idir="$1"
+  [ -s "$idir/review-policy.json" ] && [ -s "$idir/dispatch.json" ] || return 0
+  jq -c --slurpfile p "$idir/review-policy.json" '.pipeline_gates = ((.pipeline_gates // {}) + $p[0])' \
+     "$idir/dispatch.json" > "$idir/dispatch.json.pol.$$" 2>/dev/null \
+    && mv -f "$idir/dispatch.json.pol.$$" "$idir/dispatch.json" || rm -f "$idir/dispatch.json.pol.$$" 2>/dev/null
+  return 0
+}
+
 # Which state an attempt's end leaves the task in, from the gate's disposition and the worker's word.
 task_state_for() {   # $1=disposition $2=declared result → state
   case "$1:$2" in

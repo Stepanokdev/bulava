@@ -214,7 +214,7 @@ private struct PipelineRow: View {
                 Button("Open") { model.openPipeline(summary.id) }
                 Button("Make a copy…", action: duplicate)
                 if !isDefault {
-                    Button("Use for new chats") { model.settings.defaultPipelineID = summary.id == model.builtinChatPipeline ? nil : summary.id }
+                    Button("Use for new chats") { model.setDefaultPipeline(summary.id) }
                 }
                 if !summary.isBuiltin {
                     Button("Share…", action: export)

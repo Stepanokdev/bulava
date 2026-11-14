@@ -122,7 +122,7 @@ struct PipelineEditorScreen: View {
             Menu {
                 if model.pipelineID(forChat: nil) != pipelineID {
                     Button("Use for new chats") {
-                        model.settings.defaultPipelineID = pipelineID == model.builtinChatPipeline ? nil : pipelineID
+                        model.setDefaultPipeline(pipelineID)
                     }
                 }
                 if !state.readOnly {
@@ -475,13 +475,18 @@ private struct StepInspector: View {
     }
 
     private func loopStepper(_ edge: PipelineEdge, loop: PipelineLoop) -> some View {
-        let ceiling = model.pipelineRegistry?.reviewCeiling ?? 12
+        // 0 is the bottom of the range and means no limit: the engine still stops work that makes no
+        // progress, so a loop without a number of rounds cannot run for ever.
+        let ceiling = model.pipelineRegistry?.reviewCeiling ?? 20
         return Stepper(value: Binding(get: { loop.max },
                                       set: { v in state.edit { d in
                                           if let i = d.edges.firstIndex(where: { $0.id == edge.id }) { d.edges[i].loop?.max = v }
                                       } }),
-                       in: 1...ceiling) {
-            Text(String(localized: "Rounds back to the worker, at most: \(loop.max)")).font(Typo.caption).foregroundStyle(Palette.textSecondary)
+                       in: 0...(ceiling > 0 ? ceiling : 1000)) {
+            Text(loop.max == 0
+                 ? String(localized: "Rounds back to the worker: no limit")
+                 : String(localized: "Rounds back to the worker, at most: \(loop.max)"))
+                .font(Typo.caption).foregroundStyle(Palette.textSecondary)
         }
         .controlSize(.small)
         .disabled(state.readOnly)

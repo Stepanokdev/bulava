@@ -21,17 +21,52 @@ extension AppModel {
         SupervisorClient.safePipelineName(pipelineID(forChat: chatID))
     }
 
-    /// Change it for one chat — or, with no chat yet, for the next new one.
+    /// Change it for one chat, and remember it for the chats that come after.
     ///
-    /// A chat's choice is kept as it was made, a built-in one included: "nothing chosen" means
-    /// "as new chats", and when new chats default to one of his own pipelines, storing the built-in
-    /// as nothing would put that chat straight back on his.
+    /// What he picks in a chat is what he wants next time too: before, every new chat started on
+    /// the built-in pipeline again and he had to pick the Codex team in each one, and sometimes
+    /// forgot. A chat's choice is kept as it was made, a built-in one included: "nothing chosen"
+    /// means "as new chats", and when new chats default to one of his own pipelines, storing the
+    /// built-in as nothing would put that chat straight back on his.
+    ///
+    /// Chats already under way do not move: each settled on its pipeline with its first message
+    /// (`settlePipeline`), so a new default reaches only chats that have not started yet.
     func choosePipeline(_ id: String, forChat chatID: UUID?) {
         if let chatID, conversations.chat(id: chatID) != nil {
             conversations.setPipeline(id, for: chatID)
-        } else {
-            settings.defaultPipelineID = id == builtinChatPipeline ? nil : id
         }
+        setDefaultPipeline(id)
+    }
+
+    /// The pipeline new chats start on. Chats already under way that never chose one keep the one
+    /// they have been running on: they are pinned to it before the default moves.
+    func setDefaultPipeline(_ id: String) {
+        let next: String? = id == builtinChatPipeline ? nil : id
+        guard next != settings.defaultPipelineID else { return }
+        conversations.keepPipelineOfStartedChats(pipelineID(forChat: nil))
+        settings.defaultPipelineID = next
+    }
+
+    /// Once, on the first launch of a version that settles chats: a chat already going, with no
+    /// pipeline of its own, keeps what it was running on. Before this version that was the default
+    /// for new chats, or Claude + Codex (`adaptive-peer`) when none was chosen — the built-in has
+    /// since become the Codex team, and a conversation half done must not change reviewers for it.
+    func keepPipelineOfChatsStartedBefore() {
+        guard !AppSettings.startedChatsKeepPipeline else { return }
+        let before = settings.defaultPipelineID.flatMap { $0.isEmpty ? nil : $0 } ?? Self.builtinBeforeTheTeam
+        conversations.keepPipelineOfStartedChats(before)
+        AppSettings.startedChatsKeepPipeline = true
+    }
+
+    /// What a chat with nothing chosen ran on before the Codex team became the built-in default.
+    nonisolated static let builtinBeforeTheTeam = "adaptive-peer"
+
+    /// A chat keeps the pipeline it was started with. Called on its first message, like the run
+    /// choices: a later choice in another chat changes the default, and must not reach back into a
+    /// conversation that is already going.
+    func settlePipeline(for chatID: UUID) {
+        guard let chat = conversations.chat(id: chatID), (chat.pipelineID ?? "").isEmpty else { return }
+        conversations.setPipeline(pipelineID(forChat: nil), for: chatID)
     }
 
     /// The conversation about one pipeline, made the first time its chat is opened.

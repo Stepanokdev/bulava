@@ -47,10 +47,11 @@ nonisolated final class PipelineNamesTests: XCTestCase {
         XCTAssertTrue(team.localizedDescription?.hasPrefix("Same as Claude + Codex") == true)
     }
 
-    func testTheDefaultIsStillClaudeAndCodex() throws {
+    func testTheDefaultIsClaudeAndACodexTeam() throws {
         let all = try library()
-        XCTAssertEqual(ChatEngineMode.claudeAndCodex.messagePipeline, "adaptive-peer")
+        XCTAssertEqual(ChatEngineMode.claudeAndCodex.messagePipeline, "review-team")
         LanguageBundle.adopt(.en)
+        XCTAssertEqual(all.first { $0.id == "review-team" }?.displayName, "Claude + a Codex team")
         XCTAssertEqual(all.first { $0.id == "adaptive-peer" }?.displayName, "Claude + Codex")
     }
 
