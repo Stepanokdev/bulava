@@ -203,7 +203,7 @@ check "(b) and it was the verifier that refused"                   'grep -q "VER
 check "(b) the refusal quotes the failing test"                    'printf "%s" "$out" | grep -q "test-beta.sh"'
 
 echo "== 6. research with no change is settled by the gate, and the record says nobody reviewed it =="
-# The factory, 3–5 Nov: four factory tasks were settled here as debt, while review.json named
+# The factory, 3–5 Nov: four research tasks were settled here as debt, while review.json named
 # Codex as the reviewer and the task record said he took full part.
 mkcase
 declare_outcome succeeded_research "2026-11-05 17:11:00"

@@ -253,10 +253,11 @@ shift.
 
 ## Deep audit (a fresh pair of eyes)
 
-Separate from the night shift: a one-off independent audit of the whole project . Codex starts with a clean context, first reads the requirements, then **goes out to the
-internet** (the client, the tender, comparable work, the evaluators' own software), and only then
-looks at the code. No code changes at all — analysis only: what is missing, what is superfluous,
-how it looks to an evaluator, whether this is a service rather than a demo.
+Separate from the night shift: a one-off independent audit of the whole project. Codex starts with a
+clean context, first reads the requirements, then **goes out to the internet** (the client, the
+tender, comparable work, the evaluators' own software), and only then looks at the code. No code
+changes at all — analysis only: what is missing, what is superfluous, how it looks to an evaluator,
+whether this is a service rather than a demo.
 
 ```bash
 bin/deep-audit.sh ~/project "evaluators — a public tender for a mapping platform"
@@ -298,7 +299,7 @@ decision. The prompt template is `supervisor/AUDIT-PROMPT.md`, meant to be edite
 | `supervisor/STANDARDS.md` | The run protocol and the quality bar (anti-AI design, humanizer, engineering; the rule against fetching skills yourself) |
 | `bin/publish-engine.sh` | Assemble the engine for somebody else's machine and check that nothing personal is in it |
 | `hooks/safety-check.sh` | SessionStart: puts out a stale night mode + the handshake |
-| `supervisor/AUDIT-PROMPT.md` | The auditor's prompt template  |
+| `supervisor/AUDIT-PROMPT.md` | The auditor's prompt template |
 | `claude-commands/deep-audit.md` | The /deep-audit slash command (copied by install.sh) |
 | `tests/test-*.sh` | Isolated integration tests (pure bash; codex/claude mocked through PATH; a real tmux where it matters) |
 | `docs/F13-transport-research.md` | Transport research (without a rewrite) |

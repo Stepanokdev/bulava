@@ -56,10 +56,11 @@ const PEOPLE = {
   'claude-bulava':  { tone: 'blue',   mark: 'Б' },
   'claude-factory': { tone: 'green',  mark: 'Ф' },
   ivan:             { tone: 'yellow', mark: 'І' },
-  guest:            { tone: 'red',    mark: 'Г' },
 };
 function face(m) {
-  const p = PEOPLE[m.from] || { tone: 'grey', mark: (m.name || '?').trim().charAt(0).toUpperCase() };
+  // Anybody else who signs in is a person on the other side: red, with the first letter of the name.
+  const mark = (m.name || '?').trim().charAt(0).toUpperCase();
+  const p = PEOPLE[m.from] || { tone: m.role === 'agent' ? 'grey' : 'red', mark };
   return `<span class="avatar ${p.tone}${m.role === 'agent' ? ' agent' : ''}" aria-hidden="true">${esc(p.mark)}</span>`;
 }
 

@@ -676,7 +676,7 @@ if [ "${SUPERVISOR_OUTCOME_PROTOCOL:-1}" = 1 ] && [ -n "${IDIR_SCOPE:-}" ] && [ 
           elif [ "$oc_mode" = broad ]; then
             # Settled here, by the gate: Codex never sees it. The record says so — review.json named
             # Codex as the reviewer and the task record said he took full part, while on the factory
-            # four research and production data-fix tasks (four factory tasks) were never
+            # four research and production data-fix tasks were never
             # read by anyone but the worker.
             REVIEWER=gate
             [ -n "${IDIR_SCOPE:-}" ] && codex_gap "$IDIR_SCOPE" review \
@@ -1581,8 +1581,8 @@ fi
 rm -f "$STATE_DIR/outcome-nudge-$RUN_KEY" 2>/dev/null || true
 
 # A server worker that stops with work in the tree but without handing it in is not handing in. On a
-# Mac someone reads the stop; on a server the stop is the only way a worker has to wait, and a factory task
-# (6 Nov) shows what it costs to take it for a hand-in: a worker wrote a summary marked «DRAFT —
+# Mac someone reads the stop; on a server the stop is the only way a worker has to wait, and a factory
+# task (6 Nov) shows what it costs to take it for a hand-in: a worker wrote a summary marked «DRAFT —
 # mobile results pending», ended its turn, and the verifier, the independent checks and a Codex
 # review were spent on work it had said was unfinished. So, as for an open piece: a stop with no
 # succeeded_* outcome of this run, or with one whose summary says DRAFT, goes back with no verifier

@@ -2769,7 +2769,7 @@ usage_refresh() {   # $1=claude|codex
 # including a bug report quoted into the pane.
 # The organisation switching subscription access off is a refusal of the same kind: nothing the
 # worker can do, and it came back on its own within the hour on 5 Nov — while three chats and a
-# factory task  were declared stalled and waited for the director to type "продовжуй".
+# factory task were declared stalled and waited for the director to type "продовжуй".
 # Waiting and trying again, as for a limit, is the right answer to it too.
 LIMIT_EXPLICIT='wait for limit to reset|ask your admin for more usage|(usage|session) limit reached|reached your [a-z ]*limit|hit your [a-z ]*limit|limit reached|(out of|run out of) (usage|messages)|organi[sz]ation has disabled claude subscription access'
 LIMIT_AMBIGUOUS='resets? (at|in|today|tomorrow|[0-9])'
