@@ -217,6 +217,14 @@ same budget; a task sent without them gets the engine's defaults, never a previo
 | `--report-criteria FILE` | what the report is judged by; **replaces** the server's rule about data changes rather than adding to it. Copied when the task is accepted: editing the file later changes nothing for it | the server's rule |
 | `--report-at-limit accept\|ask` | `accept`: a report still failing at its last round is accepted with the reviewer's notes: the task ends `done`, `review.json` keeps `verdict: FAIL` and the findings, with `disposition: passed` and `accepted_with_notes: true`; the receipt (`last_receipt`) says `review: passed`, `accepted_with_notes: true` and the notes in `review_why`, for the ticket. Only a readable verdict (`STATE: COMPLETE`, `VERDICT: FAIL`) is let through; an answer without one ends `needs-user`, recorded as `UNREADABLE`. `ask`: the task ends `failed` / `needs-user` | `ask` |
 
+A report is read in full once. Its first FAIL becomes the report's own ledger (`report-ledger-<run>`,
+apart from a code review's), with the same stable ids as code review: each later round answers
+those ids against the report as it now is (FIXED / OPEN / SAME AS), and a new defect blocks only when
+tagged `[acceptance_failure]` or `[regression_from_patch]`. A PASS with an id still open is a FAIL.
+`SUPERVISOR_STALL_LIMIT` rounds with no id closed end the review as its limit would: `needs-user`
+with `open_items` in `review.json`, or accepted with notes under `--report-at-limit accept`. Read from
+scratch every round, one report came back 10, 10, 10, 8 findings and reached its limit every attempt.
+
 `0` for either count means no limit. A run that stops making progress is still parked after
 `SUPERVISOR_STALL_LIMIT` rounds without progress (code review, scoped fixes included), and every run still ends after
 `SUPERVISOR_MAX_RUN_SECONDS` of review rounds (8 h), so `0` is safe to try. Any `--report-*` flag

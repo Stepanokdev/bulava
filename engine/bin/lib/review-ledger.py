@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """The list of open defects a review team handed back, kept with stable ids across fix rounds.
 
-  review-ledger.py init  <ledger> <review-file> [<snapshot-json>]  the team's blocking findings → T1..Tn
+  review-ledger.py init  <ledger> <review-file> [<snapshot-json>] [one]
+                                                    the blocking findings → T1..Tn; "one" = they come
+                                                    from one reviewer's list, already distinct
   review-ledger.py apply <ledger> <review-file> [<snapshot-json>]  one fix-check answer; prints JSON
   review-ledger.py open  <ledger>                                   the open items, one per line
   review-ledger.py count <ledger>                                   how many are open
@@ -137,7 +139,8 @@ def run(cmd, path):
     if cmd == "init":
         text = read(sys.argv[3])
         items = [{"id": "T%d" % (i + 1), "text": t, "open": True} for i, t in enumerate(blocking(text))]
-        save(path, {"items": items, "stall": 0, "rounds": 0, "grouped": len(items) <= 1,
+        one = len(sys.argv) > 5 and sys.argv[5] == "one"
+        save(path, {"items": items, "stall": 0, "rounds": 0, "grouped": one or len(items) <= 1,
                     "repos": snapshot(sys.argv[4] if len(sys.argv) > 4 else "")})
         print(len(items))
         return 0
