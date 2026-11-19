@@ -166,8 +166,9 @@ left="$(grep -rnE '(codex exec|"\$CODEX_BIN" exec|claude -p)' "$BIN" "$BIN/../ho
     done)"
 # Nor in the environment: `VAR="$big" codex_ro …` exports VAR to the CLI, and a value over 128 KiB
 # fails its exec on Linux just the same. Only render may be given values that way.
-envp="$(grep -nE '(^|[;(&|[:space:]])[A-Z_]+="\$[^"]*"[[:space:]]+([A-Z_]+="[^"]*"[[:space:]]+)*(claude_plan|codex_ro|run_peer|claude|codex|"\$CODEX_BIN")[[:space:]]' \
-  "$BIN"/*.sh "$BIN/../hooks"/*.sh 2>/dev/null | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#')"
+envp="$(grep -nE '(^|[;(&|[:space:]])[A-Z_]+="\$[^"]*"[[:space:]]+([A-Z_]+="[^"]*"[[:space:]]+)*(claude_plan|codex_ro|run_peer|stage_peer|claude|codex|"\$CODEX_BIN")[[:space:]]' \
+  "$BIN"/*.sh "$BIN/../hooks"/*.sh 2>/dev/null | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' \
+  | grep -vE ':[[:space:]]*(PEER_PROMPT_FILE|PEER_OUT_NAME)="[^"]*"[[:space:]]+(PEER_PROMPT_FILE|PEER_OUT_NAME)="[^"]*"[[:space:]]+stage_peer ')"   # a file's path and a name: small
 [ -z "$envp" ] && ok "no model call is handed a value in its environment" || { bad "values in a model call's environment:"; printf '%s\n' "$envp" | sed 's/^/      /'; }
 [ -z "$left" ] && ok "every codex exec and claude -p reads its prompt from stdin" || { bad "still in argv:"; printf '%s\n' "$left" | sed 's/^/      /'; }
 

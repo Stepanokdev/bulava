@@ -339,6 +339,17 @@ A defect you did not raise last round is never [repeat], however close it sits i
 "
 fi
 
+# With each one's working tree as a tree object ("tree"): tracked changes, new files not yet added
+# (what .gitignore leaves), deletions — the state the reviewer read, so the next fix check can be
+# shown exactly what changed between two readings, committed or not. Written with a throwaway index;
+# the repository's own index and files are not touched.
+worktree_tree() {   # $1=repository → tree id
+  local idx t; idx="$(mktemp "${TMPDIR:-/tmp}/review-index.XXXXXX")" || return 0; rm -f "$idx"
+  GIT_INDEX_FILE="$idx" git -C "$1" read-tree HEAD >/dev/null 2>&1
+  GIT_INDEX_FILE="$idx" git -C "$1" add -A . >/dev/null 2>&1
+  t="$(GIT_INDEX_FILE="$idx" git -C "$1" write-tree 2>/dev/null)"
+  rm -f "$idx"; printf '%s' "$t"
+}
 # After the team (lib/review-team.sh) has read the change in full, the rounds that follow check its
 # list, with one reviewer.
 #
@@ -363,17 +374,26 @@ if [ -f "$LEDGER_F" ]; then
   # Per repository: the commit the last review read, and what the fixes changed since. A task's
   # code is often in repositories beside the main folder, not in it.
   _lsince=""; _lknown=" "
-  while IFS=$'\t' read -r _lp _lsha; do
+  while IFS=$'\t' read -r _lp _lsha _ltree; do
     [ -n "$_lp" ] && [ -n "$_lsha" ] && [ -d "$_lp" ] || continue
     _lknown="$_lknown$_lp "
-    git -C "$_lp" cat-file -e "$_lsha^{commit}" 2>/dev/null || continue
-    # Against the working tree: a fix not yet committed is a fix this round too.
-    _lstat="$(git -C "$_lp" diff --stat "$_lsha" 2>/dev/null | tail -30)"
+    # Between the two readings: the tree the last reviewer read and the tree as it is now, each
+    # with its uncommitted and new files, so a fix kept out of a commit — or one taken back — shows.
+    _lnow="$(worktree_tree "$_lp")"
+    if [ -n "$_ltree" ] && [ -n "$_lnow" ] && git -C "$_lp" cat-file -e "$_ltree^{tree}" 2>/dev/null; then
+      [ "$_ltree" = "$_lnow" ] && continue
+      _lstat="$(git -C "$_lp" diff --stat "$_ltree" "$_lnow" 2>/dev/null | tail -30)"
+      _lcmd="git -C '$_lp' diff $_ltree $_lnow"
+    else
+      git -C "$_lp" cat-file -e "$_lsha^{commit}" 2>/dev/null || continue
+      _lstat="$(git -C "$_lp" diff --stat "$_lsha" 2>/dev/null | tail -30)"
+      _lcmd="git -C '$_lp' diff $_lsha"
+    fi
     [ -n "$_lstat" ] || continue
     _lsince="$_lsince
-  in $_lp: \`git -C '$_lp' diff $_lsha\` (commits and uncommitted changes since)
+  in $_lp: \`$_lcmd\` (what the last reviewer read → what you read now, uncommitted and new files included)
 $_lstat"
-  done < <(python3 "$BIN_DIR/lib/review-ledger.py" repos "$LEDGER_F" 2>/dev/null | jq -r '.[] | [.path, .reviewed_sha] | @tsv' 2>/dev/null)
+  done < <(python3 "$BIN_DIR/lib/review-ledger.py" repos "$LEDGER_F" 2>/dev/null | jq -r '.[] | [.path, .reviewed_sha, (.tree // "")] | @tsv' 2>/dev/null)
   # A repository connected after the last review: all of its work is new to the fix check.
   if [ -n "${IDIR_SCOPE:-}" ] && [ -s "$IDIR_SCOPE/extra-repos" ]; then
     while IFS=$'\037' read -r _lp _lb _rest; do
@@ -450,6 +470,14 @@ ledger_open_ids() {
   python3 "$BIN_DIR/lib/review-ledger.py" open "$LEDGER_F" 2>/dev/null | sed -n 's/^\([TN][0-9]*\): .*/\1/p' | tr '\n' ' ' | sed 's/ $//'
 }
 
+# The open items whole, as [{id, text}], for review.json and the receipt: the findings text is the
+# raw answer, clipped in the receipt, and the list must reach the operator complete.
+ledger_open_json() {
+  [ -n "${LEDGER_F:-}" ] && [ -f "$LEDGER_F" ] || { echo '[]'; return 0; }
+  python3 "$BIN_DIR/lib/review-ledger.py" open "$LEDGER_F" 2>/dev/null \
+    | jq -Rnc '[inputs | capture("^(?<id>[TN][0-9]+): (?<text>.*)$")]' 2>/dev/null || echo '[]'
+}
+
 emit_review_json() {
   [ -n "${REVIEW_JSON:-}" ] || return 0
   if [ "${3:-}" = debt ] && [ -n "$(ledger_open_ids)" ]; then
@@ -463,9 +491,11 @@ $(python3 "$BIN_DIR/lib/review-ledger.py" open "$LEDGER_F" 2>/dev/null)"
         --arg round "$(( ${rounds:-0} + 1 ))" --arg verify "${verify_status:-}" \
         --arg findings "${4:-}" --arg ts "$(date '+%F %T')" \
         --arg reviewer "${REVIEWER:-codex}" --arg awn "${ACCEPTED_WITH_NOTES:-0}" \
+        --argjson open "$(ledger_open_json)" \
      '{session_id:$sid, ts:$ts, mode:$mode, round:($round|tonumber),
        state:$st, verdict:$vd, disposition:$disp, verify_status:$verify,
        reviewer:$reviewer, findings:$findings}
+      + (if ($open | length) > 0 then {open_items:$open} else {} end)
       + (if $awn == "1" then {accepted_with_notes:true} else {} end)' > "$REVIEW_JSON" 2>/dev/null || true
 }
 
@@ -496,7 +526,19 @@ log() {
   echo "$(date '+%F %T') [review-gate] ${who}$*" >> "$LOG"
 }
 mark_done() {  # $1 = disposition, [$2] = why, in a sentence the person reads
-  local disposition="${1:-passed}" why="${2:-}" _unc _lo
+  local disposition="${1:-passed}" why="${2:-}" _unc _lo _new
+  # A repository that joined the run after the reviewer read it was never read: no pass covers it.
+  # The work is reviewed again with it, rather than published with a commit nobody saw.
+  if [ "$disposition" = passed ] && [ -n "${REVIEW_SNAPSHOT:-}" ] && [ -n "${IDIR_SCOPE:-}" ]; then
+    _new="$(repos_state_json "$IDIR_SCOPE" "$(run_project_dir "$IDIR_SCOPE" "${cwd:-$PWD}")" 2>/dev/null \
+      | jq -r --argjson snap "$REVIEW_SNAPSHOT" '[$snap[].path] as $read | .[] | select(.path as $p | $read | index($p) | not) | .path' 2>/dev/null)"
+    if [ -n "$_new" ]; then
+      log "a repository joined after the review ($(printf '%s' "$_new" | tr '\n' ' ')) — not passed; reviewing again"
+      jq -n --arg reason "🌙 Після того як Codex прочитав роботу, до неї додався репозиторій ($(printf '%s' "$_new" | tr '\n' ' ')). Його ніхто не перевіряв, тож роботу не прийнято: заверши знову, і її прочитають разом із ним." \
+        '{decision: "block", reason: $reason}'
+      exit 0
+    fi
+  fi
   _lo="$(ledger_open_ids)"
   if [ "$disposition" = debt ] && [ -n "$_lo" ]; then
     disposition=needs-user
@@ -630,10 +672,13 @@ restamp_receipt() {  # $1 = passed | debt | needs-user | scope_violation
   case "$repos" in '['*) ;; *) repos='[]' ;; esac
   # The commit the reviewer read, not whatever HEAD is by the time the receipt is written.
   repos="$(repos_as_reviewed "$repos")"
+  local open_items; open_items="$(ledger_open_json)"; case "$open_items" in '['*) ;; *) open_items='[]' ;; esac
   jq -c --arg rv "$review" --arg why "$why" --argjson f "${findings:-[]}" --argjson repos "$repos" \
+        --argjson open "$open_items" \
         --argjson cx "${CODEX_PART:-null}" --argjson awn "$awn" \
         --arg at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
      '.review = $rv | .review_why = $why | .findings = $f | .repos = $repos | .reviewed_at = $at
+      | (if ($open | length) > 0 then .open_items = $open else del(.open_items) end)
       | (if $cx == null then . else .codex = $cx end)
       | (if $awn then .accepted_with_notes = true else del(.accepted_with_notes) end)' \
      "$src" > "$src.tmp" 2>/dev/null \
@@ -1369,12 +1414,17 @@ review_call() {   # $1=prompt [$2=1 to let Codex search the web]
 
 # The commit of every repository of the run, as [{path, reviewed_sha}]: what a reviewer reads.
 review_snapshot() {
+  local rs p
   if [ -n "${IDIR_SCOPE:-}" ]; then
-    repos_state_json "$IDIR_SCOPE" "$(run_project_dir "$IDIR_SCOPE" "$cwd")" 2>/dev/null \
-      | jq -c '[.[] | {path, reviewed_sha}]' 2>/dev/null
+    rs="$(repos_state_json "$IDIR_SCOPE" "$(run_project_dir "$IDIR_SCOPE" "$cwd")" 2>/dev/null | jq -c '[.[] | {path, reviewed_sha}]' 2>/dev/null)"
   else
-    jq -nc --arg p "$cwd" --arg h "$(git -C "$cwd" rev-parse HEAD 2>/dev/null || true)" '[{path:$p, reviewed_sha:$h}]'
+    rs="$(jq -nc --arg p "$cwd" --arg h "$(git -C "$cwd" rev-parse HEAD 2>/dev/null || true)" '[{path:$p, reviewed_sha:$h}]')"
   fi
+  case "$rs" in '['*) ;; *) return 0 ;; esac
+  while IFS= read -r p; do
+    [ -n "$p" ] && rs="$(jq -c --arg p "$p" --arg t "$(worktree_tree "$p")" 'map(if .path == $p then .tree = $t else . end)' <<<"$rs")"
+  done < <(jq -r '.[].path' <<<"$rs")
+  printf '%s' "$rs"
 }
 
 # The numbered defects of this review that can hold the work back: not the advisory ones

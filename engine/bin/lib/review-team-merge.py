@@ -20,8 +20,9 @@ import os
 import re
 import sys
 
-STATE_RE = re.compile(r"STATE:\s*(COMPLETE|HANDOFF|BLOCKED)")
-VERDICT_RE = re.compile(r"VERDICT:\s*(PASS|FAIL)")
+# Whole header lines only, as the gate reads them: "VERDICT: PASS?" or "VERDICT: PASSING" is no verdict.
+STATE_RE = re.compile(r"^[\s*]*STATE:[ \t]*(COMPLETE|HANDOFF|BLOCKED)[ \t*]*$", re.M)
+VERDICT_RE = re.compile(r"^[\s*]*VERDICT:[ \t]*(PASS|FAIL)[ \t*]*$", re.M)
 TITLES = {
     "contract": "Contract and business logic",
     "security": "Security and data integrity",

@@ -33,8 +33,12 @@ import re
 import sys
 
 NUMBERED = re.compile(r"^\s*[0-9]+[.)]\s*(.*)$")
+BLOCKING_TAG = re.compile(r"\[(acceptance_failure|regression_from_patch)\]")
 ADVISORY = re.compile(r"\[(related_improvement|pre_existing|harness_failure|scope_violation)\]")
-STATUS = re.compile(r"^\s*[-*•]?\s*\**([TN][0-9]+)\**\s*[:—–-]\s*\**(FIXED|OPEN|SAME AS\s+([TN][0-9]+))\**(?=\s|$|[—–.,:;-])")
+# "T1: FIXED" and nothing after it but a full stop; "T1: OPEN — why"; "T2: SAME AS T1". Anything
+# else ("FIXED?", "FIXED or OPEN", "fixed, probably") is no status, and the id stays as it was.
+STATUS = re.compile(r"^\s*[-*•]?\s*\**([TN][0-9]+)\**\s*[:—–-]\s*\**"
+                    r"(?:(FIXED)\**\s*\.?\s*$|(OPEN)\**(?=\s*$|\s*[—–:-]|\s+[^?\s])|SAME AS\s+([TN][0-9]+)\**\s*\.?\s*$)")
 
 
 def read(path):
@@ -86,11 +90,15 @@ def statuses(text):
         if not m:
             continue
         i = m.group(1).upper()
-        v = ("SAME", m.group(3).upper()) if m.group(3) else m.group(2).upper()
+        v = ("SAME", m.group(4).upper()) if m.group(4) else ("FIXED" if m.group(2) else "OPEN")
         if i in st and st[i] != v:
             v = "OPEN"
         st[i] = v
     return st
+
+
+def by_id(items, i):
+    return next(it for it in items if it["id"] == i)
 
 
 def canonical(items, i):
@@ -147,7 +155,8 @@ def run(cmd, path):
         merged = []
         for it in d["items"]:
             v = st.get(it["id"])
-            if isinstance(v, tuple) and v[1] in ids and canonical(d["items"], v[1]) != it["id"]:
+            if isinstance(v, tuple) and v[1] in ids and canonical(d["items"], v[1]) != it["id"] \
+               and (by_id(d["items"], canonical(d["items"], v[1]))["open"] or not it["open"]):
                 it["same_as"] = canonical(d["items"], v[1])
                 it["open"] = False
                 merged.append("%s=%s" % (it["id"], it["same_as"]))
@@ -161,7 +170,9 @@ def run(cmd, path):
         # Duplicates first: T2 SAME AS T1 makes T2 follow T1 from now on.
         for it in d["items"]:
             v = st.get(it["id"])
-            if isinstance(v, tuple) and v[1] in ids and canonical(d["items"], v[1]) != it["id"]:
+            # Only onto a defect still open: "SAME AS" a closed one would close this one unfixed.
+            if isinstance(v, tuple) and v[1] in ids and canonical(d["items"], v[1]) != it["id"] \
+               and (by_id(d["items"], canonical(d["items"], v[1]))["open"] or not it["open"]):
                 it["same_as"] = canonical(d["items"], v[1])
                 it["open"] = False
         counted = [it for it in d["items"] if not it.get("same_as")]
@@ -176,7 +187,9 @@ def run(cmd, path):
         n = sum(1 for it in d["items"] if it["id"].startswith("N"))
         added = []
         for t in blocking(text):
-            if re.match(r"^\**[TN][0-9]+\**\s*[:—–-]", t):
+            # A fix check adds a defect only when it says it is one: "1. Ran the project tests." is
+            # a sentence, not a blocker.
+            if re.match(r"^\**[TN][0-9]+\**\s*[:—–-]", t) or not BLOCKING_TAG.search(t):
                 continue
             n += 1
             d["items"].append({"id": "N%d" % n, "text": t, "open": True})

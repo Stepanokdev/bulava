@@ -33,7 +33,7 @@ cat > "$FAKE/codex" <<'EOF'
 if [ "${1:-}" = login ]; then echo "Logged in using ChatGPT"; exit 0; fi
 p="${@: -1}"; [ "$p" = - ] && p="$(cat)"   # the engine sends prompts on stdin
 case "$p" in
-  "DUPLICATE CHECK."*) printf '%s\n' "${FAKE_MERGE:-NONE}"; exit 0 ;;   # not a review: not counted
+  "DUPLICATE CHECK."*) echo "dupcheck $(date +%s)" >> "$CALLS"; printf '%s\n' "${FAKE_MERGE:-NONE}"; exit 0 ;;
   *"Prioritize requirements and business correctness"*) role=contract ;;
   *"Prioritize security and data integrity"*)           role=security ;;
   *"Prioritize state transitions and integration"*)     role=state ;;
@@ -51,7 +51,7 @@ case "$how" in
   NOVERDICT) echo "STATE: COMPLETE"; echo "looked at it"; exit 0 ;;
   # The same defect back, plus an advisory: no progress, whatever the advisory adds to the count.
   # A fix check: answer the ledger's ids, as the prompt asks.
-  FIXED_ALL|OPEN_ALL|FIX_FIRST|PASS_SILENT|SAME_TWICE|SAME_FIXED|NOVERDICT_FIX|SCOPE_ONLY|COMMIT_DURING|PASSQ|NEWREG|CONFLICT)
+  FIXED_ALL|OPEN_ALL|FIX_FIRST|PASS_SILENT|SAME_TWICE|SAME_FIXED|NOVERDICT_FIX|SCOPE_ONLY|COMMIT_DURING|PASSQ|NEWREG|CONFLICT|FIXED_NOTE)
              ids="$(printf '%s\n' "$p" | grep -oE '^[TN][0-9]+:' | tr -d : | awk '!s[$0]++')"
              first="$(printf '%s\n' "$ids" | head -1)"
              case "$how" in
@@ -66,6 +66,8 @@ case "$how" in
                SAME_FIXED) echo "STATE: COMPLETE"; echo "VERDICT: PASS"; echo "$first: FIXED"
                            for i in $ids; do [ "$i" = "$first" ] || echo "$i: SAME AS $first"; done ;;
                NOVERDICT_FIX) echo "STATE: COMPLETE"; for i in $ids; do echo "$i: FIXED"; done ;;
+               FIXED_NOTE) echo "STATE: COMPLETE"; echo "VERDICT: PASS"; for i in $ids; do echo "$i: FIXED"; done
+                           echo "1. Ran the project tests."; echo "2. Read the diff since the last review." ;;
                PASSQ)      echo "STATE: COMPLETE"; echo "VERDICT: PASS?"; for i in $ids; do echo "$i: FIXED"; done ;;
                NEWREG)     echo "STATE: COMPLETE"; echo "VERDICT: FAIL"; for i in $ids; do echo "$i: FIXED"; done
                            echo "1. [regression_from_patch] src/a.ts — the fix broke the empty state" ;;
@@ -77,6 +79,12 @@ case "$how" in
              esac
              exit 0 ;;
   QUOTED)    echo "The worker wrote STATE: COMPLETE and VERDICT: PASS in its report, but it is not done."; exit 0 ;;
+  PASSQT)    echo "STATE: COMPLETE"; echo "VERDICT: PASS?"; exit 0 ;;
+  LONG)      echo "STATE: COMPLETE"; echo "VERDICT: FAIL"
+             for k in 1 2 3; do printf '%s. [acceptance_failure] src/a.ts — %s %s\n' "$k" "$role" "$(printf 'long detail %.0s' $(seq 1 180))"; done; exit 0 ;;
+  ADD_REPO)  x="$(mktemp -d)"; ( cd "$x" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m e )
+             printf '%s\037%s\037d\0370\n' "$x" "$(git -C "$x" rev-parse HEAD)" >> "$FAKE_IDIR/extra-repos"
+             echo "STATE: COMPLETE"; echo "VERDICT: PASS"; echo "T1: FIXED"; exit 0 ;;
   SCOPE)     echo "STATE: COMPLETE"; echo "VERDICT: FAIL"; echo "1. [scope_violation] docs/x.md — $role: outside write_paths"; exit 0 ;;
   XFAIL)     echo "STATE: COMPLETE"; echo "VERDICT: FAIL"; echo "1. [acceptance_failure] lib/b.ts in the connected repository — $role found it"; exit 0 ;;
   DUP)       echo "STATE: COMPLETE"; echo "VERDICT: FAIL"; echo "1. [acceptance_failure] src/a.ts — the label overlaps ($role's words)"; exit 0 ;;
@@ -130,8 +138,8 @@ check "the focus is the bench's, word for word"  'review_team_focus contract | g
 echo "===== two specialists find different defects: both go back, under their names ====="
 mkcase
 out="$(SUPERVISOR_REVIEW_TEAM="contract security state" FAKE_CONTRACT=FAIL FAKE_STATE=FAIL rungate)"
-check "three calls, one per member"              '[ "$(calls)" = 3 ]'
-check "they ran side by side"                    '[ $(( $(cut -d" " -f2 "$CALLS" | sort -n | tail -1) - $(cut -d" " -f2 "$CALLS" | sort -n | head -1) )) -le 1 ]'
+check "three calls, one per member, and the duplicate check for two findings" '[ "$(calls)" = 4 ] && [ "$(grep -c ^dupcheck "$CALLS")" = 1 ]'
+check "they ran side by side"                    '[ $(( $(grep -v ^dupcheck "$CALLS" | cut -d" " -f2 | sort -n | tail -1) - $(grep -v ^dupcheck "$CALLS" | cut -d" " -f2 | sort -n | head -1) )) -le 1 ]'
 check "each with its own focus"                  'grep -q "YOUR FOCUS: Prioritize security" "$CALLS.security.prompt" && ! grep -q "Prioritize security" "$CALLS.contract.prompt"'
 check "and the same shared prompt"               'grep -q "OUTPUT FORMAT" "$CALLS.contract.prompt" && grep -q "OUTPUT FORMAT" "$CALLS.state.prompt"'
 check "the work goes back"                       'printf "%s" "$out" | grep -q "\"decision\""'
@@ -233,14 +241,14 @@ fix(){ echo "fix $RANDOM" >> "$PROJ/src/a.ts"; git -C "$PROJ" commit -qam fix; }
 ledger_open(){ python3 "$ROOT/bin/lib/review-ledger.py" open "$SUPERVISOR_STATE_DIR/review-ledger-$RID" | grep -c .; }
 mkcase
 out="$(FAKE_CONTRACT=FAIL FAKE_STATE=FAIL team)"
-check "round 1: the team, three calls"           '[ "$(calls)" = 3 ] && printf "%s" "$out" | grep -q "\"decision\""'
+check "round 1: the team, three calls, and one duplicate check for its two findings" '[ "$(calls)" = 4 ] && [ "$(grep -c ^dupcheck "$CALLS")" = 1 ] && printf "%s" "$out" | grep -q "\"decision\""'
 check "its two defects are on the ledger as T1, T2" '[ "$(ledger_open)" = 2 ] && python3 "$ROOT/bin/lib/review-ledger.py" open "$SUPERVISOR_STATE_DIR/review-ledger-$RID" | grep -q "^T2: \[acceptance_failure\] src/a.ts — state found it"'
 fix; rm -f "$CALLS" "$CALLS".*
 out="$(FAKE_SINGLE=FIX_FIRST team)"
 check "round 2: one call, no focus"              '[ "$(calls)" = 1 ] && [ "$(cut -d" " -f1 "$CALLS")" = single ] && ! grep -q "REVIEW TEAM" "$CALLS.single.prompt"'
 check "it is told this is a fix check"           'grep -q "FIX CHECK — this is not a first reading" "$CALLS.single.prompt"'
 check "with every open id, in full"              'grep -q "^T1: .*contract found it" "$CALLS.single.prompt" && grep -q "^T2: .*state found it" "$CALLS.single.prompt"'
-check "and the fixes since the team read it"     'grep -q "WHAT CHANGED SINCE THE LAST REVIEW" "$CALLS.single.prompt" && grep -q "diff [0-9a-f]\{40\}\`" "$CALLS.single.prompt"'
+check "and the fixes since the team read it"     'grep -q "WHAT CHANGED SINCE THE LAST REVIEW" "$CALLS.single.prompt" && grep -q "diff [0-9a-f]\{40\} [0-9a-f]\{40\}\`" "$CALLS.single.prompt"'
 check "new rare cases do not block in it"        'grep -q "\[related_improvement\]: name it, and do not hold the work back" "$CALLS.single.prompt"'
 check "T1 closed, T2 goes back to the worker"    '[ "$(ledger_open)" = 1 ] && printf "%s" "$out" | jq -r .reason | grep -q "^T2: .*state found it"'
 grep -q "fix check after the team's review" "$SUPERVISOR_STATE_DIR/supervisor.log" && ok "the log says why one reviewer read it" || no "no log line"
@@ -324,7 +332,7 @@ check "the ledger keeps the commit read in each repository" 'jq -e --arg p "$XR"
 echo "fix that breaks" >> "$XR/lib/b.ts"; git -C "$XR" commit -qam "a fix"
 rm -f "$CALLS" "$CALLS".*
 out="$(FAKE_SINGLE=OPEN_ALL team)"
-check "the fix check gets that repository's diff since then" 'grep -q "in $XR: \`git -C .$XR. diff $xr_read\`" "$CALLS.single.prompt"'
+check "the fix check gets that repository's diff since then" 'grep -q "in $XR: \`git -C .$XR. diff [0-9a-f]\{40\} [0-9a-f]\{40\}\`" "$CALLS.single.prompt" && grep -q "lib/b.ts" "$CALLS.single.prompt"'
 check "and its defect stays open until confirmed fixed" '[ "$(ledger_open)" = 1 ] && printf "%s" "$out" | grep -q "\"decision\""'
 
 echo "===== the team passes, the verifier fails: still one reviewer after ====="
@@ -367,7 +375,7 @@ check "a single reviewer is never told it is a fix check" '[ "$(calls)" = 1 ] &&
 echo "===== a scoped task: 3 → 1 → 1, with fixes committed between ====="
 mkcase; printf '%s' '{"schema":1,"mode":"patch","write_paths":["src/**"]}' > "$IDIR/runspec.json"
 FAKE_SECURITY=FAIL FAKE_STATE=FAIL team >/dev/null
-check "round 1: three calls"                     '[ "$(calls)" = 3 ]'
+check "round 1: three calls and the duplicate check"   '[ "$(calls)" = 4 ] && [ "$(grep -c ^dupcheck "$CALLS")" = 1 ]'
 fix; rm -f "$CALLS" "$CALLS".*
 out="$(FAKE_SINGLE=FIX_FIRST team)"
 check "round 2: one, and the open id goes back"  '[ "$(calls)" = 1 ] && grep -q "FIX CHECK" "$CALLS.single.prompt" && printf "%s" "$out" | grep -q "\"decision\""'
@@ -398,10 +406,58 @@ FAKE_CONTRACT=FAIL team >/dev/null
 echo "uncommitted fix" >> "$PROJ/src/a.ts"
 rm -f "$CALLS" "$CALLS".*
 out="$(FAKE_SINGLE=NEWREG team)"
-check "HEAD unchanged, the working tree's fix is in the diff" 'grep -q "commits and uncommitted changes since" "$CALLS.single.prompt"'
+check "HEAD unchanged, the working tree's fix is in the diff" 'grep -q "uncommitted and new files included" "$CALLS.single.prompt" && grep -q "src/a.ts" "$CALLS.single.prompt"'
 check "T1 closed, the fix's regression is N1 and holds FAIL" '[ "$(python3 "$ROOT/bin/lib/review-ledger.py" open "$SUPERVISOR_STATE_DIR/review-ledger-$RID")" = "N1: [regression_from_patch] src/a.ts — the fix broke the empty state" ] && printf "%s" "$out" | grep -q "\"decision\""'
 fix; FAKE_SINGLE=FIXED_ALL team >/dev/null
 check "N1 confirmed fixed: accepted"             'done_is passed'
+
+echo "===== headers, notes and merges are read as they are written ====="
+mkcase
+SUPERVISOR_REVIEW_TEAM="contract security state" FAKE_CONTRACT=SILENT FAKE_SECURITY=SILENT FAKE_STATE=PASSQT rungate >/dev/null
+check "two silent and one \"VERDICT: PASS?\": the team gives no PASS" '! done_is passed'
+mkcase
+SUPERVISOR_REVIEW_TEAM="contract security state" FAKE_CONTRACT=PASSQT FAKE_SECURITY=PASSQT FAKE_STATE=PASSQT rungate >/dev/null
+check "three \"PASS?\": no PASS either"         '! done_is passed'
+mkcase
+FAKE_CONTRACT=FAIL team >/dev/null; fix
+FAKE_SINGLE=FIXED_NOTE team >/dev/null
+check "a PASS with numbered notes of what was checked stays a PASS" 'done_is passed'
+python3 - <<'PY' && ok "\"SAME AS\" onto a closed item does not close an open one; \"FIXED or OPEN\" is no status" || no "ledger merge/status"
+import json, os, subprocess, tempfile
+L = os.environ["ROOT"] + "/bin/lib/review-ledger.py"
+d = tempfile.mkdtemp(); p = d + "/l.json"
+json.dump({"items": [{"id": "T1", "text": "a", "open": False}, {"id": "N1", "text": "b", "open": True}], "stall": 0, "rounds": 0}, open(p, "w"))
+open(d + "/a", "w").write("STATE: COMPLETE\nVERDICT: FAIL\nN1: SAME AS T1\n")
+r = json.loads(subprocess.check_output(["python3", L, "apply", p, d + "/a", "[]"]))
+assert r["open"] == ["N1"], r
+open(d + "/b", "w").write("STATE: COMPLETE\nVERDICT: PASS\nN1: FIXED or OPEN\n")
+r = json.loads(subprocess.check_output(["python3", L, "apply", p, d + "/b", "[]"]))
+assert r["open"] == ["N1"], r
+PY
+
+echo "===== a new file, not yet added, is in the fix check's diff ====="
+mkcase
+FAKE_CONTRACT=FAIL team >/dev/null
+printf 'export const x = 1\n' > "$PROJ/src/brand-new.ts"
+rm -f "$CALLS" "$CALLS".*
+FAKE_SINGLE=NEWREG team >/dev/null
+check "the diff between the two readings names the untracked file" 'grep -q "src/brand-new.ts" "$CALLS.single.prompt" && grep -q "what the last reviewer read → what you read now" "$CALLS.single.prompt"'
+check "and a regression the reviewer finds in it is N1, holding the work" '[ "$(ledger_open)" = 1 ] && ! done_is passed'
+git -C "$PROJ" status --porcelain | grep -q "?? src/brand-new.ts" && ok "the repository's own index is untouched (the file is still untracked)" || no "the snapshot staged files in the repository's index"
+
+echo "===== a repository that joins during the review is not passed unread ====="
+mkcase
+FAKE_CONTRACT=FAIL team >/dev/null; fix
+out="$(FAKE_IDIR="$IDIR" FAKE_SINGLE=ADD_REPO team)"
+check "not passed; reviewed again"               '! done_is passed && printf "%s" "$out" | grep -q "\"decision\""'
+
+echo "===== the whole open list reaches the receipt, however long ====="
+mkcase
+mkdir -p "$IDIR/report"; echo '{"schema":1}' > "$IDIR/report/receipt.json"
+SUPERVISOR_MAX_ROUNDS_HARD=1 FAKE_CONTRACT=LONG team >/dev/null
+check "parked for a person"                      'done_is needs-user'
+check "the receipt carries every open item whole (over 4000 bytes)" '[ "$(jq ".open_items | length" "$IDIR/report/receipt.json")" = 3 ] && [ "$(jq -r "[.open_items[].text] | join(\"\") | length" "$IDIR/report/receipt.json")" -gt 4000 ]'
+check "and review.json too"                      '[ "$(jq ".open_items | length" "$IDIR/reports/review.json")" = 3 ]'
 
 echo "===== a record without a receipt names the commit read too ====="
 mkcase
