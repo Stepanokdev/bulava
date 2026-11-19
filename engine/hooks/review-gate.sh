@@ -339,6 +339,55 @@ A defect you did not raise last round is never [repeat], however close it sits i
 "
 fi
 
+# After the team (lib/review-team.sh) has read the change in full, the rounds that follow check its
+# list, with one reviewer.
+#
+# The team ran on every round. On a server (19 Nov) one attempt went 7 → 11 → 4 → 6
+# findings: each round the three of them dug somewhere new — a third shape zoomed in on, then
+# deleted; duplicate, delete, delete, undo — and the earlier items were mostly closed, so the run
+# never stalled and went on toward the ceiling. The team's value is the first full reading (72.5%
+# of planted defects against 61.8% for one reviewer); reading again from scratch every round only
+# finds the next rare case.
+#
+# What the team sent back becomes a ledger (lib/review-ledger.py): each blocking defect with an id
+# (T1, T2, ...) that the fix checks answer one by one, FIXED or OPEN, and an id left unanswered stays
+# open. Progress is an id closed, so one defect two members described closes once or not at all.
+# The ledger is written when a team round goes back to the worker — a FAIL, or a PASS the verifier
+# overturned — and goes with the review budget: a new request, a new task, a new piece, a pass.
+LEDGER_F="$STATE_DIR/review-ledger-$RUN_KEY"
+FIXCHECK=0; FIXCHECK_BLOCK=""
+if [ -f "$LEDGER_F" ]; then
+  FIXCHECK=1
+  PREVIOUS_BLOCK=""   # the ledger is the list now: complete, with ids, not the last answer clipped
+  _lopen="$(python3 "$BIN_DIR/lib/review-ledger.py" open "$LEDGER_F" 2>/dev/null)"
+  _lsha="$(jq -r '.sha // ""' "$LEDGER_F" 2>/dev/null)"
+  _lsince=""
+  if [ -n "$_lsha" ] && git -C "$cwd" cat-file -e "$_lsha^{commit}" 2>/dev/null; then
+    _lsince="
+WHAT CHANGED SINCE THE LAST REVIEW: \`git diff $_lsha\` in the project (the fixes). In short:
+$(git -C "$cwd" diff --stat "$_lsha" 2>/dev/null | tail -40)
+"
+  fi
+  FIXCHECK_BLOCK="
+FIX CHECK — this is not a first reading. A team of specialist reviewers has already read this change
+in full and sent it back. This round:
+  1. check each open item below, by its id;
+  2. check whether the changes made since then broke something that worked ([regression_from_patch]).
+OPEN ITEMS (stable ids; every one must be answered):
+${_lopen:-(none: the team passed the change, but the machine checks in the evidence below failed — check those)}
+${_lsince}
+Right after the header lines, answer every id above on a line of its own, exactly:
+  T1: FIXED
+  T2: OPEN — what is still wrong and what done looks like
+An id you do not answer counts as still open. VERDICT: PASS needs every id FIXED.
+Then, only if there are any, a numbered list of NEW defects — ones not on the list above. A new defect
+blocks only if a person meets it on the ordinary path of this task, it loses their data, or the fixes
+introduced it; anything else you notice — another rare combination, one more edge case, polish — is
+[related_improvement]: name it, and do not hold the work back for it. Do not read the whole change
+again looking for new depth; the full reading is done.
+"
+fi
+
 CHALLENGE_BLOCK=""
 CRITERIA_LINE_SPEC=""
 if [ -n "$CHALLENGES_TEXT" ]; then
@@ -540,6 +589,12 @@ restamp_receipt() {  # $1 = passed | debt | needs-user | scope_violation
   local repos
   repos="$(repos_state_json "$idir" "$(run_project_dir "$idir" "${cwd:-$PWD}")" 2>/dev/null)"
   case "$repos" in '['*) ;; *) repos='[]' ;; esac
+  # The commit the reviewer read, not whatever HEAD is by the time the receipt is written.
+  case "${REVIEW_SNAPSHOT:-}" in
+    '['*) repos="$(jq -c --argjson snap "$REVIEW_SNAPSHOT" \
+             'map(. as $r | .reviewed_sha = ((first($snap[] | select(.path == $r.path) | .reviewed_sha)) // $r.reviewed_sha))' \
+             <<<"$repos" 2>/dev/null || printf '%s' "$repos")" ;;
+  esac
   jq -c --arg rv "$review" --arg why "$why" --argjson f "${findings:-[]}" --argjson repos "$repos" \
         --argjson cx "${CODEX_PART:-null}" --argjson awn "$awn" \
         --arg at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
@@ -807,7 +862,8 @@ if [ -n "${IDIR_SCOPE:-}" ] && [ "${PLAIN_RUN:-0}" = 0 ] && _pc_open="$(piece_op
   # Judged by other rules than the last round (lib/pieces.sh): the count of findings starts again,
   # the rounds spent do not.
   if piece_contract_changed "$IDIR_SCOPE" "$cwd" && [ -f "$STATE_DIR/rounds-meta-$RUN_KEY" ]; then
-    rm -f "$STATE_DIR/rounds-meta-$RUN_KEY" "$STATE_DIR/rounds-findings-$RUN_KEY" 2>/dev/null || true
+    rm -f "$STATE_DIR/rounds-meta-$RUN_KEY" "$STATE_DIR/rounds-findings-$RUN_KEY" "$LEDGER_F" 2>/dev/null || true
+    FIXCHECK=0; FIXCHECK_BLOCK=""
     log "long project: piece judged by changed rules (specification) — stall baseline starts again"
   fi
 fi
@@ -1274,6 +1330,26 @@ review_call() {   # $1=prompt [$2=1 to let Codex search the web]
   [ -n "${IDIR_SCOPE:-}" ] && cp -f "$_err" "$IDIR_SCOPE/review-stderr.log" 2>/dev/null
   rm -f "$_err" 2>/dev/null
   return 0
+}
+
+# The commit of every repository of the run, as [{path, reviewed_sha}]: what a reviewer reads.
+review_snapshot() {
+  if [ -n "${IDIR_SCOPE:-}" ]; then
+    repos_state_json "$IDIR_SCOPE" "$(run_project_dir "$IDIR_SCOPE" "$cwd")" 2>/dev/null \
+      | jq -c '[.[] | {path, reviewed_sha}]' 2>/dev/null
+  else
+    jq -nc --arg p "$cwd" --arg h "$(git -C "$cwd" rev-parse HEAD 2>/dev/null || true)" '[{path:$p, reviewed_sha:$h}]'
+  fi
+}
+
+# The numbered defects of this review that can hold the work back: not the advisory ones
+# ([related_improvement], [pre_existing]) and not the tooling's ([harness_failure]). Progress is
+# measured on these alone. Counting every numbered line made a list padded with advisories — and a
+# team's three lists one under another — a total that the [repeat]s of the next round could never
+# reach, so a run whose old defects all came back still read as progressing.
+blocking_findings() {
+  printf '%s\n' "$review" | grep -E '^[[:space:]]*[0-9]+[.)]' 2>/dev/null \
+    | grep -vE '\[(related_improvement|pre_existing|harness_failure)\]' || true
 }
 
 # The final code review by a team (lib/review-team.sh): each member a full review call with a focus of
@@ -1827,7 +1903,7 @@ ${CONTRACT_TEXT:-(no acceptance contract recorded for this run)}
 
 AGREED PLAN (pre-flight notes, if any — context, not the contract):
 ${PLAN_TEXT:-(no plan)}
-${OWED_BLOCK}${FINDINGS_BLOCK}${PREVIOUS_BLOCK}${CHALLENGE_BLOCK}
+${OWED_BLOCK}${FINDINGS_BLOCK}${PREVIOUS_BLOCK}${FIXCHECK_BLOCK}${CHALLENGE_BLOCK}
 
 VERIFIER EVIDENCE (machine-collected by running real build/test/lint — this OUTRANKS any
 claim in the report; opinion is not evidence):
@@ -1889,7 +1965,7 @@ fi
 [ "${REVIEWER:-codex}" = claude ] && log "reviewing with Claude in Codex's place (director's decision)"
 # Checked BEFORE either reviewer: the stand-in takes broken text without complaint, so a check
 # that only Codex's parser made would let the same bytes through whenever Claude was reading.
-review_prompt_fit prompt persona PLAN_TEXT CONTRACT_TEXT CHALLENGES_TEXT CHALLENGE_BLOCK OWED_BLOCK FINDINGS_BLOCK \
+review_prompt_fit prompt persona PLAN_TEXT CONTRACT_TEXT CHALLENGES_TEXT CHALLENGE_BLOCK OWED_BLOCK FINDINGS_BLOCK FIXCHECK_BLOCK \
   last_msg recent_user_turns diff_summary verify_json verify_fail_logs
 # A team, when one is set (SUPERVISOR_REVIEW_TEAM) and Codex is the reviewer; the Claude stand-in reads
 # alone, as it always has. The pipeline the message went through has the last word when its review step
@@ -1898,13 +1974,40 @@ _pg_team="$(gate_opt .reviewTeam)"
 [ -n "$_pg_team" ] && SUPERVISOR_REVIEW_TEAM="$_pg_team"
 REVIEW_TEAM=""
 [ "${REVIEWER:-codex}" = codex ] && REVIEW_TEAM="$(review_team_members)"
+TEAM_ROUND=0
+if [ -n "$REVIEW_TEAM" ] && [ "$FIXCHECK" = 1 ]; then
+  log "fix check after the team's review: one reviewer checks its list ($(printf '%s' "$REVIEW_TEAM" | tr '\n' ' ' | sed 's/ $//') read it in full)"
+  REVIEW_TEAM=""
+fi
+# The commit(s) the reviewer is about to read. The verdict belongs to these and the receipt names
+# them (restamp_receipt); a commit that lands while the review runs was not read, and the verdict is
+# not taken for it.
+REVIEW_SNAPSHOT="$(review_snapshot)"
 if [ -n "$REVIEW_TEAM" ]; then
+  TEAM_ROUND=1
   log "review by a team: $(printf '%s' "$REVIEW_TEAM" | tr '\n' ' ')"
   review_team_call "$prompt"
 else
   review_call "$prompt"
 fi
 [ "$review_refused" = 1 ] && review_refused_park
+
+# A commit that landed while the reviewer read is not what it read. Nothing is decided on this
+# answer: the work is reviewed again as it now stands (twice in a row, and a person is asked).
+if [ -n "$REVIEW_SNAPSHOT" ] && [ "$(review_snapshot)" != "$REVIEW_SNAPSHOT" ]; then
+  _moved_f="$STATE_DIR/moved-$RUN_KEY"
+  _moved=$(( $(cat "$_moved_f" 2>/dev/null || echo 0) + 1 )); echo "$_moved" > "$_moved_f"
+  log "the commits changed while the review ran ($_moved) — the answer is not taken for them"
+  if [ "$_moved" -ge 2 ]; then
+    rm -f "$_moved_f" 2>/dev/null
+    mark_done needs-user "Код двічі змінювався, поки його читав рецензент — вердикт не можна привʼязати до жодного коміту"
+    exit 0
+  fi
+  jq -n --arg reason "🌙 Поки Codex читав роботу, у репозиторії зʼявився новий коміт, тож його вердикт не стосується того, що є зараз. Нічого не змінюй, поки йде перевірка; заверши знову, і роботу прочитають такою, як вона є." \
+    '{decision: "block", reason: $reason}'
+  exit 0
+fi
+rm -f "$STATE_DIR/moved-$RUN_KEY" 2>/dev/null || true
 
 # A call that failed has no verdict, whatever it managed to print on the way down.
 #
@@ -1920,8 +2023,9 @@ if [ "$review_rc" != 0 ] && [ -n "$review" ]; then
 fi
 
 review_head="$(printf '%s\n' "$review" | head -8)"
-state=$(printf '%s\n' "$review_head" | grep -m1 -oE 'STATE: *(COMPLETE|HANDOFF|BLOCKED)' | grep -oE 'COMPLETE|HANDOFF|BLOCKED' || echo "")
-verdict=$(printf '%s\n' "$review_head" | grep -m1 -oE 'VERDICT: *(PASS|FAIL)' | grep -oE 'PASS|FAIL' || echo "")
+# Header lines only: "STATE: COMPLETE" quoted inside a sentence is not the reviewer's state.
+state=$(printf '%s\n' "$review_head" | grep -m1 -oE '^[[:space:]*]*STATE: *(COMPLETE|HANDOFF|BLOCKED)' | grep -oE 'COMPLETE|HANDOFF|BLOCKED' || echo "")
+verdict=$(printf '%s\n' "$review_head" | grep -m1 -oE '^[[:space:]*]*VERDICT: *(PASS|FAIL)' | grep -oE 'PASS|FAIL' || echo "")
 # A reviewer that answered is a reviewer that was reachable, whatever it then said about the work.
 [ -n "$state" ] && rm -f "$STATE_DIR/unreachable-$RUN_KEY" 2>/dev/null || true
 # Who actually read it. A substitution nobody was told about is worse than the wall it went round,
@@ -1974,6 +2078,49 @@ if [ "$verify_status" = "fail" ] && [ "$state" = "COMPLETE" ] && [ "$verdict" = 
 
 [VERIFIER OVERRIDE] Обʼєктивна перевірка ПРОВАЛИЛАСЬ — заявлений критерій не збирається / не проходить тести. Це машинне свідчення, не думка. Логи збоїв:
 ${verify_fail_logs:-(див. evidence.json)}"
+fi
+
+# The ledger (see FIX CHECK above). A fix check's answer closes the ids it reports FIXED; an id it
+# leaves out stays open, and a PASS with one still open is asked again once, then is a FAIL. A team
+# round that goes back to the worker starts the ledger.
+LEDGER_STALL=0; LEDGER_OPEN=0
+if [ "$FIXCHECK" = 1 ] && [ "$state" = COMPLETE ] && [ -n "$verdict" ]; then
+  _rtmp="$(mktemp "${TMPDIR:-/tmp}/review-answer.XXXXXX")"; printf '%s\n' "$review" > "$_rtmp"
+  _unconf="$(python3 "$BIN_DIR/lib/review-ledger.py" unconfirmed "$LEDGER_F" "$_rtmp" 2>/dev/null)"
+  if [ "$verdict" = PASS ] && [ -n "$_unconf" ]; then
+    log "fix check passed without answering $_unconf — asked again"
+    _first_review="$review"
+    review_call "$prompt
+
+YOUR PREVIOUS ANSWER gave VERDICT: PASS but did not report these ids as FIXED: $_unconf. Answer again in
+full, in the OUTPUT FORMAT, with a line for every open id."
+    if [ "$review_rc" = 0 ] && [ -n "$review" ] \
+       && printf '%s\n' "$review" | head -8 | grep -qE '^[[:space:]*]*STATE: *COMPLETE'; then
+      verdict=$(printf '%s\n' "$review" | head -8 | grep -m1 -oE '^[[:space:]*]*VERDICT: *(PASS|FAIL)' | grep -oE 'PASS|FAIL' || echo FAIL)
+      printf '%s\n' "$review" > "$_rtmp"
+    else
+      review="$_first_review"; review_rc=0   # no usable second answer: the first one stands, ids unanswered stay open
+    fi
+  fi
+  _lres="$(python3 "$BIN_DIR/lib/review-ledger.py" apply "$LEDGER_F" "$_rtmp" "$(git -C "$cwd" rev-parse HEAD 2>/dev/null)" 2>/dev/null)"
+  rm -f "$_rtmp"
+  LEDGER_STALL="$(printf '%s' "$_lres" | jq -r '.stall // 0' 2>/dev/null)"; case "$LEDGER_STALL" in ''|*[!0-9]*) LEDGER_STALL=0 ;; esac
+  LEDGER_OPEN="$(printf '%s' "$_lres" | jq -r '.open | length' 2>/dev/null)"; case "$LEDGER_OPEN" in ''|*[!0-9]*) LEDGER_OPEN=0 ;; esac
+  log "fix check: closed $(printf '%s' "$_lres" | jq -r '.closed | join(",")' 2>/dev/null) · new $(printf '%s' "$_lres" | jq -r '.added | join(",")' 2>/dev/null) · open $LEDGER_OPEN · no progress $LEDGER_STALL/$SUPERVISOR_STALL_LIMIT"
+  if [ "$LEDGER_OPEN" -gt 0 ]; then
+    [ "$verdict" = PASS ] && log "fix check PASS with items still open — FAIL"
+    verdict=FAIL
+    review="$review
+
+STILL OPEN FROM THE REVIEW (fix each; ids are stable):
+$(python3 "$BIN_DIR/lib/review-ledger.py" open "$LEDGER_F" 2>/dev/null)"
+  fi
+fi
+if [ "${TEAM_ROUND:-0}" = 1 ] && [ "$state" = COMPLETE ] && [ "$verdict" = FAIL ]; then
+  _rtmp="$(mktemp "${TMPDIR:-/tmp}/review-answer.XXXXXX")"; printf '%s\n' "$review" > "$_rtmp"
+  _ln="$(python3 "$BIN_DIR/lib/review-ledger.py" init "$LEDGER_F" "$_rtmp" "$(jq -r '.[0].reviewed_sha // ""' <<<"${REVIEW_SNAPSHOT:-[]}" 2>/dev/null)" 2>/dev/null)"
+  rm -f "$_rtmp"
+  log "the team's review goes back: $_ln item(s) on the ledger — the next rounds are a fix check by one reviewer"
 fi
 
 if [ -z "$review" ] || [ -z "$state" ]; then
@@ -2112,6 +2259,7 @@ fi
 
 if [ "$verdict" = "FAIL" ]; then
   acc=$(printf '%s\n' "$review" | grep -cE '\[acceptance_failure\]|\[regression_from_patch\]')
+  acc=$((acc + LEDGER_OPEN))   # an item still open on the ledger is a blocking defect
   scope=$(printf '%s\n' "$review" | grep -cE '\[scope_violation\]')
   harness=$(printf '%s\n' "$review" | grep -cE '\[harness_failure\]')
 
@@ -2164,6 +2312,7 @@ if [ "$verdict" = "FAIL" ]; then
 
 [GATE OVERRIDE] Усі зауваження поза межами поточного запиту й не блокують його приймання."
       emit_review_json COMPLETE PASS passed "$review"
+      rm -f "$LEDGER_F" 2>/dev/null || true
       log "advisory-only FAIL overridden to task PASS"
       piece_after_pass && exit 0
       mark_done passed; exit 0
@@ -2205,14 +2354,19 @@ if [ "$verdict" = "FAIL" ]; then
     _rmeta="$STATE_DIR/remed-meta-$RUN_KEY"
     _rprev=$(cut -d' ' -f1 "$_rmeta" 2>/dev/null); [ -n "$_rprev" ] || _rprev=999999
     _rstall=$(cut -d' ' -f2 "$_rmeta" 2>/dev/null); [ -n "$_rstall" ] || _rstall=0
-    _rfind=$(printf '%s\n' "$review" | grep -cE '^[[:space:]]*[0-9]+[.)]' 2>/dev/null || echo 1)
-    _rrep=$(printf '%s\n' "$review" | grep -E '^[[:space:]]*[0-9]+[.)]' 2>/dev/null | grep -c '\[repeat\]' || true)
-    case "$_rrep" in ''|*[!0-9]*) _rrep=0 ;; esac
-    if [ "$_rprev" -ge 999999 ] || [ "$_rrep" -lt "$_rprev" ]; then _rstall=0; else _rstall=$((_rstall + 1)); fi
-    printf '%s %s\n' "$_rfind" "$_rstall" > "$_rmeta"
-    # What the reviewer asked for, shown to it next round so a defect that came back is marked [repeat].
-    printf '%s\n' "$review" | grep -E '^[[:space:]]*[0-9]+[.)]' > "$STATE_DIR/rounds-findings-$RUN_KEY" 2>/dev/null || true
-    if [ "$remediations" -ge 1 ] && [ "$_rstall" -ge "$SUPERVISOR_STALL_LIMIT" ]; then
+    # A round with no blocking finding (only the tooling's failures) says nothing about progress:
+    # the count and the list from before stay, so the next round still checks them.
+    if [ -n "$(blocking_findings)" ]; then
+      _rfind=$(blocking_findings | grep -c . || true); case "$_rfind" in ''|*[!0-9]*|0) _rfind=1 ;; esac
+      _rrep=$(blocking_findings | grep -c '\[repeat\]' || true)
+      case "$_rrep" in ''|*[!0-9]*) _rrep=0 ;; esac
+      if [ "$_rprev" -ge 999999 ] || [ "$_rrep" -lt "$_rprev" ]; then _rstall=0; else _rstall=$((_rstall + 1)); fi
+      printf '%s %s\n' "$_rfind" "$_rstall" > "$_rmeta"
+      # What the reviewer asked for, shown to it next round so a defect that came back is marked [repeat].
+      blocking_findings > "$STATE_DIR/rounds-findings-$RUN_KEY" 2>/dev/null || true
+    fi
+    if { [ "$remediations" -ge 1 ] && [ "$_rstall" -ge "$SUPERVISOR_STALL_LIMIT" ]; } \
+       || { [ "$LEDGER_OPEN" -gt 0 ] && [ "$LEDGER_STALL" -ge "$SUPERVISOR_STALL_LIMIT" ]; }; then
       emit_review_json COMPLETE FAIL needs-user "$review"
       log "bounded: the same findings came back for $_rstall rounds — stalled, returning to operator"
       mark_done needs-user; exit 0
@@ -2242,29 +2396,43 @@ $review
 
   next=$((rounds + 1)); echo "$next" > "$rounds_file"
 
-  findings=$(printf '%s\n' "$review" | grep -cE '^[[:space:]]*[0-9]+[.)]' 2>/dev/null || echo 1)
-  [ "${findings:-0}" -lt 1 ] && findings=1
+  findings=$(blocking_findings | grep -c . || true); case "$findings" in ''|*[!0-9]*) findings=0 ;; esac
   meta_file="$STATE_DIR/rounds-meta-$RUN_KEY"
   prev_findings=$(cut -d' ' -f1 "$meta_file" 2>/dev/null); [ -n "$prev_findings" ] || prev_findings=999999
   stall=$(cut -d' ' -f2 "$meta_file" 2>/dev/null); [ -n "$stall" ] || stall=0
   # No progress is the same defect coming back, not the same number of defects: a round makes
-  # progress when at least one thing the reviewer asked for last time is gone.
-  repeats=$(printf '%s\n' "$review" | grep -E '^[[:space:]]*[0-9]+[.)]' 2>/dev/null | grep -c '\[repeat\]' || true)
+  # progress when at least one thing the reviewer asked for last time is gone. A round with no
+  # blocking finding (only the tooling's failures) says nothing either way: the count and the list
+  # from before stay, so the next round still checks them.
+  repeats=$(blocking_findings | grep -c '\[repeat\]' || true)
   case "$repeats" in ''|*[!0-9]*) repeats=0 ;; esac
-  if [ "$prev_findings" -ge 999999 ] || [ "$repeats" -lt "$prev_findings" ]; then stall=0; else stall=$((stall + 1)); fi
-  printf '%s %s\n' "$findings" "$stall" > "$meta_file"
-  printf '%s\n' "$review" | grep -E '^[[:space:]]*[0-9]+[.)]' > "$STATE_DIR/rounds-findings-$RUN_KEY" 2>/dev/null || true
+  if [ "$findings" -gt 0 ]; then
+    if [ "$prev_findings" -ge 999999 ] || [ "$repeats" -lt "$prev_findings" ]; then stall=0; else stall=$((stall + 1)); fi
+    printf '%s %s\n' "$findings" "$stall" > "$meta_file"
+    blocking_findings > "$STATE_DIR/rounds-findings-$RUN_KEY" 2>/dev/null || true
+  fi
+  [ "${findings:-0}" -lt 1 ] && findings=1
   _prev="$prev_findings"; [ "$_prev" -ge 999999 ] 2>/dev/null && _prev=""
   note_progress review "$next" "$MAX_ROUNDS" "$findings" "$_prev" "$stall" "$SUPERVISOR_STALL_LIMIT"
   log "round $next FAIL: findings=$findings repeats=$repeats prev=$prev_findings stall=$stall/$SUPERVISOR_STALL_LIMIT"
 
   stalled=0
   [ "$stall" -ge "$SUPERVISOR_STALL_LIMIT" ] && [ "$next" -ge "$SUPERVISOR_MAX_ROUNDS" ] && stalled=1
+  # In a fix check the ledger says it: no id closed for STALL_LIMIT rounds. The base patience is for
+  # a reviewer still reading the work; the team has read it, and waiting longer only spends rounds.
+  if [ "$LEDGER_OPEN" -gt 0 ] && [ "$LEDGER_STALL" -ge "$SUPERVISOR_STALL_LIMIT" ]; then stalled=1; stall="$LEDGER_STALL"; fi
 
   if [ "$stalled" = 1 ]; then
     { echo ""; echo "## $(date '+%F %T') — session $session_id (stalled: $findings findings, no progress for $stall rounds)"; \
       echo "$review"; } | legacy_note "$BLOCKED_OUT" BLOCKED.md
+    emit_review_json COMPLETE FAIL needs-user "$review"
     log "FAIL stalled at round $next ($stall no-progress rounds) — parking as needs-user"
+    mark_done needs-user
+    exit 0
+  fi
+  if [ "$next" -ge "$SUPERVISOR_MAX_ROUNDS_HARD" ] && [ "$LEDGER_OPEN" -gt 0 ]; then
+    emit_review_json COMPLETE FAIL needs-user "$review"
+    log "FAIL at hard ceiling ($next) with $LEDGER_OPEN item(s) still open — parking as needs-user"
     mark_done needs-user
     exit 0
   fi
@@ -2328,14 +2496,14 @@ if [ "$BOUNDED" = 1 ]; then
     exit 0
   fi
   emit_review_json COMPLETE PASS passed "$review"
-  rm -f "$rounds_file" "$remed_file" "$STATE_DIR/remed-meta-$RUN_KEY" "$harness_file" 2>/dev/null || true
+  rm -f "$rounds_file" "$remed_file" "$STATE_DIR/remed-meta-$RUN_KEY" "$harness_file" "$LEDGER_F" 2>/dev/null || true
   log "bounded PASS — task accepted"
   piece_after_pass && exit 0
   mark_done passed
   exit 0
 fi
 
-rm -f "$rounds_file" "$STATE_DIR/rounds-meta-$RUN_KEY" "$STATE_DIR/rounds-findings-$RUN_KEY" "$remed_file" "$STATE_DIR/remed-meta-$RUN_KEY" "$harness_file" "$STATE_DIR/handoffs-$RUN_KEY"
+rm -f "$rounds_file" "$STATE_DIR/rounds-meta-$RUN_KEY" "$STATE_DIR/rounds-findings-$RUN_KEY" "$remed_file" "$STATE_DIR/remed-meta-$RUN_KEY" "$harness_file" "$STATE_DIR/handoffs-$RUN_KEY" "$LEDGER_F"
 log "targeted review PASS (state=COMPLETE); verify=$verify_status"
 if [ "${verify_status:-}" = inconclusive ]; then
   emit_review_json COMPLETE FAIL debt "$review"

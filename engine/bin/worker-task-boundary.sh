@@ -42,6 +42,9 @@ thread_boundary "$IDIR" "$WANT" "$WHY" || { echo "could not change the task boun
 # A long project's plan kept with the run belongs to the task that made it. Left in place, the gate
 # keeps holding the new task to the old plan's open piece, and the worker cannot get out of it.
 [ "$WANT" = new ] && pieces_set_aside "$IDIR"
+# A new task starts its review afresh: its own budget, its own findings, and a full read by the
+# review team rather than a check against the old task's list.
+[ "$WANT" = new ] && reset_review_budget "$IDIR" "нова задача"
 journal_event "$IDIR" task-boundary "$WANT: $(printf '%s' "$WHY" | clip_utf8 160)" '{"source":"worker"}'
 echo "$(date '+%F %T') [task-boundary] $WANT — $(printf '%s' "$WHY" | clip_utf8 120)" >> "$SUP_STATE/supervisor.log"
 

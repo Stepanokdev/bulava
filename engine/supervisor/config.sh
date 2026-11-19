@@ -4,6 +4,9 @@
 # publication audit must not read it as a client's name — and that answer cannot come from the
 # parent directory, which is whatever folder the engine was exported into.
 : "${SUPERVISOR_PRODUCT_NAME:=Night Shift}"
+# The author's own names, read the same way: the public repository is github.com/Stepanokdev/bulava,
+# so a folder of the author's named after him (a personal site, say) is the publisher, not a client.
+: "${SUPERVISOR_OWN_NAMES:=Stepanok}"
 
 # A server: the engine inside a VM that a bridge feeds from a tracker, with nobody at a terminal and
 # no Mac app beside it. One switch, set by whoever runs the service (the systemd unit), and nothing

@@ -1223,7 +1223,8 @@ def cmd_doctor_server(args):
     team = list(dict.fromkeys(team))
     add("engine.review_team", "ok",
         {"enabled": len(team) >= 2, "members": team if len(team) >= 2 else [],
-         "calls_per_round": len(team) if len(team) >= 2 else 1})
+         # The team reads the first round; the rounds after it check its list with one reviewer.
+         "calls_per_round": len(team) if len(team) >= 2 else 1, "calls_later_rounds": 1})
 
     # sign-in
     if shutil.which("claude"):

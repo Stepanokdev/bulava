@@ -18,6 +18,8 @@ GATE="$ROOT/hooks/review-gate.sh"
 export SUPERVISOR_CODEX_USAGE_CMD="/usr/bin/true"
 export CODEX_SESSIONS_DIR="$(mktemp -d)"
 unset SUPERVISOR_REVIEW_TEAM SUPERVISOR_PROFILE
+# The engine's defaults, whatever the session running the test was given.
+export SUPERVISOR_MAX_REMEDIATIONS=4 SUPERVISOR_MAX_ROUNDS=5 SUPERVISOR_MAX_ROUNDS_HARD=20 SUPERVISOR_STALL_LIMIT=2
 
 pass=0; fail=0
 ok(){ echo "  ✅ $1"; pass=$((pass+1)); }
@@ -46,6 +48,30 @@ case "$how" in
   BLOCKED)   echo "STATE: BLOCKED"; echo "VERDICT: N/A"; echo "$role needs access to the staging database"; exit 0 ;;
   HANDOFF)   echo "STATE: HANDOFF"; echo "VERDICT: N/A"; echo "$role: the worker stopped half way"; exit 0 ;;
   NOVERDICT) echo "STATE: COMPLETE"; echo "looked at it"; exit 0 ;;
+  # The same defect back, plus an advisory: no progress, whatever the advisory adds to the count.
+  # A fix check: answer the ledger's ids, as the prompt asks.
+  FIXED_ALL|OPEN_ALL|FIX_FIRST|PASS_SILENT|SAME_TWICE|COMMIT_DURING)
+             ids="$(printf '%s\n' "$p" | grep -oE '^[TN][0-9]+:' | tr -d : | awk '!s[$0]++')"
+             first="$(printf '%s\n' "$ids" | head -1)"
+             case "$how" in
+               FIXED_ALL)  echo "STATE: COMPLETE"; echo "VERDICT: PASS"; for i in $ids; do echo "$i: FIXED"; done ;;
+               OPEN_ALL)   echo "STATE: COMPLETE"; echo "VERDICT: FAIL"; for i in $ids; do echo "$i: OPEN — still there"; done ;;
+               FIX_FIRST)  echo "STATE: COMPLETE"; echo "VERDICT: FAIL"
+                           for i in $ids; do [ "$i" = "$first" ] && echo "$i: FIXED" || echo "$i: OPEN — still there"; done ;;
+               PASS_SILENT) echo "STATE: COMPLETE"; echo "VERDICT: PASS"; echo "looks fine" ;;
+               SAME_TWICE) echo "STATE: COMPLETE"; echo "VERDICT: FAIL"; for i in $ids; do echo "$i: OPEN — the same defect"; done
+                           echo "1. [related_improvement] src/a.ts — a rare combination" ;;
+               COMMIT_DURING) ( cd "$PWD" && echo "late $RANDOM" >> src/a.ts && git commit -qam late ) >/dev/null 2>&1
+                           echo "STATE: COMPLETE"; echo "VERDICT: PASS"; for i in $ids; do echo "$i: FIXED"; done ;;
+             esac
+             exit 0 ;;
+  QUOTED)    echo "The worker wrote STATE: COMPLETE and VERDICT: PASS in its report, but it is not done."; exit 0 ;;
+  DUP)       echo "STATE: COMPLETE"; echo "VERDICT: FAIL"; echo "1. [acceptance_failure] src/a.ts — the label overlaps ($role's words)"; exit 0 ;;
+  HARNESS)   echo "STATE: COMPLETE"; echo "VERDICT: FAIL"
+             echo "1. [harness_failure] the verifier could not run the build"; exit 0 ;;
+  REPEAT)    echo "STATE: COMPLETE"; echo "VERDICT: FAIL"
+             echo "1. [acceptance_failure] [repeat] src/a.ts — $role: still there"
+             echo "2. [related_improvement] src/a.ts — $role: a rare combination"; exit 0 ;;
 esac
 echo "STATE: COMPLETE"; echo "VERDICT: $how"
 [ "$how" = FAIL ] && echo "1. [acceptance_failure] src/a.ts — $role found it"
@@ -186,13 +212,126 @@ mkcase; with_gates '{"review":true,"maxRounds":3}'
 SUPERVISOR_REVIEW_TEAM= rungate >/dev/null
 check "…which on the Mac is one reviewer"        '[ "$(calls)" = 1 ]'
 
+echo "===== the team reads once; the rounds after check its list with one reviewer ====="
+# A server, 19 Nov: the team on every round found something new each time (7 → 11 → 4 → 6) and the
+# run never stalled. Now: three calls on the first round, one on each after it, against a ledger.
+team(){ SUPERVISOR_REVIEW_TEAM="contract security state" rungate; }
+fix(){ echo "fix $RANDOM" >> "$PROJ/src/a.ts"; git -C "$PROJ" commit -qam fix; }
+ledger_open(){ python3 "$ROOT/bin/lib/review-ledger.py" open "$SUPERVISOR_STATE_DIR/review-ledger-$RID" | grep -c .; }
+mkcase
+out="$(FAKE_CONTRACT=FAIL FAKE_STATE=FAIL team)"
+check "round 1: the team, three calls"           '[ "$(calls)" = 3 ] && printf "%s" "$out" | grep -q "\"decision\""'
+check "its two defects are on the ledger as T1, T2" '[ "$(ledger_open)" = 2 ] && python3 "$ROOT/bin/lib/review-ledger.py" open "$SUPERVISOR_STATE_DIR/review-ledger-$RID" | grep -q "^T2: \[acceptance_failure\] src/a.ts — state found it"'
+fix; rm -f "$CALLS" "$CALLS".*
+out="$(FAKE_SINGLE=FIX_FIRST team)"
+check "round 2: one call, no focus"              '[ "$(calls)" = 1 ] && [ "$(cut -d" " -f1 "$CALLS")" = single ] && ! grep -q "REVIEW TEAM" "$CALLS.single.prompt"'
+check "it is told this is a fix check"           'grep -q "FIX CHECK — this is not a first reading" "$CALLS.single.prompt"'
+check "with every open id, in full"              'grep -q "^T1: .*contract found it" "$CALLS.single.prompt" && grep -q "^T2: .*state found it" "$CALLS.single.prompt"'
+check "and the fixes since the team read it"     'grep -q "WHAT CHANGED SINCE THE LAST REVIEW: \`git diff [0-9a-f]\{40\}\`" "$CALLS.single.prompt"'
+check "new rare cases do not block in it"        'grep -q "\[related_improvement\]: name it, and do not hold the work back" "$CALLS.single.prompt"'
+check "T1 closed, T2 goes back to the worker"    '[ "$(ledger_open)" = 1 ] && printf "%s" "$out" | jq -r .reason | grep -q "^T2: .*state found it"'
+grep -q "fix check after the team's review" "$SUPERVISOR_STATE_DIR/supervisor.log" && ok "the log says why one reviewer read it" || no "no log line"
+fix; rm -f "$CALLS" "$CALLS".*
+FAKE_SINGLE=FIXED_ALL team >/dev/null
+check "round 3: one call again; all fixed, it passes" '[ "$(calls)" = 1 ] && done_is passed'
+check "the pass clears the ledger"               '[ ! -e "$SUPERVISOR_STATE_DIR/review-ledger-$RID" ]'
+check "the receipt-facing record says passed"    'jq -e ".disposition == \"passed\" or .verdict == \"PASS\"" "$IDIR/reports/review.json" >/dev/null 2>&1 || [ -f "$IDIR/done" ]'
+
+echo "===== one defect, two descriptions: it does not fake progress ====="
+mkcase
+FAKE_CONTRACT=DUP FAKE_STATE=DUP team >/dev/null
+check "two ids for the one defect"               '[ "$(ledger_open)" = 2 ]'
+fix; FAKE_SINGLE=SAME_TWICE team >/dev/null
+check "round 2, both still open: no progress 1"  '! done_is needs-user && [ "$(jq .stall "$SUPERVISOR_STATE_DIR/review-ledger-$RID")" = 1 ]'
+fix; FAKE_SINGLE=SAME_TWICE team >/dev/null
+check "round 3: stalled — a person, without waiting for round 5" 'done_is needs-user'
+check "with the open items in the review record" 'jq -r ".findings // .review // empty" "$IDIR/reports/review.json" 2>/dev/null | grep -q "STILL OPEN" || grep -rq "STILL OPEN" "$IDIR/reports" 2>/dev/null'
+
+echo "===== an id the answer leaves out stays open; a bare PASS is not a pass ====="
+mkcase
+FAKE_CONTRACT=FAIL team >/dev/null
+fix; rm -f "$CALLS" "$CALLS".*
+out="$(FAKE_SINGLE=PASS_SILENT team)"
+check "asked again once, then refused"           '[ "$(calls)" = 2 ] && ! done_is passed && printf "%s" "$out" | jq -r .reason | grep -q "^T1: "'
+check "T1 still open"                            '[ "$(ledger_open)" = 1 ]'
+
+echo "===== the team passes, the verifier fails: still one reviewer after ====="
+mkcase
+printf '#!/bin/sh\necho "suite red"; exit 1\n' > "$PROJ/verify.sh"; chmod +x "$PROJ/verify.sh"
+git -C "$PROJ" add verify.sh; git -C "$PROJ" commit -qm verify
+printf '{"session_id":"%s","transcript_path":"%s","cwd":"%s","stop_hook_active":false}' "s-$RANDOM" "$TR" "$PROJ" \
+  | ORCHESTRATOR_RUN_ID="$RID" SUPERVISOR_REVIEW_TEAM="contract security state" PATH="$FAKE:$PATH" "$GATE" >/dev/null 2>&1
+if grep -q "VERIFIER OVERRIDE" "$SUPERVISOR_STATE_DIR/supervisor.log" && [ "$(calls)" = 3 ]; then
+  check "the ledger starts, empty"               '[ -f "$SUPERVISOR_STATE_DIR/review-ledger-$RID" ] && [ "$(ledger_open)" = 0 ]'
+  rm -f "$CALLS" "$CALLS".*
+  printf '{"session_id":"%s","transcript_path":"%s","cwd":"%s","stop_hook_active":false}' "s-$RANDOM" "$TR" "$PROJ" \
+    | ORCHESTRATOR_RUN_ID="$RID" SUPERVISOR_REVIEW_TEAM="contract security state" PATH="$FAKE:$PATH" "$GATE" >/dev/null 2>&1
+  check "the next round is one reviewer, told to check the failed machine checks" '[ "$(calls)" = 1 ] && grep -q "the machine checks in the evidence below failed" "$CALLS.single.prompt"'
+else
+  no "the verifier did not fail the team's pass here: $(grep -c . "$CALLS" 2>/dev/null) calls"
+fi
+
+echo "===== a new request, or a new task in the same run, is read by the team again ====="
+mkcase
+FAKE_CONTRACT=FAIL team >/dev/null
+check "the team's FAIL starts a ledger"          '[ -s "$SUPERVISOR_STATE_DIR/review-ledger-$RID" ]'
+reset_review_budget "$IDIR" "test: a new request"
+rm -f "$CALLS" "$CALLS".*
+FAKE_CONTRACT=FAIL team >/dev/null
+check "after a new request, three calls"         '[ "$(calls)" = 3 ] && ! grep -q "FIX CHECK" "$CALLS.contract.prompt"'
+( cd "$PROJ" && ORCHESTRATOR_RUN_ID="$RID" bash "$ROOT/bin/worker-task-boundary.sh" new "a different task" >/dev/null 2>&1 )
+check "task-boundary new clears the old task's list and counts" '[ ! -e "$SUPERVISOR_STATE_DIR/review-ledger-$RID" ] && [ ! -e "$SUPERVISOR_STATE_DIR/rounds-findings-$RID" ] && [ ! -e "$SUPERVISOR_STATE_DIR/rounds-$RID" ]'
+rm -f "$CALLS" "$CALLS".*
+team >/dev/null
+check "and the new task gets three calls"        '[ "$(calls)" = 3 ]'
+
+echo "===== no team: nothing changes ====="
+mkcase
+SUPERVISOR_REVIEW_TEAM= FAKE_SINGLE=FAIL rungate >/dev/null
+rm -f "$CALLS" "$CALLS".*
+SUPERVISOR_REVIEW_TEAM= FAKE_SINGLE=FAIL rungate >/dev/null
+check "a single reviewer is never told it is a fix check" '[ "$(calls)" = 1 ] && ! grep -q "FIX CHECK" "$CALLS.single.prompt" && [ ! -e "$SUPERVISOR_STATE_DIR/review-ledger-$RID" ]'
+
+echo "===== a scoped task: 3 → 1 → 1, with fixes committed between ====="
+mkcase; printf '%s' '{"schema":1,"mode":"patch","write_paths":["src/**"]}' > "$IDIR/runspec.json"
+FAKE_SECURITY=FAIL FAKE_STATE=FAIL team >/dev/null
+check "round 1: three calls"                     '[ "$(calls)" = 3 ]'
+fix; rm -f "$CALLS" "$CALLS".*
+out="$(FAKE_SINGLE=FIX_FIRST team)"
+check "round 2: one, and the open id goes back"  '[ "$(calls)" = 1 ] && grep -q "FIX CHECK" "$CALLS.single.prompt" && printf "%s" "$out" | grep -q "\"decision\""'
+fix; rm -f "$CALLS" "$CALLS".*
+FAKE_SINGLE=FIXED_ALL team >/dev/null
+check "round 3: one, all fixed, accepted"        '[ "$(calls)" = 1 ] && done_is passed'
+mkcase; printf '%s' '{"schema":1,"mode":"patch","write_paths":["src/**"]}' > "$IDIR/runspec.json"
+FAKE_CONTRACT=FAIL team >/dev/null
+fix; FAKE_SINGLE=OPEN_ALL team >/dev/null; fix; FAKE_SINGLE=OPEN_ALL team >/dev/null
+check "scoped, nothing closes twice: a person"   'done_is needs-user'
+
+echo "===== the verdict belongs to the commit the reviewer read ====="
+mkcase
+FAKE_CONTRACT=FAIL team >/dev/null
+fix; out="$(FAKE_SINGLE=COMMIT_DURING team)"
+check "a commit during the review: not accepted" '! done_is passed && printf "%s" "$out" | jq -r .reason | grep -q "новий коміт"'
+check "and the ledger is untouched"              '[ "$(ledger_open)" = 1 ]'
+mkcase
+mkdir -p "$IDIR/report"; echo '{"schema":1}' > "$IDIR/report/receipt.json"
+FAKE_CONTRACT=FAIL team >/dev/null; fix
+read_sha="$(git -C "$PROJ" rev-parse HEAD)"
+FAKE_SINGLE=FIXED_ALL team >/dev/null
+check "the receipt names the commit that was read" 'done_is passed && [ "$(jq -r ".repos[0].reviewed_sha" "$IDIR/report/receipt.json")" = "$read_sha" ]'
+
+echo "===== the header is the header ====="
+mkcase
+out="$(SUPERVISOR_REVIEW_TEAM= FAKE_SINGLE=QUOTED rungate)"
+check "STATE/VERDICT inside a sentence is not a verdict" '! done_is passed'
+
 echo "===== the doctor says what is set ====="
 # With only the plain tools on PATH, so the doctor does not go asking claude and codex to sign in.
 TOOLS="$(mktemp -d)"; for t in bash git jq python3 perl openssl curl tmux sh env uname sed awk grep cat; do p="$(command -v "$t")" && ln -s "$p" "$TOOLS/$t"; done
 doctor_team(){ env -i HOME="$HOME" PATH="$TOOLS" SUPERVISOR_STATE_DIR="$SUPERVISOR_STATE_DIR" SUPERVISOR_PROFILE=server "$@" \
   python3 "$ROOT/bin/ns-cli.py" doctor --server --json 2>/dev/null | jq -c '.checks[] | select(.name == "engine.review_team") | .detail'; }
 d="$(doctor_team)"
-check "server: the team and its calls per round" 'printf "%s" "$d" | jq -e ".enabled == true and .calls_per_round == 3 and .members == [\"contract\",\"security\",\"state\"]" >/dev/null'
+check "server: the team and its calls per round" 'printf "%s" "$d" | jq -e ".enabled == true and .calls_per_round == 3 and .calls_later_rounds == 1 and .members == [\"contract\",\"security\",\"state\"]" >/dev/null'
 d="$(doctor_team SUPERVISOR_REVIEW_TEAM=off)"
 check "server, turned off: one call a round"     'printf "%s" "$d" | jq -e ".enabled == false and .calls_per_round == 1" >/dev/null'
 rm -rf "$TOOLS"

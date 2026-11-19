@@ -355,7 +355,7 @@ SUPERVISOR_BULAVA_REPORT=1                     # workers get the bulava-report M
 
 The final code review is three Codex reviews of the same change instead of one, each with a focus of
 its own — requirements and business logic, security and data integrity, state transitions and
-integrations — side by side, so a round takes as long as the slowest of them and costs three calls.
+integrations — side by side, so the round takes as long as the slowest of them and costs three calls.
 On the bench of planted defects (8–9 Nov, 23 snapshots of the factory's own MRs) one ordinary review
 found 61.8% of them on Astra medium and three specialists 72.5%; on Sol high 67.1% and 72.4%. The
 focus lines are the ones measured, word for word (`bin/lib/review-team.sh`).
@@ -379,8 +379,34 @@ A pipeline whose review step chose a team ("Who reviews", e.g. the built-in `rev
 Codex team") is reviewed by that team; one that chose "one reviewer" is reviewed by one, here too. A
 review step that did not choose leaves it to this setting.
 
-`doctor --server --json` reports it as `engine.review_team`, with the calls a round costs. The
-last round's members and who answered are in the run's `review-team.json`.
+The team reads the change once. When its round goes back to the worker (a FAIL, or a pass the
+verifier overturned), what it found becomes a ledger: each blocking defect with a stable id (T1, T2,
+...). The rounds after it are one Codex review that answers every open id, FIXED or OPEN, checks
+what the fixes broke (`git diff` since the last review), and lists new defects as N1, N2, ... A new
+defect blocks only if a person meets it on the ordinary path, it loses data, or a fix introduced it;
+anything else is `[related_improvement]`. Read on every round, the team kept finding the next rare
+case, the earlier items mostly closed, and a run never stalled.
+
+- An id the answer does not mention stays open. A PASS with ids still open is asked again once, and
+  then counts as a FAIL with those ids sent back.
+- Progress is an id closed. Two ids for one defect, described by two members, close together or not
+  at all, so duplicates cannot look like progress. No id closed for `SUPERVISOR_STALL_LIMIT` rounds
+  parks the run for a person, without waiting for the base patience (`SUPERVISOR_MAX_ROUNDS`), and
+  with the open ids in `review.json`. At the round ceiling with ids still open it is `needs-user`,
+  not debt.
+- Outside a fix check, progress is counted on blocking findings only: advisory ones
+  (`[related_improvement]`, `[pre_existing]`) and the tooling's (`[harness_failure]`) do not count.
+- A new request, `task-boundary new`, the next piece of a long project, or a piece judged by changed
+  rules clears the ledger and the review budget; the whole team reads again.
+
+The verdict belongs to the commits the reviewer read: they are taken before the call, a commit that
+lands during it voids the answer (twice in a row asks a person), and the receipt's `reviewed_sha` is
+the commit read, not `HEAD` at the time the receipt is written.
+
+`doctor --server --json` reports it as `engine.review_team`, with the calls the first round costs
+(`calls_per_round`) and the rounds after it (`calls_later_rounds`, 1). The team round's members and
+who answered are in the run's `review-team.json`; the supervisor log says "fix check after the
+team's review" for each round after it and "fix check: closed … · new … · open …".
 
 ## Questions for a person
 

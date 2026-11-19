@@ -25,6 +25,8 @@
 #
 # Each member is a full review of the same change with the same prompt and the same evidence; the
 # calls run side by side, so a team takes the time of its slowest member, and costs one call each.
+# The team reads once: after its review sends the work back, the gate's later rounds are one reviewer
+# checking the team's list and what the fixes broke (review-gate.sh, FIX CHECK; lib/review-ledger.py).
 # Sourced by supervisor-lib.sh.
 
 REVIEW_TEAM_ROLES="contract security state general negative legacy outcome"
