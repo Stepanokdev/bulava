@@ -230,9 +230,10 @@ if ! printf '%s' "$prompt" | text_is_utf8; then
 fi
 
 started="$(date +%s)"
-( cd "$ASK_DIR" && perl -e 'alarm shift; exec @ARGV' "$TIMEOUT" \
+# The question on stdin: an argument is capped at 128 KiB on Linux.
+( cd "$ASK_DIR" && printf '%s' "$prompt" | perl -e 'alarm shift; exec @ARGV' "$TIMEOUT" \
   "$CODEX_BIN" exec $(codex_effort_flags) --sandbox read-only --skip-git-repo-check --ephemeral --json \
-  -o "$CALL_DIR/final.md" "$prompt" </dev/null > "$CALL_DIR/events.jsonl" 2> "$CALL_DIR/stderr.log" )
+  -o "$CALL_DIR/final.md" - > "$CALL_DIR/events.jsonl" 2> "$CALL_DIR/stderr.log" )
 rc=$?; ended="$(date +%s)"; elapsed=$((ended - started))
 usage="$(jq -sc '[.. | objects | .usage? // empty] | last // {}' "$CALL_DIR/events.jsonl" 2>/dev/null || echo '{}')"
 [ -n "$usage" ] || usage='{}'

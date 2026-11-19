@@ -222,6 +222,7 @@ mkdir -p "$TMP/stub"
 cat > "$TMP/stub/claude" <<'STUB'
 #!/bin/bash
 prompt=""; for a in "$@"; do prompt="$a"; done
+if [ "$prompt" = "-" ]; then prompt="$(cat)"; elif [ -p /dev/stdin ] || [ -f /dev/stdin ]; then _in="$(perl -e 'alarm 10; local $/; my $x = <STDIN>; print defined $x ? $x : ""')"; [ -n "$_in" ] && prompt="$_in"; fi   # the engine sends prompts on stdin
 n=$(( $(ls "$REC" | grep -c '^claude-.*\.prompt$') + 1 ))
 printf '%s' "$prompt" > "$REC/claude-$n.prompt"
 sleep "${STUB_SLEEP:-1}"
@@ -232,6 +233,7 @@ cat > "$TMP/stub/codex" <<'STUB'
 if [ "${1:-}" = login ]; then echo "Logged in using ChatGPT"; exit 0; fi
 out=""; prev=""; prompt=""
 for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prompt="$a"; prev="$a"; done
+if [ "$prompt" = "-" ]; then prompt="$(cat)"; elif [ -p /dev/stdin ] || [ -f /dev/stdin ]; then _in="$(perl -e 'alarm 10; local $/; my $x = <STDIN>; print defined $x ? $x : ""')"; [ -n "$_in" ] && prompt="$_in"; fi   # the engine sends prompts on stdin
 n=$(( $(ls "$REC" | grep -c '^codex-.*\.prompt$') + 1 ))
 printf '%s' "$prompt" > "$REC/codex-$n.prompt"
 sleep "${STUB_SLEEP:-1}"

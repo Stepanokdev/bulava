@@ -1979,7 +1979,7 @@ inject_task() {
 # the message sent the person to reinstall hooks that were fine. The screen is read before the hooks
 # are suspected, because a screen on display is proof and a missing file is only a likelihood.
 #   $1 = the pane's text   $2 = slug      prints one of:
-#   onboarding | login | trust | hooks | exited | unknown   (and await_handshake: screen)
+#   onboarding | login | trust | adddir | mcp | hooks | exited | unknown   (and await_handshake: screen)
 handshake_blocker() {
   local pane="${1:-}" slug="${2:-}" ws="$SUP_STATE/worker-settings.json" hook screen
   screen="$(handshake_screen "$pane")"
@@ -2026,6 +2026,15 @@ handshake_screen_asks() {
   grep -Eiq '(enter|return) to (confirm|select|continue|submit|accept|approve|choose|proceed)|esc to (cancel|exit|go back|close|dismiss|skip|reject|deny|decline)|press (enter|return)|arrow keys to|↑/↓ to|\((y/n|yes/no)\)|\[(y/n|y/N|Y/n)\]' <<< "$bottom"
 }
 
+# Claude Code 2.1.327's question about an --add-dir folder it has not trusted: "Adding a new
+# directory … This session hasn't worked here before › No, exit / Yes, add it". Not one of the
+# screens above that end the wait: a person at the Mac can answer it from the chat like any other
+# question, so it stays a `screen` while waited on and is only NAMED when nobody answered.
+handshake_screen_adddir() {   # $1 = the pane's text
+  case "${1:-}" in *"Adding a new directory"*|*"hasn't worked here before"*) return 0 ;; esac
+  return 1
+}
+
 # A screen of Claude's own that no hook runs past, or nothing. $1 = the pane's text.
 handshake_screen() {
   case "${1:-}" in
@@ -2043,6 +2052,9 @@ handshake_blocker_says() {  # $1=cause  $2=pane text  $3=instance dir
     onboarding) echo "   Claude Code ще не пройшов перше налаштування на цьому Mac: він чекає вибору теми, а у фоні відповісти нікому. Запусти claude у Терміналі один раз і вибери тему — або натисни «Завершити налаштування» в Булаві." ;;
     login)      echo "   Claude Code не ввійшов в акаунт і чекає входу. Увійди: claude auth login" ;;
     trust)      echo "   Claude Code питає, чи довіряти теці${project:+ «${project}»}, а у фоні відповісти нікому. Відкрий claude у цій теці й відповідай «Yes, I trust this folder»." ;;
+    adddir)     local added
+                added="$(printf '%s\n' "$pane" | sed -n 's/.*Adding a new directory:*[[:space:]]*\([^[:space:]]*\).*/\1/p' | head -1)"
+                echo "   Claude Code питає, чи додати до сесії теку${added:+ «${added}»} (--add-dir), а у фоні відповісти нікому. Так питає Claude Code від 2.1.327 про кожну теку, якій ще не довіряли. Теку запусків рушій позначає довіреною сам перед стартом; якщо питання про іншу теку, довір її: night-shift trust <тека>" ;;
     mcp)        echo "   Claude Code питає, чи вмикати MCP-сервери цього проєкту${project:+ «${project}»}, а у фоні відповісти нікому. Вирішити можна кнопкою в Булаві або тут: night-shift mcp-decide \"${project:-.}\" enable|skip" ;;
     hooks)      echo "   Стартовий хук рушія не встановлено: у $SUP_STATE/worker-settings.json немає safety-check.sh, або файлу, на який він вказує. Перевстанови рушій: bash install.sh" ;;
     exited)     echo "   Claude завершився одразу після старту." ;;
@@ -2111,6 +2123,7 @@ await_handshake() {  # $1=instance dir  $2=slug (for the log)  $3=seconds (defau
   pane="$(tmux capture-pane -p -t "$ses" -S -80 2>/dev/null || true)"
   cause="$(handshake_blocker "$pane" "$slug")"
   [ "$cause" = unknown ] && handshake_screen_asks "$pane" && cause=screen
+  [ "$cause" = screen ] && handshake_screen_adddir "$pane" && cause=adddir
   echo "⚠️ хуки не підтвердили run-id за ${waited}s — робота може піти без нагляду." >&2
   handshake_blocker_says "$cause" "$pane" "$idir" >&2
   echo "handshake-blocked=$cause" >&2
@@ -6241,6 +6254,26 @@ p = (json.load(open(path)).get("projects") or {})
 keys = {folder, folder[len("/private"):] if folder.startswith("/private/") else folder}
 sys.exit(0 if any((p.get(k) or {}).get("hasTrustDialogAccepted") for k in keys) else 1)
 PY
+}
+
+# The engine's own folder of runs, trusted before Claude starts. Every start passes
+# `--add-dir <instance dir>`, and that folder is made anew for each run; since Claude Code 2.1.327
+# every --add-dir folder not yet trusted stops the start on "Adding a new directory … This session
+# hasn't worked here before › No, exit / Yes, add it", where no hook runs, so the handshake gave up
+# after its wait. Trusting the parent covers every run under it. Only the engine's folder: the
+# extra folders a person adds stay that person's decision.
+trust_engine_runs_folder() {
+  local d
+  [ -n "${SUPERVISOR_CLAUDE_CMD:-}" ] && return 0       # a stubbed worker is not Claude Code
+  mkdir -p "$SUP_INSTANCES" 2>/dev/null || return 0
+  d="$(canon_path "$SUP_INSTANCES")"
+  claude_folder_trusted "$d" && return 0
+  if claude_trust_folder "$d" 2>/dev/null; then
+    echo "$(date '+%F %T') [trust] the engine's runs folder '$d' ($(claude --version 2>/dev/null | head -1))" >> "$SUP_STATE/supervisor.log" 2>/dev/null || true
+  else
+    echo "$(date '+%F %T') [trust] could not mark '$d' trusted in $(claude_config_json)" >> "$SUP_STATE/supervisor.log" 2>/dev/null || true
+  fi
+  return 0
 }
 
 claude_trust_folder() {   # $1=folder — mark it trusted; atomic, mode 600

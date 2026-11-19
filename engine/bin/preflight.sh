@@ -134,9 +134,26 @@ stage_log_for() {   # $1 = stage name
   printf '%s/logs/%s.log' "$ART" "$1"
 }
 
-render() { TASK="$task" perl -0777 -pe '
-  for my $k (qw(TASK CONTEXT RECENT RESEARCH DESIGN ARGUE PLAN_A PLAN_B BRIEF_A BRIEF_B SCALE TOUCHES_UI CATALOG LANGUAGE)) { my $v = defined $ENV{$k} ? $ENV{$k} : ""; s/\Q{{$k}}\E/$v/g; }
-  ' "$1" 2>/dev/null; }
+# The values travel in files, not in perl's environment. Linux caps every single argument AND every
+# single environment string at 128 KiB (MAX_ARG_STRLEN), whatever ARG_MAX says; a long task in
+# Cyrillic (two bytes a letter) plus research crossed it, execve failed with E2BIG, and both
+# positions died in five seconds with "Argument list too long". A shell variable never reaches
+# execve; only what is exported does, so each value is written out and unset before perl starts.
+RENDER_KEYS="TASK CONTEXT RECENT RESEARCH DESIGN ARGUE PLAN_A PLAN_B BRIEF_A BRIEF_B SCALE TOUCHES_UI CATALOG LANGUAGE"
+render() {
+  local d k rc
+  d="$(mktemp -d "${TMPDIR:-/tmp}/ns-render.XXXXXX")" || return 1
+  for k in $RENDER_KEYS; do
+    if [ "$k" = TASK ]; then printf '%s' "${task-}" > "$d/$k"; else printf '%s' "${!k-}" > "$d/$k"; fi
+  done
+  # shellcheck disable=SC2086
+  ( unset $RENDER_KEYS; RENDER_DIR="$d" perl -0777 -pe '
+    BEGIN { @K = split / /, "'"$RENDER_KEYS"'"; for my $k (@K) { local $/; open(my $fh, "<", "$ENV{RENDER_DIR}/$k") or next; $V{$k} = <$fh>; } }
+    for my $k (@K) { my $v = defined $V{$k} ? $V{$k} : ""; s/\Q{{$k}}\E/$v/g; }
+    ' "$1" 2>/dev/null ); rc=$?
+  rm -rf "$d"
+  return "$rc"
+}
 # Nothing reaches a peer's argv unchecked.
 #
 # `codex exec` refuses the WHOLE invocation when any argument is not valid UTF-8, and it does so
@@ -154,11 +171,15 @@ prompt_is_sound() {   # $1 = the prompt about to be an argument
   return 1
 }
 
-codex_ro() {
-  prompt_is_sound "${*: -1}" || return 90
-  perl -e 'alarm shift; exec @ARGV' "$1" codex exec $(codex_effort_flags) --sandbox read-only --skip-git-repo-check "${@:2}" </dev/null 2>>"${STAGE_LOG:-$LOG}";
+# The prompt goes in on stdin, never as an argument: one argument is capped at 128 KiB on Linux,
+# and a large task's prompt is bigger (see `render`). `codex exec … -` and `claude -p` with no
+# prompt argument both read it from stdin.
+codex_ro() {   # $1 = seconds, then codex's flags, the prompt last
+  local prompt="${*: -1}"
+  prompt_is_sound "$prompt" || return 90
+  printf '%s' "$prompt" | perl -e 'alarm shift; exec @ARGV' "$1" codex exec $(codex_effort_flags) --sandbox read-only --skip-git-repo-check "${@:2:$(($# - 2))}" - 2>>"${STAGE_LOG:-$LOG}";
 }
-claude_plan() { ( cd "$PROJ" && perl -e 'alarm shift; exec @ARGV' "$1" claude -p $(claude_effort_args) ${SUPERVISOR_CLAUDE_MODEL:+--model "$SUPERVISOR_CLAUDE_MODEL"} $(claude_no_web_args) --permission-mode plan "$2" </dev/null 2>>"${STAGE_LOG:-$LOG}" ); }
+claude_plan() { printf '%s' "$2" | ( cd "$PROJ" && perl -e 'alarm shift; exec @ARGV' "$1" claude -p $(claude_effort_args) ${SUPERVISOR_CLAUDE_MODEL:+--model "$SUPERVISOR_CLAUDE_MODEL"} $(claude_no_web_args) --permission-mode plan 2>>"${STAGE_LOG:-$LOG}" ); }
 
 
 # A peer call that ends when the engineer ends it, not when a clock says so.
@@ -207,13 +228,17 @@ run_peer() {   # $1=who  $2=prompt  $3=file to leave the final text in  [$4=labe
   # Before the call, not five seconds into it. See `prompt_is_sound`.
   prompt_is_sound "$prompt" || return 5
 
+  # On stdin, from a file: an argument is capped at 128 KiB on Linux and this prompt carries the
+  # whole task, research and design (149 490 bytes on the run that found it). See `render`.
+  local promptfile="$outfile.prompt"
+  printf '%s' "$prompt" > "$promptfile"
   if [ "$who" = claude ]; then
     ( cd "$PROJ" && exec claude -p --output-format stream-json --verbose --include-partial-messages \
         $(claude_effort_args) ${SUPERVISOR_CLAUDE_MODEL:+--model "$SUPERVISOR_CLAUDE_MODEL"} \
-        $(claude_no_web_args) --permission-mode plan "$prompt" </dev/null >"$stream" 2>>"${STAGE_LOG:-$LOG}" ) &
+        $(claude_no_web_args) --permission-mode plan <"$promptfile" >"$stream" 2>>"${STAGE_LOG:-$LOG}" ) &
   else
     ( cd "$PROJ" && exec codex exec $(codex_effort_flags) --sandbox read-only --skip-git-repo-check \
-        --json -o "$outfile" "$prompt" </dev/null >"$stream" 2>>"${STAGE_LOG:-$LOG}" ) &
+        --json -o "$outfile" - <"$promptfile" >"$stream" 2>>"${STAGE_LOG:-$LOG}" ) &
   fi
   pid=$!
 
@@ -232,10 +257,12 @@ run_peer() {   # $1=who  $2=prompt  $3=file to leave the final text in  [$4=labe
       # what hold the work and the quota, and one that ignores TERM would otherwise survive.
       kill_tree "$pid"; sleep 2; kill_tree "$pid" KILL
       wait "$pid" 2>/dev/null || true
+      rm -f "$promptfile" 2>/dev/null || true
       return 2
     fi
   done
   wait "$pid"; rc=$?
+  rm -f "$promptfile" 2>/dev/null || true
   PEER_EXIT="$rc"      # the CLI's own code, kept: this function's return value says WHICH ending,
                        # not what the command said on its way out.
 
@@ -679,6 +706,13 @@ stage_peer() {   # $1 = claude|codex
     5) reason="$who не запускався: підготовлений текст питання не є коректним UTF-8, і CLI відхилив би виклик ще до старту сесії. Це не збій моделі — зіпсутий текст прийшов із збереженого контексту, і його треба виправити в джерелі" ;;
     *) reason="$who зупинився з помилкою (код ${PEER_EXIT:-$rc}) через ${elapsed}с" ;;
   esac
+  # The command never started: the shell's 126 (execve refused it, e.g. E2BIG, "Argument list too
+  # long") or 127 (not found). That is the engine failing to launch the CLI, not the model failing
+  # to answer, and it is said as such: "position unavailable" sent people to look at the model when
+  # the fault was in how it was called.
+  if [ "$rc" = 1 ] && { [ "${PEER_EXIT:-}" = 126 ] || [ "${PEER_EXIT:-}" = 127 ]; }; then
+    reason="помилка рушія: $who не запустився (код ${PEER_EXIT:-$rc}) — система відмовилася виконати команду, модель тут ні до чого"
+  fi
   [ -n "$note" ] && reason="$reason — $note"
   [ -n "$(auth_failure_hint "$note")" ] && reason="$reason $(auth_failure_hint "$note")"
   [ "$shape" = "partial output discarded" ] \

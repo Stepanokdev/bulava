@@ -66,6 +66,7 @@ sign_payload() {   # $1=payload → base64 DER, as the app makes it
 
 cat > "$FAKE/codex" <<'EOF'
 #!/bin/bash
+if [ "${@: -1}" = - ]; then _p="$(cat)"; set -- "${@:1:$(($# - 1))}" "$_p"; fi   # the engine sends prompts on stdin
 if [ "${1:-}" = login ]; then echo "Logged in using ChatGPT"; exit 0; fi
 if echo "$*" | grep -q "HANDOFF | BLOCKED"; then
   : > "${CODEX_CALLED:-/dev/null}"

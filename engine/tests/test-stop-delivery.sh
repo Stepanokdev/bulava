@@ -31,6 +31,7 @@ check(){ if eval "$2"; then ok "$1"; else no "$1 [$2]"; fi; }
 FAKE="$(mktemp -d)"; CALLED="$FAKE/called"
 cat > "$FAKE/codex" <<'EOF'
 #!/bin/bash
+if [ "${@: -1}" = - ]; then _p="$(cat)"; set -- "${@:1:$(($# - 1))}" "$_p"; fi   # the engine sends prompts on stdin
 if [ "${1:-}" = login ]; then echo "Logged in using ChatGPT"; exit 0; fi
 if echo "$*" | grep -q "HANDOFF | BLOCKED"; then
   printf '%s\n' "${@: -1}" > "$CALLED"; echo "STATE: COMPLETE"; echo "VERDICT: PASS"; exit 0

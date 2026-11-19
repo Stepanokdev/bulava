@@ -25,6 +25,7 @@ no(){ printf '  \xe2\x9d\x8c %s\n' "$1"; fail=$((fail+1)); }
 FAKE="$(mktemp -d)"; PROMPT="$FAKE/prompt.txt"; CALLED="$FAKE/called"
 cat > "$FAKE/codex" <<'EOF'
 #!/bin/bash
+if [ "${@: -1}" = - ]; then _p="$(cat)"; set -- "${@:1:$(($# - 1))}" "$_p"; fi   # the engine sends prompts on stdin
 if [ "${1:-}" = login ]; then echo "Logged in using ChatGPT"; exit 0; fi
 if echo "$*" | grep -q "HANDOFF | BLOCKED"; then
   : > "$CODEX_CALLED"

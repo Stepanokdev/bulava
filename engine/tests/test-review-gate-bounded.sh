@@ -35,6 +35,7 @@ check(){ if eval "$2"; then ok "$1"; else no "$1 [$2]"; fi; }
 FAKE="$(mktemp -d)"; CODEX_CALLED="$FAKE/called"
 cat > "$FAKE/codex" <<'EOF'
 #!/bin/bash
+if [ "${@: -1}" = - ]; then _p="$(cat)"; set -- "${@:1:$(($# - 1))}" "$_p"; fi   # the engine sends prompts on stdin
 # Not a turn. The engine asks the real CLI this before spending a call, and a stub that
 # treated it as a brief would record "login status" as the run's prompt and depth.
 if [ "${1:-}" = login ]; then echo "Logged in using ChatGPT"; exit 0; fi

@@ -109,7 +109,7 @@ case "$cmd" in
 <<UNTRUSTED_PIPELINE_DATA>>
 $(find "$Q/package" -type f | LC_ALL=C sort | while read -r f; do echo "----- ${f#$Q/package/} -----"; clip_utf8 6000 < "$f"; echo; done)
 <<END>>"
-      b_out="$(perl -e 'alarm shift; exec @ARGV' "${SUPERVISOR_SKILL_AUDIT_TIMEOUT:-240}" codex exec $(codex_effort_flags) --sandbox read-only --skip-git-repo-check "$prompt" 2>>"${CODEX_LOG:-/dev/null}" </dev/null)"
+      b_out="$(printf '%s' "$prompt" | perl -e 'alarm shift; exec @ARGV' "${SUPERVISOR_SKILL_AUDIT_TIMEOUT:-240}" codex exec $(codex_effort_flags) --sandbox read-only --skip-git-repo-check - 2>>"${CODEX_LOG:-/dev/null}")"
       b_verdict="$(printf '%s' "$b_out" | grep -m1 -oiE 'VERDICT: *(PASS|PROPOSE|REJECT)' | grep -oiE 'PASS|PROPOSE|REJECT' | tr a-z A-Z)"
       [ -n "$b_verdict" ] || b_verdict="INCONCLUSIVE"
       b_notes="$(printf '%s' "$b_out" | grep -iA6 'VERDICT:' | tail -n +2 | head -6)"

@@ -29,7 +29,7 @@ FAKE="$(mktemp -d)"; export CALLS="$FAKE/calls"
 cat > "$FAKE/codex" <<'EOF'
 #!/bin/bash
 if [ "${1:-}" = login ]; then echo "Logged in using ChatGPT"; exit 0; fi
-p="${@: -1}"
+p="${@: -1}"; [ "$p" = - ] && p="$(cat)"   # the engine sends prompts on stdin
 case "$p" in
   *"Prioritize requirements and business correctness"*) role=contract ;;
   *"Prioritize security and data integrity"*)           role=security ;;

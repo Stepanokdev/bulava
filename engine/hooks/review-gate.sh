@@ -1253,13 +1253,15 @@ review_call() {   # $1=prompt [$2=1 to let Codex search the web]
       review=""; review_rc=99
     fi
   else
-    # `-i` takes every argument after it as another image, so the prompt goes after `--`: without it
-    # the whole prompt is read as a file name and the review comes back empty.
-    review=$(cd "$cwd" 2>/dev/null && perl -e 'alarm shift; exec @ARGV' 480 \
+    # `-i` takes every argument after it as another image, so the prompt's place comes after `--`:
+    # without it the prompt would be read as a file name and the review would come back empty. The
+    # prompt itself goes in on stdin (`-`): an argument is capped at 128 KiB on Linux, and a review
+    # prompt carries the whole diff.
+    review=$(cd "$cwd" 2>/dev/null && printf '%s' "$1" | perl -e 'alarm shift; exec @ARGV' 480 \
       codex exec $(codex_effort_flags) --sandbox read-only --skip-git-repo-check \
       $([ "${2:-0}" = 1 ] && codex_web_search_flags) \
       ${BROWSER_ARGS[@]+"${BROWSER_ARGS[@]}"} ${EYE_ARGS[@]+"${EYE_ARGS[@]}"} \
-      -- "$1" </dev/null 2>"${_err:-/dev/null}"); review_rc=$?
+      -- - 2>"${_err:-/dev/null}"); review_rc=$?
   fi
   [ -n "$_err" ] || return 0
   review_cause="$(stderr_cause "$_err")"

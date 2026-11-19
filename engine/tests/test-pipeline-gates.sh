@@ -29,6 +29,7 @@ cat > "$FAKE/codex" <<'EOF'
 #!/bin/bash
 if [ "${1:-}" = login ]; then echo "Logged in using ChatGPT"; exit 0; fi
 prompt=""; for a in "$@"; do prompt="$a"; done
+if [ "$prompt" = "-" ]; then prompt="$(cat)"; elif [ -p /dev/stdin ] || [ -f /dev/stdin ]; then _in="$(perl -e 'alarm 10; local $/; my $x = <STDIN>; print defined $x ? $x : ""')"; [ -n "$_in" ] && prompt="$_in"; fi   # the engine sends prompts on stdin
 if printf '%s' "$prompt" | grep -q "RESEARCH REPORT"; then
   printf '%s' "$prompt" > "$CODEX_CALLED.report-prompt"
   [ -n "${FAKE_REPORT_GARBLED:-}" ] && { echo "Я подумав і, здається, тут щось не так."; exit 0; }

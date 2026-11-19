@@ -28,6 +28,7 @@ cat > "$TMP/stub/codex" <<'STUB'
 [ "${1:-}" = login ] && { echo "Logged in using ChatGPT"; exit 0; }
 out=""; prev=""; prompt=""
 for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prompt="$a"; prev="$a"; done
+if [ "$prompt" = "-" ]; then prompt="$(cat)"; elif [ -p /dev/stdin ] || [ -f /dev/stdin ]; then _in="$(perl -e 'alarm 10; local $/; my $x = <STDIN>; print defined $x ? $x : ""')"; [ -n "$_in" ] && prompt="$_in"; fi   # the engine sends prompts on stdin
 n=$(( $(ls "$REC" | grep -c '^codex-') + 1 ))
 printf '%s' "$prompt" > "$REC/codex-$n.prompt"
 printf '%s\n' "$*" > "$REC/codex-$n.argv"

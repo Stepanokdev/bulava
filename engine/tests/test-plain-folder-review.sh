@@ -96,6 +96,7 @@ FAKE="$TMP/fake"; mkdir -p "$FAKE"; export CODEX_CALLED="$FAKE/called" CODEX_PRO
 cat > "$FAKE/codex" <<'EOF'
 #!/bin/bash
 if [ "${1:-}" = login ]; then echo "Logged in using ChatGPT"; exit 0; fi
+if [ "${@: -1}" = - ]; then _p="$(cat)"; set -- "${@:1:$(($# - 1))}" "$_p"; fi   # the engine sends prompts on stdin
 echo called >> "$CODEX_CALLED"
 printf '%s\n' "$@" >> "$CODEX_PROMPT"
 echo "STATE: COMPLETE"; echo "VERDICT: ${FAKE_VERDICT:-PASS}"
@@ -105,7 +106,7 @@ EOF
 chmod +x "$FAKE/codex"
 TR="$TMP/transcript.jsonl"; printf '%s\n' '{"message":{"role":"assistant","content":[{"type":"text","text":"готово"}]}}' > "$TR"
 RID="plain-chat-1"
-G="$TMP/Everything"; GIDIR="$(instance_dir "$(slug_for "$(canon_path "$G")")")"
+G="$TMP/Workbench"; GIDIR="$(instance_dir "$(slug_for "$(canon_path "$G")")")"
 mkcase() {   # [$1 = "unattended"]
   rm -rf "$G" "$GIDIR"; mkdir -p "$G/app" "$GIDIR"
   printf 'const spin = () => 1\n' > "$G/app/roulette.js"

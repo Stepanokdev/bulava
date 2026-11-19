@@ -343,6 +343,10 @@ nonisolated enum RunNoteWording {
             String(localized: "\(g[0] ?? "") did not start: the prepared question is not valid UTF-8, and the CLI would have refused the call before the session began. This is not the model failing — the broken text came from the saved context, and it needs fixing at the source", bundle: b)
                 + saidTail(g.suffix(4), b)
         },
+        Template("помилка рушія: (\\S+) не запустився \\(код (\\S+)\\) — система відмовилася виконати команду, модель тут ні до чого" + peerTail) { g, b in
+            String(localized: "engine error: \(g[0] ?? "") did not start (code \(g[1] ?? "")) — the system refused to run the command; the model has nothing to do with it", bundle: b)
+                + saidTail(g.suffix(4), b)
+        },
         Template("(\\S+) зупинився з помилкою \\(код (\\S+)\\) через (\\d+)с" + peerTail) { g, b in
             String(localized: "\(g[0] ?? "") stopped with an error (code \(g[1] ?? "")) after \(g[2] ?? "") s", bundle: b) + saidTail(g.suffix(4), b)
         },

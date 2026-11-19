@@ -41,6 +41,7 @@ for a in "$@"; do
   fi
 done
 prompt=""; for a in "$@"; do prompt="$a"; done
+if [ "$prompt" = "-" ]; then prompt="$(cat)"; elif [ -p /dev/stdin ] || [ -f /dev/stdin ]; then _in="$(perl -e 'alarm 10; local $/; my $x = <STDIN>; print defined $x ? $x : ""')"; [ -n "$_in" ] && prompt="$_in"; fi   # the engine sends prompts on stdin
 printf '%s' "$prompt" > "$CODEX_CALLED.prompt"
 case "${FAKE_CODEX_MODE:-pass}" in
   badflag) printf "error: unexpected argument '--frobnicate' found\n\nUsage: codex exec [OPTIONS] [PROMPT]\n\nFor more information, try '--help'.\n" >&2; exit 2 ;;

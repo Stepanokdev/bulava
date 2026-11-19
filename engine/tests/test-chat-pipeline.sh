@@ -116,6 +116,7 @@ mkdir -p "$TMP/stub"
 cat > "$TMP/stub/claude" <<'STUB'
 #!/bin/bash
 prompt=""; for a in "$@"; do prompt="$a"; done
+if [ "$prompt" = "-" ]; then prompt="$(cat)"; elif [ -p /dev/stdin ] || [ -f /dev/stdin ]; then _in="$(perl -e 'alarm 10; local $/; my $x = <STDIN>; print defined $x ? $x : ""')"; [ -n "$_in" ] && prompt="$_in"; fi   # the engine sends prompts on stdin
 n="$(ls "$REC" 2>/dev/null | grep -c '^claude-.*\.prompt$')"
 case "$n" in ''|*[!0-9]*) n=0 ;; esac
 n=$((n + 1))
@@ -149,6 +150,7 @@ for a in "$@"; do
   [ "$prev" = "-o" ] && out="$a"
   prompt="$a"; prev="$a"
 done
+if [ "$prompt" = "-" ]; then prompt="$(cat)"; elif [ -p /dev/stdin ] || [ -f /dev/stdin ]; then _in="$(perl -e 'alarm 10; local $/; my $x = <STDIN>; print defined $x ? $x : ""')"; [ -n "$_in" ] && prompt="$_in"; fi   # the engine sends prompts on stdin
 # The triage choosing steps answers JSON, and only for the steps it was asked about.
 case "$prompt" in *"THE STEPS TO DECIDE ABOUT"*)
   printf '%s' "$prompt" > "$REC/codex-pick.prompt"
@@ -819,6 +821,7 @@ printf '%s\n' "$(git -C "$PROJ" rev-parse HEAD)" > "$IDIR/base-sha"
 ( cd "$PROJ" && git add -A && git -c user.email=t@t -c user.name=t commit -qm "worker change 2" >/dev/null 2>&1 )
 cat > "$TMP/stub/codex-review" <<'EOF'
 #!/bin/bash
+if [ "${@: -1}" = - ]; then _p="$(cat)"; set -- "${@:1:$(($# - 1))}" "$_p"; fi   # the engine sends prompts on stdin
 if echo "$*" | grep -q "HANDOFF | BLOCKED"; then
   : > "$REVIEW_CALLED"
   echo "STATE: COMPLETE"

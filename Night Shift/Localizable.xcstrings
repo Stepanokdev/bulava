@@ -43592,6 +43592,22 @@
         }
       }
     },
+    "engine error: %@ did not start (code %@) — the system refused to run the command; the model has nothing to do with it" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ошибка движка: %@ не запустился (код %@) — система отказалась выполнить команду, модель тут ни при чём"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "помилка рушія: %@ не запустився (код %@) — система відмовилася виконати команду, модель тут ні до чого"
+          }
+        }
+      }
+    },
     "Codex is not signed in — “%@” was not prepared; Claude does the whole task." : {
       "localizations" : {
         "ru" : {

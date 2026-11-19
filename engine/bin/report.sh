@@ -183,8 +183,8 @@ $BLOCK_SPEC"
       ;;
     *)
       log "composing the report via codex (in $LANG_NAME)"
-      RAW_DOC="$(perl -e 'alarm shift; exec @ARGV' 240 codex exec $(codex_effort_flags) \
-        --sandbox read-only --skip-git-repo-check "$PROMPT" 2>/dev/null </dev/null)"
+      RAW_DOC="$(printf '%s' "$PROMPT" | perl -e 'alarm shift; exec @ARGV' 240 codex exec $(codex_effort_flags) \
+        --sandbox read-only --skip-git-repo-check - 2>/dev/null)"
       ;;
   esac
   CAND="$(printf '%s' "$RAW_DOC" | perl -0ne 'print $1 if /(\[.*\])/s')"

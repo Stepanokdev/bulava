@@ -95,9 +95,10 @@ OUT="$ART/codex-part-$NODE.md"
 PATCH="$ART/codex-part-$NODE.patch"
 plog "Codex writes «${TITLE}» for $PROJ"
 started="$(date +%s)"
-( cd "$PROJ" && perl -e 'alarm shift; exec @ARGV' "$TIMEOUT" \
+# The prompt on stdin: an argument is capped at 128 KiB on Linux.
+( cd "$PROJ" && printf '%s' "$prompt" | perl -e 'alarm shift; exec @ARGV' "$TIMEOUT" \
   "$CODEX_BIN" exec $(codex_effort_flags) --sandbox read-only --skip-git-repo-check --ephemeral --json \
-  -o "$OUT.partial" "$prompt" </dev/null > "$ART/codex-part-$NODE.events.jsonl" 2> "$ART/codex-part-$NODE.stderr.log" )
+  -o "$OUT.partial" - > "$ART/codex-part-$NODE.events.jsonl" 2> "$ART/codex-part-$NODE.stderr.log" )
 rc=$?; elapsed=$(( $(date +%s) - started ))
 if [ "$rc" != 0 ] || [ ! -s "$OUT.partial" ]; then
   rm -f "$OUT.partial" 2>/dev/null || true
