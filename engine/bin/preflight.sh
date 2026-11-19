@@ -141,18 +141,31 @@ stage_log_for() {   # $1 = stage name
 # execve; only what is exported does, so each value is written out and unset before perl starts.
 RENDER_KEYS="TASK CONTEXT RECENT RESEARCH DESIGN ARGUE PLAN_A PLAN_B BRIEF_A BRIEF_B SCALE TOUCHES_UI CATALOG LANGUAGE"
 render() {
-  local d k rc
-  d="$(mktemp -d "${TMPDIR:-/tmp}/ns-render.XXXXXX")" || return 1
+  local k i=0 _vals=()
+  # The values first, with builtins only, then everything else in a subshell with them out of its
+  # environment. `RESEARCH="$text" render …` exports RESEARCH for the call, and on Linux a single
+  # environment string over 128 KiB makes every exec inside fail with E2BIG — mktemp included,
+  # before a byte reached a file (a server, 19 Nov; macOS has no such cap, so the Mac never showed
+  # it). The unsetting happens in the subshell: in the function itself it would also drop a global
+  # of the same name that the next render still needs.
   for k in $RENDER_KEYS; do
-    if [ "$k" = TASK ]; then printf '%s' "${task-}" > "$d/$k"; else printf '%s' "${!k-}" > "$d/$k"; fi
+    if [ "$k" = TASK ]; then _vals[i]="${task-}"; else _vals[i]="${!k-}"; fi
+    i=$((i + 1))
   done
-  # shellcheck disable=SC2086
-  ( unset $RENDER_KEYS; RENDER_DIR="$d" perl -0777 -pe '
+  (
+    for k in $RENDER_KEYS; do
+      i=0; while [ -n "${!k+x}" ] && [ "$i" -lt 4 ]; do unset "$k" 2>/dev/null; i=$((i + 1)); done
+    done
+    d="$(mktemp -d "${TMPDIR:-/tmp}/ns-render.XXXXXX")" || exit 1
+    i=0
+    for k in $RENDER_KEYS; do printf '%s' "${_vals[i]}" > "$d/$k"; i=$((i + 1)); done
+    RENDER_DIR="$d" perl -0777 -pe '
     BEGIN { @K = split / /, "'"$RENDER_KEYS"'"; for my $k (@K) { local $/; open(my $fh, "<", "$ENV{RENDER_DIR}/$k") or next; $V{$k} = <$fh>; } }
     for my $k (@K) { my $v = defined $V{$k} ? $V{$k} : ""; s/\Q{{$k}}\E/$v/g; }
-    ' "$1" 2>/dev/null ); rc=$?
-  rm -rf "$d"
-  return "$rc"
+    ' "$1" 2>/dev/null; rc=$?
+    rm -rf "$d"
+    exit "$rc"
+  )
 }
 # Nothing reaches a peer's argv unchecked.
 #

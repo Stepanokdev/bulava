@@ -120,6 +120,12 @@ rendered="$(RESEARCH="$BIG" PATH="$TMP/stub:$PATH" render "$TMP/tpl.md" 2>"$TMP/
 [ "$rc" = 0 ] && [ "$(printf '%s' "$rendered" | wc -c | tr -d ' ')" = "$want" ] \
   && ok "and perl, held to the cap on its environment, still renders it" || bad "render under the cap: rc=$rc $(cat "$TMP/render.err")"
 
+RESEARCH="kept between calls"
+r1="$(render "$TMP/tpl.md")"; r2="$(render "$TMP/tpl.md")"
+[ "$RESEARCH" = "kept between calls" ] && printf '%s' "$r2" | grep -q "Research: kept between calls" \
+  && ok "a value set for the whole script is still there for the next render" || bad "render dropped the caller's RESEARCH: «${RESEARCH-unset}» / $r2"
+unset RESEARCH
+
 out="$(PATH="$TMP/stub:$PATH" codex_ro 30 --output-schema /dev/null -o "$TMP/ro.out" "$BIG")"; rc=$?
 [ "$rc" = 0 ] && grep -q "STDIN $BYTES bytes" "$TMP/ro.out" && ok "codex_ro passes the prompt on stdin, its flags kept" \
   || bad "codex_ro: rc=$rc $(cat "$TMP/ro.out" 2>/dev/null) $(tail -2 "$STAGE_LOG")"
