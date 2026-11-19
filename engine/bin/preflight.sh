@@ -756,8 +756,10 @@ stage_role() {   # $1 = claude|codex
   local who="$1" body earlier="" r
   printf '%s\n' "${ROLE_TITLE:-$ROLE}" > "$ART/role-$ROLE.title" 2>/dev/null || true
   rm -f "$ART/role-$ROLE.md" "$ART/role-$ROLE.unavailable" 2>/dev/null || true
-  body="$(CONTEXT="$(cat "$ART/context.md" 2>/dev/null)" RESEARCH="$(cat "$ART/research.md" 2>/dev/null)" \
-    DESIGN="$(cat "$ART/design.md" 2>/dev/null)" render "$(prompt_for "$ROLE_PROMPT" peer-brief.md)")"
+  # Read before any assignment: a `VAR=… VAR2="$(cat …)"` prefix exports VAR to that cat.
+  local _c _r _d _p; _c="$(cat "$ART/context.md" 2>/dev/null)"; _r="$(cat "$ART/research.md" 2>/dev/null)"
+  _d="$(cat "$ART/design.md" 2>/dev/null)"; _p="$(prompt_for "$ROLE_PROMPT" peer-brief.md)"
+  body="$(CONTEXT="$_c" RESEARCH="$_r" DESIGN="$_d" render "$_p")"
   for r in $(printf '%s' "$ROLE_READS" | tr ',' ' '); do
     if [ -s "$ART/role-$r.skipped" ]; then
       earlier="$earlier"$'\n\n'"## Роль «$(role_title "$r")» цього разу не кликали: $(cat "$ART/role-$r.skipped")"
@@ -814,9 +816,9 @@ stage_align_roles() {
   STAGE_LOG="$(stage_log_for align)"
   log "align/roles: agreeing on $n role results"
   local prompt
-  prompt="$(BRIEF_A="$all" CONTEXT="$(cat "$ART/context.md" 2>/dev/null)" \
-    RESEARCH="$(cat "$ART/research.md" 2>/dev/null)" DESIGN="$(cat "$ART/design.md" 2>/dev/null)" \
-    render "$(prompt_for "$ALIGN_PROMPT" roles-align.md)")"
+  local _c _r _d _p; _c="$(cat "$ART/context.md" 2>/dev/null)"; _r="$(cat "$ART/research.md" 2>/dev/null)"
+  _d="$(cat "$ART/design.md" 2>/dev/null)"; _p="$(prompt_for "$ALIGN_PROMPT" roles-align.md)"
+  prompt="$(BRIEF_A="$all" CONTEXT="$_c" RESEARCH="$_r" DESIGN="$_d" render "$_p")"
   run_peer codex "$prompt" "$ART/.align.partial" align; rc=$?
   if [ "$rc" = 0 ] && [ -s "$ART/.align.partial" ]; then
     mv -f "$ART/.align.partial" "$ART/peer-alignment.md"
@@ -844,10 +846,9 @@ stage_align() {
   # The same rule as the positions themselves: this is a model reading two briefs and comparing
   # them, and cutting it at a fixed number loses the comparison exactly when it was hardest.
   local align_prompt
-  align_prompt="$(BRIEF_A="$a" BRIEF_B="$b" \
-    CONTEXT="$(cat "$ART/context.md" 2>/dev/null)" \
-    RESEARCH="$(cat "$ART/research.md" 2>/dev/null)" DESIGN="$(cat "$ART/design.md" 2>/dev/null)" \
-    render "$(prompt_for "$ALIGN_PROMPT" peer-align.md)")"
+  local _c _r _d _p; _c="$(cat "$ART/context.md" 2>/dev/null)"; _r="$(cat "$ART/research.md" 2>/dev/null)"
+  _d="$(cat "$ART/design.md" 2>/dev/null)"; _p="$(prompt_for "$ALIGN_PROMPT" peer-align.md)"
+  align_prompt="$(BRIEF_A="$a" BRIEF_B="$b" CONTEXT="$_c" RESEARCH="$_r" DESIGN="$_d" render "$_p")"
   run_peer codex "$align_prompt" "$ART/.align.partial" align; rc=$?
   if [ "$rc" = 0 ] && [ -s "$ART/.align.partial" ]; then
     mv -f "$ART/.align.partial" "$ART/peer-alignment.md"

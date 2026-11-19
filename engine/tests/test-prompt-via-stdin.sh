@@ -83,6 +83,27 @@ for who in claude codex; do
   ls "$IDIR"/*.prompt "$IDIR"/.*.prompt 2>/dev/null | grep -q . && bad "a prompt file was left behind" || ok "and no prompt file was left behind"
 done
 
+echo "===== the alignment of the two positions, with research over the cap ====="
+# The real stage, end to end: research.md is read and handed to render, and the prompt reaches Codex.
+# cat and perl are held to Linux's cap on their environment too, so a value exported to them by a
+# prefix (\`A=… B="$(cat …)"\`) fails here as it would on a server.
+for t in cat perl; do
+  real="$(command -v "$t")"
+  printf '#!/bin/bash\nwhile IFS= read -r -d "" e; do [ "$(printf "%%s" "$e" | wc -c)" -gt 131072 ] && { echo "%s: Argument list too long (env)" >&2; exit 126; }; done < <(env -0)\nexec %s "$@"\n' "$t" "$real" > "$TMP/stub/$t"
+  chmod +x "$TMP/stub/$t"
+done
+printf '%s' "$BIG" > "$IDIR/research.md"
+printf 'position A\n' > "$IDIR/peer-claude.md"; printf 'position B\n' > "$IDIR/peer-codex.md"
+rm -f "$IDIR/peer-alignment.md"
+PATH="$TMP/stub:$PATH" SUPERVISOR_PEER_POLL=1 \
+  bash "$BIN/preflight.sh" --art "$IDIR" --stage align "$TMP/project" "задача" >/dev/null 2>&1
+case "$(cat "$IDIR/peer-alignment.md" 2>/dev/null)" in
+  "STDIN "*) n="$(sed -n 's/^STDIN \([0-9]*\) bytes.*/\1/p' "$IDIR/peer-alignment.md")"
+             [ "$n" -ge "$BYTES" ] && ok "the alignment ran with the research in it ($n bytes on stdin)" || bad "alignment read only $n bytes" ;;
+  *) bad "no alignment: $(ls "$IDIR" | tr '\n' ' ')" ;;
+esac
+rm -f "$TMP/stub/cat" "$TMP/stub/perl" "$IDIR/research.md" "$IDIR/peer-claude.md" "$IDIR/peer-codex.md" "$IDIR/peer-alignment.md"
+
 echo "===== a CLI the system refuses to start is the engine's fault, and said so ====="
 cp "$TMP/stub/claude" "$TMP/claude.stdin-stub"
 printf '#!/bin/bash\necho "$0: Argument list too long" >&2\nexit 126\n' > "$TMP/stub/claude"; chmod +x "$TMP/stub/claude"

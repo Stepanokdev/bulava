@@ -362,15 +362,28 @@ if [ -f "$LEDGER_F" ]; then
   _lopen="$(python3 "$BIN_DIR/lib/review-ledger.py" open "$LEDGER_F" 2>/dev/null)"
   # Per repository: the commit the last review read, and what the fixes changed since. A task's
   # code is often in repositories beside the main folder, not in it.
-  _lsince=""
+  _lsince=""; _lknown=" "
   while IFS=$'\t' read -r _lp _lsha; do
     [ -n "$_lp" ] && [ -n "$_lsha" ] && [ -d "$_lp" ] || continue
+    _lknown="$_lknown$_lp "
     git -C "$_lp" cat-file -e "$_lsha^{commit}" 2>/dev/null || continue
-    [ "$(git -C "$_lp" rev-parse HEAD 2>/dev/null)" = "$_lsha" ] && continue
+    # Against the working tree: a fix not yet committed is a fix this round too.
+    _lstat="$(git -C "$_lp" diff --stat "$_lsha" 2>/dev/null | tail -30)"
+    [ -n "$_lstat" ] || continue
     _lsince="$_lsince
-  in $_lp: \`git -C '$_lp' diff $_lsha\`
-$(git -C "$_lp" diff --stat "$_lsha" 2>/dev/null | tail -30)"
+  in $_lp: \`git -C '$_lp' diff $_lsha\` (commits and uncommitted changes since)
+$_lstat"
   done < <(python3 "$BIN_DIR/lib/review-ledger.py" repos "$LEDGER_F" 2>/dev/null | jq -r '.[] | [.path, .reviewed_sha] | @tsv' 2>/dev/null)
+  # A repository connected after the last review: all of its work is new to the fix check.
+  if [ -n "${IDIR_SCOPE:-}" ] && [ -s "$IDIR_SCOPE/extra-repos" ]; then
+    while IFS=$'\037' read -r _lp _lb _rest; do
+      [ -n "$_lp" ] && [ -d "$_lp" ] || continue
+      case "$_lknown" in *" $_lp "*) continue ;; esac
+      _lsince="$_lsince
+  in $_lp (connected since the last review): \`git -C '$_lp' diff $_lb\`
+$(git -C "$_lp" diff --stat "$_lb" 2>/dev/null | tail -30)"
+    done < "$IDIR_SCOPE/extra-repos"
+  fi
   [ -n "$_lsince" ] && _lsince="
 WHAT CHANGED SINCE THE LAST REVIEW (the fixes):$_lsince
 "
@@ -2046,8 +2059,9 @@ fi
 
 review_head="$(printf '%s\n' "$review" | head -8)"
 # Header lines only: "STATE: COMPLETE" quoted inside a sentence is not the reviewer's state.
-state=$(printf '%s\n' "$review_head" | grep -m1 -oE '^[[:space:]*]*STATE: *(COMPLETE|HANDOFF|BLOCKED)' | grep -oE 'COMPLETE|HANDOFF|BLOCKED' || echo "")
-verdict=$(printf '%s\n' "$review_head" | grep -m1 -oE '^[[:space:]*]*VERDICT: *(PASS|FAIL)' | grep -oE 'PASS|FAIL' || echo "")
+state=$(printf '%s\n' "$review_head" | grep -m1 -E '^[[:space:]*]*STATE:[[:space:]]*(COMPLETE|HANDOFF|BLOCKED)[[:space:]*]*$' | grep -oE 'COMPLETE|HANDOFF|BLOCKED' || echo "")
+# The whole line, so "VERDICT: PASS?" or "VERDICT: PASSING, still checking" is no verdict at all.
+verdict=$(printf '%s\n' "$review_head" | grep -m1 -E '^[[:space:]*]*VERDICT:[[:space:]]*(PASS|FAIL|N/A)[[:space:]*]*$' | grep -oE 'PASS|FAIL' || echo "")
 # A reviewer that answered is a reviewer that was reachable, whatever it then said about the work.
 [ -n "$state" ] && rm -f "$STATE_DIR/unreachable-$RUN_KEY" 2>/dev/null || true
 # Who actually read it. A substitution nobody was told about is worse than the wall it went round,
@@ -2136,6 +2150,29 @@ if [ "${TEAM_ROUND:-0}" = 1 ] && [ "$state" = COMPLETE ] && [ "$verdict" = FAIL 
   _ln="$(python3 "$BIN_DIR/lib/review-ledger.py" init "$LEDGER_F" "$_rtmp" "${REVIEW_SNAPSHOT:-[]}" 2>>"$CODEX_LOG")"
   rm -f "$_rtmp"
   case "$_ln" in ''|*[!0-9]*) _ln=0 ;; esac
+  # Two members often describe one defect in their own words. One short call names the duplicates
+  # before any fix is counted, so a defect closes once or not at all. Without an answer the ids stay
+  # apart, and the fix check may still merge them ("SAME AS").
+  if [ "$_ln" -gt 1 ]; then
+    _saved_review="$review"; _saved_rc="$review_rc"
+    review_call "DUPLICATE CHECK. Independent reviewers of one change reported the defects below. Some may be
+the same defect described in different words. For each id that is the same defect as an EARLIER id,
+answer one line exactly like
+  T3: SAME AS T1
+and nothing else. If none are the same, answer NONE. Do not judge the defects, only group them.
+
+$(python3 "$BIN_DIR/lib/review-ledger.py" open "$LEDGER_F" 2>/dev/null)"
+    if [ "$review_rc" = 0 ] && [ -n "$review" ]; then
+      _rtmp="$(mktemp "${TMPDIR:-/tmp}/review-answer.XXXXXX")"; printf '%s\n' "$review" > "$_rtmp"
+      _merged="$(python3 "$BIN_DIR/lib/review-ledger.py" merge "$LEDGER_F" "$_rtmp" 2>>"$CODEX_LOG")"
+      rm -f "$_rtmp"
+      [ -n "$_merged" ] && log "duplicate check: $_merged"
+      _ln="$(python3 "$BIN_DIR/lib/review-ledger.py" count "$LEDGER_F" 2>/dev/null)"; case "$_ln" in ''|*[!0-9]*) _ln=0 ;; esac
+    else
+      log "duplicate check got no answer — the ids stay apart"
+    fi
+    review="$_saved_review"; review_rc="$_saved_rc"
+  fi
   LEDGER_OPEN="$_ln"
   log "the team's review goes back: $_ln item(s) on the ledger — the next rounds are a fix check by one reviewer"
 fi
@@ -2479,6 +2516,7 @@ if [ "$verdict" != "PASS" ]; then
     { echo ""; echo "## $(date '+%F %T') — session $session_id"; \
       echo "⚠️ COMPLETE, але вердикт нечитабельний після $MAX_ROUNDS спроб — переглянь вручну."; } \
       | legacy_note "$DEBT_OUT" REVIEW-DEBT.md
+    emit_review_json COMPLETE FAIL debt "$review"
     mark_done debt
     exit 0
   fi

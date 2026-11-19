@@ -5,6 +5,7 @@
   review-ledger.py apply <ledger> <review-file> [<snapshot-json>]  one fix-check answer; prints JSON
   review-ledger.py open  <ledger>                                   the open items, one per line
   review-ledger.py count <ledger>                                   how many are open
+  review-ledger.py merge <ledger> <answer-file>                     "T3: SAME AS T1" lines → merged
 Exit 3 when the ledger cannot be read or written: the caller must not pass on it.
 
 Why a ledger and not the last round's list. Progress used to be "fewer [repeat]s than the last
@@ -17,9 +18,10 @@ open id as FIXED or OPEN; an id it does not mention stays open. Progress is an i
 for one defect close together or not at all, so duplicates cannot fake it. New blocking defects the
 answer lists (numbered, as before) join as N1, N2, ...
 
-One defect the team described twice gets two ids at first. The fix check is asked to say so —
-"T2: SAME AS T1" — and from then on T2 follows T1: it is not counted on its own, and the defect
-closes once. Statuses that disagree for one id (FIXED and OPEN both) read as OPEN. [scope_violation]
+One defect the team described twice gets two ids at first. Right after the team a short duplicate
+check names them ("T2: SAME AS T1"), and a fix check may too; from then on T2 follows T1: it is not
+counted on its own, and the defect closes once. Statuses that disagree for one id (FIXED and OPEN
+both), or an OPEN said of any description of a defect, read as OPEN. [scope_violation]
 is never a ledger item: the gate quarantines it on its own path.
 
 The ledger file is JSON: {"items":[{"id","text","open","same_as"?}], "stall":n, "rounds":n,
@@ -138,6 +140,20 @@ def run(cmd, path):
     if cmd == "repos":
         print(json.dumps(d.get("repos") or []))
         return 0
+    if cmd == "merge":
+        # The duplicate check right after the team: "T3: SAME AS T1" lines only, nothing else moves.
+        st = statuses(read(sys.argv[3]))
+        ids = {it["id"] for it in d["items"]}
+        merged = []
+        for it in d["items"]:
+            v = st.get(it["id"])
+            if isinstance(v, tuple) and v[1] in ids and canonical(d["items"], v[1]) != it["id"]:
+                it["same_as"] = canonical(d["items"], v[1])
+                it["open"] = False
+                merged.append("%s=%s" % (it["id"], it["same_as"]))
+        save(path, d)
+        print(" ".join(merged))
+        return 0
     if cmd == "apply":
         text = read(sys.argv[3])
         st = statuses(text)
@@ -150,9 +166,11 @@ def run(cmd, path):
                 it["open"] = False
         counted = [it for it in d["items"] if not it.get("same_as")]
         was_open = [it for it in counted if it["open"]]
+        # A defect is FIXED only when its own id says so and no description of it says OPEN.
+        said_open = {canonical(d["items"], i) for i, v in st.items() if v == "OPEN"}
         closed = []
         for it in was_open:
-            if st.get(it["id"]) == "FIXED":
+            if st.get(it["id"]) == "FIXED" and it["id"] not in said_open:
                 it["open"] = False
                 closed.append(it["id"])
         n = sum(1 for it in d["items"] if it["id"].startswith("N"))

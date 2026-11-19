@@ -33,6 +33,7 @@ cat > "$FAKE/codex" <<'EOF'
 if [ "${1:-}" = login ]; then echo "Logged in using ChatGPT"; exit 0; fi
 p="${@: -1}"; [ "$p" = - ] && p="$(cat)"   # the engine sends prompts on stdin
 case "$p" in
+  "DUPLICATE CHECK."*) printf '%s\n' "${FAKE_MERGE:-NONE}"; exit 0 ;;   # not a review: not counted
   *"Prioritize requirements and business correctness"*) role=contract ;;
   *"Prioritize security and data integrity"*)           role=security ;;
   *"Prioritize state transitions and integration"*)     role=state ;;
@@ -50,7 +51,7 @@ case "$how" in
   NOVERDICT) echo "STATE: COMPLETE"; echo "looked at it"; exit 0 ;;
   # The same defect back, plus an advisory: no progress, whatever the advisory adds to the count.
   # A fix check: answer the ledger's ids, as the prompt asks.
-  FIXED_ALL|OPEN_ALL|FIX_FIRST|PASS_SILENT|SAME_TWICE|SAME_FIXED|NOVERDICT_FIX|SCOPE_ONLY|COMMIT_DURING)
+  FIXED_ALL|OPEN_ALL|FIX_FIRST|PASS_SILENT|SAME_TWICE|SAME_FIXED|NOVERDICT_FIX|SCOPE_ONLY|COMMIT_DURING|PASSQ|NEWREG|CONFLICT)
              ids="$(printf '%s\n' "$p" | grep -oE '^[TN][0-9]+:' | tr -d : | awk '!s[$0]++')"
              first="$(printf '%s\n' "$ids" | head -1)"
              case "$how" in
@@ -65,6 +66,10 @@ case "$how" in
                SAME_FIXED) echo "STATE: COMPLETE"; echo "VERDICT: PASS"; echo "$first: FIXED"
                            for i in $ids; do [ "$i" = "$first" ] || echo "$i: SAME AS $first"; done ;;
                NOVERDICT_FIX) echo "STATE: COMPLETE"; for i in $ids; do echo "$i: FIXED"; done ;;
+               PASSQ)      echo "STATE: COMPLETE"; echo "VERDICT: PASS?"; for i in $ids; do echo "$i: FIXED"; done ;;
+               NEWREG)     echo "STATE: COMPLETE"; echo "VERDICT: FAIL"; for i in $ids; do echo "$i: FIXED"; done
+                           echo "1. [regression_from_patch] src/a.ts — the fix broke the empty state" ;;
+               CONFLICT)   echo "STATE: COMPLETE"; echo "VERDICT: FAIL"; echo "T1: FIXED"; echo "T2: OPEN — still overlaps" ;;
                SCOPE_ONLY) echo "STATE: COMPLETE"; echo "VERDICT: FAIL"; for i in $ids; do echo "$i: FIXED"; done
                            echo "1. [scope_violation] docs/x.md — outside write_paths" ;;
                COMMIT_DURING) ( cd "$PWD" && echo "late $RANDOM" >> src/a.ts && git commit -qam late ) >/dev/null 2>&1
@@ -260,6 +265,13 @@ mkcase
 FAKE_CONTRACT=DUP FAKE_STATE=DUP team >/dev/null; fix
 FAKE_SINGLE=SAME_FIXED team >/dev/null
 check "merged and fixed: the one defect closes once, and it passes" 'done_is passed'
+mkcase
+FAKE_MERGE="T2: SAME AS T1" FAKE_CONTRACT=DUP FAKE_STATE=DUP team >/dev/null
+check "the duplicate check right after the team merges them: one open" '[ "$(ledger_open)" = 1 ] && grep -q "duplicate check: T2=T1" "$SUPERVISOR_STATE_DIR/supervisor.log"'
+fix; FAKE_SINGLE=CONFLICT team >/dev/null
+check "T1 FIXED but its duplicate OPEN: still open, no progress" '[ "$(ledger_open)" = 1 ] && [ "$(jq .stall "$SUPERVISOR_STATE_DIR/review-ledger-$RID")" = 1 ]'
+fix; FAKE_SINGLE=CONFLICT team >/dev/null
+check "twice: a person"                          'done_is needs-user'
 python3 - "$SUPERVISOR_STATE_DIR/l.json" <<'PY' && ok "statuses that disagree for one id read as OPEN, and FIXED? is not FIXED" || no "status parsing"
 import json, subprocess, sys
 p = sys.argv[1]
@@ -279,6 +291,8 @@ check "a bare PASS: one call, refused, T1 sent back" '[ "$(calls)" = 1 ] && ! do
 check "T1 still open"                            '[ "$(ledger_open)" = 1 ]'
 FAKE_SINGLE=NOVERDICT_FIX team >/dev/null
 check "FIXED lines with no VERDICT close nothing" '[ "$(ledger_open)" = 1 ] && ! done_is passed'
+FAKE_SINGLE=PASSQ team >/dev/null
+check "\"VERDICT: PASS?\" is no verdict: FIXED lines close nothing" '[ "$(ledger_open)" = 1 ] && ! done_is passed'
 echo "{broken" > "$SUPERVISOR_STATE_DIR/review-ledger-$RID"
 FAKE_SINGLE=FIXED_ALL team >/dev/null
 check "a damaged ledger is never passed on"      'done_is needs-user'
@@ -378,10 +392,32 @@ read_sha="$(git -C "$PROJ" rev-parse HEAD)"
 FAKE_SINGLE=FIXED_ALL team >/dev/null
 check "the receipt names the commit that was read" 'done_is passed && [ "$(jq -r ".repos[0].reviewed_sha" "$IDIR/report/receipt.json")" = "$read_sha" ]'
 
+echo "===== a fix not yet committed is shown, and a regression it brings holds the work ====="
+mkcase
+FAKE_CONTRACT=FAIL team >/dev/null
+echo "uncommitted fix" >> "$PROJ/src/a.ts"
+rm -f "$CALLS" "$CALLS".*
+out="$(FAKE_SINGLE=NEWREG team)"
+check "HEAD unchanged, the working tree's fix is in the diff" 'grep -q "commits and uncommitted changes since" "$CALLS.single.prompt"'
+check "T1 closed, the fix's regression is N1 and holds FAIL" '[ "$(python3 "$ROOT/bin/lib/review-ledger.py" open "$SUPERVISOR_STATE_DIR/review-ledger-$RID")" = "N1: [regression_from_patch] src/a.ts — the fix broke the empty state" ] && printf "%s" "$out" | grep -q "\"decision\""'
+fix; FAKE_SINGLE=FIXED_ALL team >/dev/null
+check "N1 confirmed fixed: accepted"             'done_is passed'
+
 echo "===== a record without a receipt names the commit read too ====="
+mkcase
+TID="TT-$RANDOM"; task_create "$TID" "$PROJ" test t "goal" main "$(git -C "$PROJ" rev-parse HEAD~1)" >/dev/null
+printf '%s\n' "$TID" > "$IDIR/task-id"; jq -nc '{id:"d-1"}' > "$IDIR/dispatch.json"
+task_attempt_begin "$TID" "$IDIR" d-1 initial >/dev/null
+read_sha="$(git -C "$PROJ" rev-parse HEAD)"
+echo late >> "$PROJ/src/a.ts"; git -C "$PROJ" commit -qam "after the verdict"
+CP="$(canon_path "$PROJ")"   # the paths repos_state_json reports, as the gate's snapshot has them
+REVIEW_SNAPSHOT="$(jq -nc --arg p "$CP" --arg h "$read_sha" '[{path:$p, reviewed_sha:$h}]')" task_on_terminal "$IDIR" passed
+check "no receipt: .repos names the commit the reviewer read" '[ "$(task_get "$TID" ".repos[0].reviewed_sha")" = "$read_sha" ]'
+check "and .repo_reviewed too, not the later commit" '[ "$(task_get "$TID" ".repo_reviewed[\"$CP\"]")" = "$read_sha" ]'
+
 REVIEW_SNAPSHOT='[{"path":"/w/api","reviewed_sha":"aaa"}]'
 got="$(repos_as_reviewed '[{"path":"/w/api","reviewed_sha":"bbb","clean":true},{"path":"/w/web","reviewed_sha":"ccc"}]')"
-check "reviewed_sha is the commit the reviewer read, other repositories as they are" '[ "$(jq -r ".[0].reviewed_sha,.[1].reviewed_sha" <<<"$got" | tr "\n" " ")" = "aaa ccc " ]'
+check "reviewed_sha is the commit read; a repository the reviewer never read has none" '[ "$(jq -r ".[0].reviewed_sha,.[1].reviewed_sha,.[1].unreviewed" <<<"$got" | tr "\\n" " ")" = "aaa  true " ]'
 check "the task record (tasks.sh) and the receipt both go through it" 'grep -q "repos_as_reviewed \"\$repos\"" "$ROOT/bin/lib/tasks.sh" && grep -q "repos_as_reviewed \"\$repos\"" "$GATE"'
 unset REVIEW_SNAPSHOT
 
