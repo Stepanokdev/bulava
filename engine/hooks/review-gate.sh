@@ -399,13 +399,27 @@ $_lstat"
     while IFS=$'\037' read -r _lp _lb _rest; do
       [ -n "$_lp" ] && [ -d "$_lp" ] || continue
       case "$_lknown" in *" $_lp "*) continue ;; esac
+      # Its whole work against the base, new files nobody added included (a tree of the worktree).
+      _lnow="$(worktree_tree "$_lp")"
+      if [ -n "$_lnow" ]; then _lcmd="git -C '$_lp' diff $_lb $_lnow"; _lstat="$(git -C "$_lp" diff --stat "$_lb" "$_lnow" 2>/dev/null | tail -30)"
+      else _lcmd="git -C '$_lp' diff $_lb"; _lstat="$(git -C "$_lp" diff --stat "$_lb" 2>/dev/null | tail -30)"; fi
       _lsince="$_lsince
-  in $_lp (connected since the last review): \`git -C '$_lp' diff $_lb\`
-$(git -C "$_lp" diff --stat "$_lb" 2>/dev/null | tail -30)"
+  in $_lp (connected since the last review, uncommitted and new files included): \`$_lcmd\`
+$_lstat"
     done < "$IDIR_SCOPE/extra-repos"
   fi
   [ -n "$_lsince" ] && _lsince="
 WHAT CHANGED SINCE THE LAST REVIEW (the fixes):$_lsince
+"
+  # Until one answer has said which ids are one defect, every fix check is asked to; a closing is
+  # not counted as progress before that (review-ledger.py).
+  _lgroup=""
+  [ "$(python3 "$BIN_DIR/lib/review-ledger.py" grouped "$LEDGER_F" 2>/dev/null)" = 0 ] && _lgroup="The ids above come from several reviewers and some may be one defect described twice. Before the
+statuses, name every such pair with a SAME AS line onto the earlier id and then write the line
+  DUPLICATES: NAMED
+or, if every id is a different defect, the line
+  DUPLICATES: NONE
+Until one of these lines is given, and every SAME AS in it names an open id above, no item closes.
 "
   FIXCHECK_BLOCK="
 FIX CHECK — this is not a first reading. A team of specialist reviewers has already read this change
@@ -420,7 +434,7 @@ Right after the header lines, answer every id above on a line of its own, exactl
   T2: OPEN — what is still wrong and what done looks like
   T3: SAME AS T1        (when two ids are one defect described twice; answer it under T1)
 An id you do not answer counts as still open. VERDICT: PASS needs every id FIXED.
-Then, only if there are any, a numbered list of NEW defects — ones not on the list above. A new defect
+${_lgroup}Then, only if there are any, a numbered list of NEW defects — ones not on the list above. A new defect
 blocks only if a person meets it on the ordinary path of this task, it loses their data, or the fixes
 introduced it; anything else you notice — another rare combination, one more edge case, polish — is
 [related_improvement]: name it, and do not hold the work back for it. Do not read the whole change
@@ -479,6 +493,9 @@ ledger_open_json() {
 }
 
 emit_review_json() {
+  # Every pass, and every debt, is written here first, before the ledger is dropped or a piece is
+  # accepted: the place to make sure it is still about what the reviewer read.
+  case "${3:-}" in passed|debt) guard_before_accept ;; esac
   [ -n "${REVIEW_JSON:-}" ] || return 0
   if [ "${3:-}" = debt ] && [ -n "$(ledger_open_ids)" ]; then
     set -- "${1:-}" "${2:-}" needs-user "${4:-}
@@ -525,20 +542,43 @@ log() {
   [ -n "${IDIR_SCOPE:-}" ] && who="[$(basename "$IDIR_SCOPE")] "
   echo "$(date '+%F %T') [review-gate] ${who}$*" >> "$LOG"
 }
+# Repositories of the run that the review about to be decided on did not read (not in
+# REVIEW_SNAPSHOT), one path per line. Empty when there is no snapshot to compare with.
+repos_joined_since_snapshot() {
+  [ -n "${REVIEW_SNAPSHOT:-}" ] && [ -n "${IDIR_SCOPE:-}" ] || return 0
+  repos_state_json "$IDIR_SCOPE" "$(run_project_dir "$IDIR_SCOPE" "${cwd:-$PWD}")" 2>/dev/null \
+    | jq -r --argjson snap "$REVIEW_SNAPSHOT" '[$snap[].path] as $read | .[] | select(.path as $p | $read | index($p) | not) | .path' 2>/dev/null
+}
+# A repository that joined the run after the reviewer read it was never read: no verdict covers it.
+# Called right after the review, before anything is written or accepted on its answer.
+block_if_repo_joined() {
+  local _new; _new="$(repos_joined_since_snapshot)"
+  [ -n "$_new" ] || return 0
+  log "a repository joined after the review ($(printf '%s' "$_new" | tr '\n' ' ')) — nothing decided; reviewing again"
+  jq -n --arg reason "🌙 Після того як Codex прочитав роботу, до неї додався репозиторій ($(printf '%s' "$_new" | tr '\n' ' ')). Його ніхто не перевіряв, тож роботу не прийнято: заверши знову, і її прочитають разом із ним." \
+    '{decision: "block", reason: $reason}'
+  exit 0
+}
+# Right before a verdict is acted on (written as passed or debt, the ledger dropped, a piece
+# accepted): the repositories are still the ones the reviewer read, at the commits it read. One
+# joined, or a commit moved, since then: nothing is accepted, and the work is read again as it is.
+guard_before_accept() {
+  block_if_repo_joined
+  [ -n "${REVIEW_SNAPSHOT:-}" ] || return 0
+  local _now _moved
+  _now="$(review_snapshot)"
+  _moved="$(jq -rn --argjson a "$REVIEW_SNAPSHOT" --argjson b "${_now:-[]}" \
+    '[$b[] | . as $r | select(([$a[] | select(.path == $r.path) | .reviewed_sha] | first) != $r.reviewed_sha) | .path] | join(" ")' 2>/dev/null)"
+  [ -n "$_moved" ] || return 0
+  log "the commits moved after the review was read ($_moved) — nothing accepted; reviewing again"
+  jq -n --arg reason "🌙 Після того як Codex прочитав роботу, у репозиторії ($_moved) зʼявився новий коміт. Вердикт не стосується того, що є зараз, тож роботу не прийнято: заверши знову, і її прочитають такою, як вона є." \
+    '{decision: "block", reason: $reason}'
+  exit 0
+}
 mark_done() {  # $1 = disposition, [$2] = why, in a sentence the person reads
-  local disposition="${1:-passed}" why="${2:-}" _unc _lo _new
-  # A repository that joined the run after the reviewer read it was never read: no pass covers it.
-  # The work is reviewed again with it, rather than published with a commit nobody saw.
-  if [ "$disposition" = passed ] && [ -n "${REVIEW_SNAPSHOT:-}" ] && [ -n "${IDIR_SCOPE:-}" ]; then
-    _new="$(repos_state_json "$IDIR_SCOPE" "$(run_project_dir "$IDIR_SCOPE" "${cwd:-$PWD}")" 2>/dev/null \
-      | jq -r --argjson snap "$REVIEW_SNAPSHOT" '[$snap[].path] as $read | .[] | select(.path as $p | $read | index($p) | not) | .path' 2>/dev/null)"
-    if [ -n "$_new" ]; then
-      log "a repository joined after the review ($(printf '%s' "$_new" | tr '\n' ' ')) — not passed; reviewing again"
-      jq -n --arg reason "🌙 Після того як Codex прочитав роботу, до неї додався репозиторій ($(printf '%s' "$_new" | tr '\n' ' ')). Його ніхто не перевіряв, тож роботу не прийнято: заверши знову, і її прочитають разом із ним." \
-        '{decision: "block", reason: $reason}'
-      exit 0
-    fi
-  fi
+  local disposition="${1:-passed}" why="${2:-}" _unc _lo
+  # The same guard once more, for any path that reaches a pass without passing emit_review_json.
+  [ "$disposition" = passed ] && guard_before_accept
   _lo="$(ledger_open_ids)"
   if [ "$disposition" = debt ] && [ -n "$_lo" ]; then
     disposition=needs-user
@@ -1334,6 +1374,9 @@ fi
 # A report's review keeps its own count and its own limit, further down.
 if [ "${REPORT_REVIEW:-0}" != 1 ] && [ "$rounds" -ge "$SUPERVISOR_MAX_ROUNDS_HARD" ]; then
   log "hard round ceiling ($SUPERVISOR_MAX_ROUNDS_HARD) reached for $session_id — allowing stop"
+  # review.json says how this ended, not what the previous round said: debt, or needs-user with the
+  # whole list when review items are still open (emit_review_json turns one into the other).
+  emit_review_json COMPLETE FAIL debt "Стеля раундів рев'ю ($SUPERVISOR_MAX_ROUNDS_HARD) досягнута."
   mark_done debt
   exit 0
 fi
@@ -2093,6 +2136,9 @@ if [ -n "$REVIEW_SNAPSHOT" ] && [ "$(review_snapshot)" != "$REVIEW_SNAPSHOT" ]; 
   exit 0
 fi
 rm -f "$STATE_DIR/moved-$RUN_KEY" 2>/dev/null || true
+# Nor is anything decided when a repository joined the run while the reviewer read it: the verdict,
+# a pass, the ledger and an accepted piece would all be about work it never saw.
+block_if_repo_joined
 
 # A call that failed has no verdict, whatever it managed to print on the way down.
 #
@@ -2200,29 +2246,6 @@ if [ "${TEAM_ROUND:-0}" = 1 ] && [ "$state" = COMPLETE ] && [ "$verdict" = FAIL 
   _ln="$(python3 "$BIN_DIR/lib/review-ledger.py" init "$LEDGER_F" "$_rtmp" "${REVIEW_SNAPSHOT:-[]}" 2>>"$CODEX_LOG")"
   rm -f "$_rtmp"
   case "$_ln" in ''|*[!0-9]*) _ln=0 ;; esac
-  # Two members often describe one defect in their own words. One short call names the duplicates
-  # before any fix is counted, so a defect closes once or not at all. Without an answer the ids stay
-  # apart, and the fix check may still merge them ("SAME AS").
-  if [ "$_ln" -gt 1 ]; then
-    _saved_review="$review"; _saved_rc="$review_rc"
-    review_call "DUPLICATE CHECK. Independent reviewers of one change reported the defects below. Some may be
-the same defect described in different words. For each id that is the same defect as an EARLIER id,
-answer one line exactly like
-  T3: SAME AS T1
-and nothing else. If none are the same, answer NONE. Do not judge the defects, only group them.
-
-$(python3 "$BIN_DIR/lib/review-ledger.py" open "$LEDGER_F" 2>/dev/null)"
-    if [ "$review_rc" = 0 ] && [ -n "$review" ]; then
-      _rtmp="$(mktemp "${TMPDIR:-/tmp}/review-answer.XXXXXX")"; printf '%s\n' "$review" > "$_rtmp"
-      _merged="$(python3 "$BIN_DIR/lib/review-ledger.py" merge "$LEDGER_F" "$_rtmp" 2>>"$CODEX_LOG")"
-      rm -f "$_rtmp"
-      [ -n "$_merged" ] && log "duplicate check: $_merged"
-      _ln="$(python3 "$BIN_DIR/lib/review-ledger.py" count "$LEDGER_F" 2>/dev/null)"; case "$_ln" in ''|*[!0-9]*) _ln=0 ;; esac
-    else
-      log "duplicate check got no answer — the ids stay apart"
-    fi
-    review="$_saved_review"; review_rc="$_saved_rc"
-  fi
   LEDGER_OPEN="$_ln"
   log "the team's review goes back: $_ln item(s) on the ledger — the next rounds are a fix check by one reviewer"
 fi
@@ -2608,6 +2631,7 @@ if [ "$BOUNDED" = 1 ]; then
   exit 0
 fi
 
+guard_before_accept   # before the counts and the ledger go
 rm -f "$rounds_file" "$STATE_DIR/rounds-meta-$RUN_KEY" "$STATE_DIR/rounds-findings-$RUN_KEY" "$remed_file" "$STATE_DIR/remed-meta-$RUN_KEY" "$harness_file" "$STATE_DIR/handoffs-$RUN_KEY" "$LEDGER_F"
 log "targeted review PASS (state=COMPLETE); verify=$verify_status"
 if [ "${verify_status:-}" = inconclusive ]; then

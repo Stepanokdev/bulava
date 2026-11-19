@@ -127,6 +127,17 @@ if review_why and (review in ("failed", "debt") or R.get("accepted_with_notes"))
     card(t("What the review said", "Що сказала перевірка", "Что сказала проверка"),
          f'<pre class="task">{esc(review_why[:4000])}</pre>', accent=True)
 
+# The review's items still open, whole and by id: the findings above are the raw answer, clipped,
+# and the list a person has to act on must reach him complete (review.json carries the same list).
+open_items = [o for o in (R.get("open_items") or []) if isinstance(o, dict)]
+if open_items:
+    items = "".join(
+        f'<li><span class="tag">{esc(o.get("id"))}</span><span>{esc(o.get("text"))}</span></li>'
+        for o in open_items
+    )
+    card(t("Still open from the review", "Ще відкрито з перевірки", "Ещё открыто по проверке"),
+         f'<ul class="finds">{items}</ul>', accent=True)
+
 # Where Codex was meant to take part and did not. Each of those steps carried on with Claude alone,
 # on purpose — and until this card the result never said so: a pass read the same whether Codex had
 # prepared, advised and reviewed, or only reviewed.

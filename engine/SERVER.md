@@ -389,8 +389,11 @@ case, the earlier items mostly closed, and a run never stalled.
 
 - An id the answer does not mention stays open. A PASS with ids still open is asked again once, and
   then counts as a FAIL with those ids sent back.
-- Progress is an id closed. Two ids for one defect, described by two members, close together or not
-  at all, so duplicates cannot look like progress. No id closed for `SUPERVISOR_STALL_LIMIT` rounds
+- Progress is an id closed. Two members may describe one defect twice; the first fix check is asked
+  to name such pairs (`T2: SAME AS T1`, or `DUPLICATES: NONE`), and until an answer has done that a
+  closed id is not counted as progress. After that two ids for one defect close together or not at
+  all, so duplicates cannot look like progress. No extra call: the team's round is 3 calls, every
+  round after it 1. No id closed for `SUPERVISOR_STALL_LIMIT` rounds
   parks the run for a person, without waiting for the base patience (`SUPERVISOR_MAX_ROUNDS`), and
   with the open ids in `review.json`. At the round ceiling with ids still open it is `needs-user`,
   not debt.
@@ -400,7 +403,8 @@ case, the earlier items mostly closed, and a run never stalled.
   rules clears the ledger and the review budget; the whole team reads again.
 
 The verdict belongs to the commits the reviewer read: they are taken before the call, a commit that
-lands during it voids the answer (twice in a row asks a person), and the receipt's `reviewed_sha` is
+lands during it voids the answer (twice in a row asks a person), so does a repository that joined
+the run during it — nothing is written, passed or accepted before it is read — and the receipt's `reviewed_sha` is
 the commit read, not `HEAD` at the time the receipt is written.
 
 `doctor --server --json` reports it as `engine.review_team`, with the calls the first round costs
