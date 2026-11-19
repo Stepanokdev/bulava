@@ -6208,6 +6208,18 @@ repos_state_json() {   # $1=instance dir $2=main project dir → JSON array
   done | jq -s -c '.'
 }
 
+# The repositories as the reviewer read them: each reviewed_sha replaced by the commit in
+# REVIEW_SNAPSHOT (the gate's, taken before its call) when there is one for that path. What a bridge
+# publishes is reviewed_sha, and HEAD by the time a record is written may be a commit nobody read.
+repos_as_reviewed() {   # $1=repos JSON array → JSON array
+  case "${REVIEW_SNAPSHOT:-}" in
+    '['*) jq -c --argjson snap "$REVIEW_SNAPSHOT" \
+            'map(. as $r | .reviewed_sha = ((first($snap[] | select(.path == $r.path) | .reviewed_sha)) // $r.reviewed_sha))' \
+            <<<"$1" 2>/dev/null || printf '%s' "$1" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
 # The repositories with uncommitted work, one path per line. On a server a run is accepted only when
 # every one of them is committed: the bridge publishes commits, and work outside a commit is work the
 # review saw and nobody would ever receive.

@@ -360,14 +360,20 @@ if [ -f "$LEDGER_F" ]; then
   FIXCHECK=1
   PREVIOUS_BLOCK=""   # the ledger is the list now: complete, with ids, not the last answer clipped
   _lopen="$(python3 "$BIN_DIR/lib/review-ledger.py" open "$LEDGER_F" 2>/dev/null)"
-  _lsha="$(jq -r '.sha // ""' "$LEDGER_F" 2>/dev/null)"
+  # Per repository: the commit the last review read, and what the fixes changed since. A task's
+  # code is often in repositories beside the main folder, not in it.
   _lsince=""
-  if [ -n "$_lsha" ] && git -C "$cwd" cat-file -e "$_lsha^{commit}" 2>/dev/null; then
-    _lsince="
-WHAT CHANGED SINCE THE LAST REVIEW: \`git diff $_lsha\` in the project (the fixes). In short:
-$(git -C "$cwd" diff --stat "$_lsha" 2>/dev/null | tail -40)
+  while IFS=$'\t' read -r _lp _lsha; do
+    [ -n "$_lp" ] && [ -n "$_lsha" ] && [ -d "$_lp" ] || continue
+    git -C "$_lp" cat-file -e "$_lsha^{commit}" 2>/dev/null || continue
+    [ "$(git -C "$_lp" rev-parse HEAD 2>/dev/null)" = "$_lsha" ] && continue
+    _lsince="$_lsince
+  in $_lp: \`git -C '$_lp' diff $_lsha\`
+$(git -C "$_lp" diff --stat "$_lsha" 2>/dev/null | tail -30)"
+  done < <(python3 "$BIN_DIR/lib/review-ledger.py" repos "$LEDGER_F" 2>/dev/null | jq -r '.[] | [.path, .reviewed_sha] | @tsv' 2>/dev/null)
+  [ -n "$_lsince" ] && _lsince="
+WHAT CHANGED SINCE THE LAST REVIEW (the fixes):$_lsince
 "
-  fi
   FIXCHECK_BLOCK="
 FIX CHECK — this is not a first reading. A team of specialist reviewers has already read this change
 in full and sent it back. This round:
@@ -379,6 +385,7 @@ ${_lsince}
 Right after the header lines, answer every id above on a line of its own, exactly:
   T1: FIXED
   T2: OPEN — what is still wrong and what done looks like
+  T3: SAME AS T1        (when two ids are one defect described twice; answer it under T1)
 An id you do not answer counts as still open. VERDICT: PASS needs every id FIXED.
 Then, only if there are any, a numbered list of NEW defects — ones not on the list above. A new defect
 blocks only if a person meets it on the ordinary path of this task, it loses their data, or the fixes
@@ -423,8 +430,21 @@ legacy_note() {  # $1=dest-var-value  $2=repo-basename  (appends stdin to both)
   if [ "${SUPERVISOR_LEGACY_REPO_NOTES:-0}" = 1 ]; then printf '%s' "$body" >> "$cwd/$2"; fi
 }
 
+# Items still open on the review ledger (see FIX CHECK). Work with any of them open is never debt:
+# debt says "accepted, with a gap in the proof", and these are defects nobody has seen fixed.
+ledger_open_ids() {
+  [ -n "${LEDGER_F:-}" ] && [ -f "$LEDGER_F" ] || return 0
+  python3 "$BIN_DIR/lib/review-ledger.py" open "$LEDGER_F" 2>/dev/null | sed -n 's/^\([TN][0-9]*\): .*/\1/p' | tr '\n' ' ' | sed 's/ $//'
+}
+
 emit_review_json() {
   [ -n "${REVIEW_JSON:-}" ] || return 0
+  if [ "${3:-}" = debt ] && [ -n "$(ledger_open_ids)" ]; then
+    set -- "${1:-}" "${2:-}" needs-user "${4:-}
+
+STILL OPEN FROM THE REVIEW:
+$(python3 "$BIN_DIR/lib/review-ledger.py" open "$LEDGER_F" 2>/dev/null)"
+  fi
   jq -n --arg sid "$session_id" --arg st "${1:-}" --arg vd "${2:-}" \
         --arg disp "${3:-}" --arg mode "$(runspec_mode "${IDIR_SCOPE:-}")" \
         --arg round "$(( ${rounds:-0} + 1 ))" --arg verify "${verify_status:-}" \
@@ -463,7 +483,13 @@ log() {
   echo "$(date '+%F %T') [review-gate] ${who}$*" >> "$LOG"
 }
 mark_done() {  # $1 = disposition, [$2] = why, in a sentence the person reads
-  local disposition="${1:-passed}" why="${2:-}" _unc
+  local disposition="${1:-passed}" why="${2:-}" _unc _lo
+  _lo="$(ledger_open_ids)"
+  if [ "$disposition" = debt ] && [ -n "$_lo" ]; then
+    disposition=needs-user
+    why="Рев'ю зупинилось з відкритими пунктами: $_lo"
+    log "debt with review items still open ($_lo) — settled as needs-user"
+  fi
   # On a server `passed` means "these commits may be published". Work that was never committed is
   # not in any of them, so whichever path led here — a declared outcome or none — a pass over an
   # uncommitted repository is not a pass. The declared case is sent back to commit long before this;
@@ -590,11 +616,7 @@ restamp_receipt() {  # $1 = passed | debt | needs-user | scope_violation
   repos="$(repos_state_json "$idir" "$(run_project_dir "$idir" "${cwd:-$PWD}")" 2>/dev/null)"
   case "$repos" in '['*) ;; *) repos='[]' ;; esac
   # The commit the reviewer read, not whatever HEAD is by the time the receipt is written.
-  case "${REVIEW_SNAPSHOT:-}" in
-    '['*) repos="$(jq -c --argjson snap "$REVIEW_SNAPSHOT" \
-             'map(. as $r | .reviewed_sha = ((first($snap[] | select(.path == $r.path) | .reviewed_sha)) // $r.reviewed_sha))' \
-             <<<"$repos" 2>/dev/null || printf '%s' "$repos")" ;;
-  esac
+  repos="$(repos_as_reviewed "$repos")"
   jq -c --arg rv "$review" --arg why "$why" --argjson f "${findings:-[]}" --argjson repos "$repos" \
         --argjson cx "${CODEX_PART:-null}" --argjson awn "$awn" \
         --arg at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
@@ -2084,42 +2106,37 @@ fi
 # leaves out stays open, and a PASS with one still open is asked again once, then is a FAIL. A team
 # round that goes back to the worker starts the ledger.
 LEDGER_STALL=0; LEDGER_OPEN=0
-if [ "$FIXCHECK" = 1 ] && [ "$state" = COMPLETE ] && [ -n "$verdict" ]; then
+# Only an answer with a readable header changes the ledger: COMPLETE with PASS or FAIL, from a call
+# that exited cleanly (a failed call's output was discarded above) and read the commits it was given
+# (checked above). An id it did not answer stays open, and a PASS with one still open is a FAIL.
+if [ "$FIXCHECK" = 1 ] && [ "$state" = COMPLETE ] && { [ "$verdict" = PASS ] || [ "$verdict" = FAIL ]; }; then
   _rtmp="$(mktemp "${TMPDIR:-/tmp}/review-answer.XXXXXX")"; printf '%s\n' "$review" > "$_rtmp"
-  _unconf="$(python3 "$BIN_DIR/lib/review-ledger.py" unconfirmed "$LEDGER_F" "$_rtmp" 2>/dev/null)"
-  if [ "$verdict" = PASS ] && [ -n "$_unconf" ]; then
-    log "fix check passed without answering $_unconf — asked again"
-    _first_review="$review"
-    review_call "$prompt
-
-YOUR PREVIOUS ANSWER gave VERDICT: PASS but did not report these ids as FIXED: $_unconf. Answer again in
-full, in the OUTPUT FORMAT, with a line for every open id."
-    if [ "$review_rc" = 0 ] && [ -n "$review" ] \
-       && printf '%s\n' "$review" | head -8 | grep -qE '^[[:space:]*]*STATE: *COMPLETE'; then
-      verdict=$(printf '%s\n' "$review" | head -8 | grep -m1 -oE '^[[:space:]*]*VERDICT: *(PASS|FAIL)' | grep -oE 'PASS|FAIL' || echo FAIL)
-      printf '%s\n' "$review" > "$_rtmp"
-    else
-      review="$_first_review"; review_rc=0   # no usable second answer: the first one stands, ids unanswered stay open
-    fi
-  fi
-  _lres="$(python3 "$BIN_DIR/lib/review-ledger.py" apply "$LEDGER_F" "$_rtmp" "$(git -C "$cwd" rev-parse HEAD 2>/dev/null)" 2>/dev/null)"
+  _lres="$(python3 "$BIN_DIR/lib/review-ledger.py" apply "$LEDGER_F" "$_rtmp" "${REVIEW_SNAPSHOT:-[]}" 2>>"$CODEX_LOG")"; _lrc=$?
   rm -f "$_rtmp"
+  if [ "$_lrc" != 0 ]; then
+    log "the review ledger could not be read or written (exit $_lrc) — nothing is accepted on it"
+    emit_review_json COMPLETE FAIL needs-user "$review"
+    mark_done needs-user "Список зауважень рев'ю пошкоджено — перевірку виправлень не можна завершити"
+    exit 0
+  fi
   LEDGER_STALL="$(printf '%s' "$_lres" | jq -r '.stall // 0' 2>/dev/null)"; case "$LEDGER_STALL" in ''|*[!0-9]*) LEDGER_STALL=0 ;; esac
   LEDGER_OPEN="$(printf '%s' "$_lres" | jq -r '.open | length' 2>/dev/null)"; case "$LEDGER_OPEN" in ''|*[!0-9]*) LEDGER_OPEN=0 ;; esac
   log "fix check: closed $(printf '%s' "$_lres" | jq -r '.closed | join(",")' 2>/dev/null) · new $(printf '%s' "$_lres" | jq -r '.added | join(",")' 2>/dev/null) · open $LEDGER_OPEN · no progress $LEDGER_STALL/$SUPERVISOR_STALL_LIMIT"
   if [ "$LEDGER_OPEN" -gt 0 ]; then
-    [ "$verdict" = PASS ] && log "fix check PASS with items still open — FAIL"
+    [ "$verdict" = PASS ] && log "fix check PASS with items not confirmed fixed — FAIL"
     verdict=FAIL
     review="$review
 
-STILL OPEN FROM THE REVIEW (fix each; ids are stable):
+STILL OPEN FROM THE REVIEW (not confirmed fixed; ids are stable):
 $(python3 "$BIN_DIR/lib/review-ledger.py" open "$LEDGER_F" 2>/dev/null)"
   fi
 fi
 if [ "${TEAM_ROUND:-0}" = 1 ] && [ "$state" = COMPLETE ] && [ "$verdict" = FAIL ]; then
   _rtmp="$(mktemp "${TMPDIR:-/tmp}/review-answer.XXXXXX")"; printf '%s\n' "$review" > "$_rtmp"
-  _ln="$(python3 "$BIN_DIR/lib/review-ledger.py" init "$LEDGER_F" "$_rtmp" "$(jq -r '.[0].reviewed_sha // ""' <<<"${REVIEW_SNAPSHOT:-[]}" 2>/dev/null)" 2>/dev/null)"
+  _ln="$(python3 "$BIN_DIR/lib/review-ledger.py" init "$LEDGER_F" "$_rtmp" "${REVIEW_SNAPSHOT:-[]}" 2>>"$CODEX_LOG")"
   rm -f "$_rtmp"
+  case "$_ln" in ''|*[!0-9]*) _ln=0 ;; esac
+  LEDGER_OPEN="$_ln"
   log "the team's review goes back: $_ln item(s) on the ledger — the next rounds are a fix check by one reviewer"
 fi
 

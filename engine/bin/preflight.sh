@@ -1019,16 +1019,18 @@ elif [ "$needs_plan" = "true" ]; then
   mode="${SUPERVISOR_PLAN_MODE:-critique}"
   STAGE_LOG="$(stage_log_for plan)"
   log "planning mode=$mode"
+  # The values go to render only. As a prefix on claude_plan / codex_ro they were exported to the
+  # model's CLI, and on Linux one over 128 KiB fails its exec with E2BIG, however the prompt travels.
   if [ "$mode" = "dual" ]; then
-    RESEARCH="$research_text" DESIGN="$design_text" ARGUE="$argue_text" claude_plan "$(budget "$PT")" "$(RESEARCH="$research_text" DESIGN="$design_text" ARGUE="$argue_text" render "$PROMPTS/plan.md")" > "$ART/plan-claude.md" 2>>"$STAGE_LOG" || true
+    claude_plan "$(budget "$PT")" "$(RESEARCH="$research_text" DESIGN="$design_text" ARGUE="$argue_text" render "$PROMPTS/plan.md")" > "$ART/plan-claude.md" 2>>"$STAGE_LOG" || true
     ( cd "$PROJ" && codex_ro "$(budget "$PT")" "$(RESEARCH="$research_text" DESIGN="$design_text" ARGUE="$argue_text" render "$PROMPTS/plan.md")" ) > "$ART/plan-codex.md" 2>>"$STAGE_LOG" || true
     PLAN_A="$(cat "$ART/plan-claude.md" 2>/dev/null)"; PLAN_B="$(cat "$ART/plan-codex.md" 2>/dev/null)"
-    ( cd "$PROJ" && PLAN_A="$PLAN_A" PLAN_B="$PLAN_B" RESEARCH="$research_text" DESIGN="$design_text" ARGUE="$argue_text" \
+    ( cd "$PROJ" && \
         codex_ro "$(budget "$PT")" "$(PLAN_A="$PLAN_A" PLAN_B="$PLAN_B" RESEARCH="$research_text" DESIGN="$design_text" ARGUE="$argue_text" render "$PROMPTS/reconcile.md")" ) > "$ART/plan.md" 2>>"$STAGE_LOG" || true
   else
-    RESEARCH="$research_text" DESIGN="$design_text" ARGUE="$argue_text" claude_plan "$(budget "$PT")" "$(RESEARCH="$research_text" DESIGN="$design_text" ARGUE="$argue_text" render "$PROMPTS/plan.md")" > "$ART/plan-claude.md" 2>>"$STAGE_LOG" || true
+    claude_plan "$(budget "$PT")" "$(RESEARCH="$research_text" DESIGN="$design_text" ARGUE="$argue_text" render "$PROMPTS/plan.md")" > "$ART/plan-claude.md" 2>>"$STAGE_LOG" || true
     PLAN_A="$(cat "$ART/plan-claude.md" 2>/dev/null)"
-    ( cd "$PROJ" && PLAN_A="$PLAN_A" RESEARCH="$research_text" DESIGN="$design_text" codex_ro "$(budget "$PT")" "$(PLAN_A="$PLAN_A" RESEARCH="$research_text" DESIGN="$design_text" render "$PROMPTS/critique.md")" ) > "$ART/plan-critique.md" 2>>"$STAGE_LOG" || true
+    ( cd "$PROJ" && codex_ro "$(budget "$PT")" "$(PLAN_A="$PLAN_A" RESEARCH="$research_text" DESIGN="$design_text" render "$PROMPTS/critique.md")" ) > "$ART/plan-critique.md" 2>>"$STAGE_LOG" || true
     crit="$(cat "$ART/plan-critique.md" 2>/dev/null)"
     revise_prompt="Task: \"$task\"
 

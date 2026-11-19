@@ -289,6 +289,9 @@ task_on_terminal() {   # $1=instance dir $2=disposition
   repos="$(printf '%s' "$receipt" | jq -c '.repos // empty' 2>/dev/null)"
   [ -n "$repos" ] || repos="$(repos_state_json "$idir" "$(cat "$idir/project" 2>/dev/null)" 2>/dev/null || echo '[]')"
   case "$repos" in '['*) ;; *) repos='[]' ;; esac
+  # Settled by the review gate: the commits its reviewer read (REVIEW_SNAPSHOT), not HEAD now. A
+  # bridge publishes reviewed_sha, and a commit that landed after the verdict was never reviewed.
+  repos="$(repos_as_reviewed "$repos")"
   q="$(jq -c '.question // null' "$idir/outcome.json" 2>/dev/null || echo null)"
   # Whether Codex took part in all of this attempt, so a bridge can say so without opening the app:
   # a task that passed with Codex missing from a step is not reported as an ordinary pass.

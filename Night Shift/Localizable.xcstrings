@@ -462,6 +462,22 @@
         }
       }
     },
+    "The code changed twice while the reviewer was reading it — the verdict cannot be tied to any commit" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Код дважды менялся, пока его читал рецензент, — вердикт нельзя привязать ни к одному коммиту"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Код двічі змінювався, поки його читав рецензент — вердикт не можна привʼязати до жодного коміту"
+          }
+        }
+      }
+    },
     "The conversation stays here. The agent starts a new session in “%@” and gets the last messages of this chat. Its session in “%@” ends, along with anything it left running there." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -36383,6 +36399,22 @@
         }
       }
     },
+    "The review stopped with items still open: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ревью остановилось с открытыми пунктами: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рев'ю зупинилось з відкритими пунктами: %@"
+          }
+        }
+      }
+    },
     "The review stopped — your decision is needed" : {
       "localizations" : {
         "ru" : {
@@ -36444,6 +36476,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ревʼювер — це те, що не пропускає роботу, зроблену не так. Нижчі значення економлять квоту й відхиляють менше."
+          }
+        }
+      }
+    },
+    "The review’s list of findings is damaged — the check of the fixes cannot be finished" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Список замечаний ревью повреждён — проверку исправлений нельзя завершить"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Список зауважень рев'ю пошкоджено — перевірку виправлень не можна завершити"
           }
         }
       }

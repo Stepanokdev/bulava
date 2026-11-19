@@ -173,6 +173,15 @@ nonisolated enum RunNoteWording {
         Template("Прийнято рецензентом, але не все закомічено: (.+)") { g, b in
             String(localized: "Accepted by the reviewer, but not everything is committed: \(g[0] ?? "")", bundle: b)
         },
+        Template("Рев'ю зупинилось з відкритими пунктами: (.+)") { g, b in
+            String(localized: "The review stopped with items still open: \(g[0] ?? "")", bundle: b)
+        },
+        Template("Код двічі змінювався, поки його читав рецензент — вердикт не можна привʼязати до жодного коміту") { _, b in
+            String(localized: "The code changed twice while the reviewer was reading it — the verdict cannot be tied to any commit", bundle: b)
+        },
+        Template("Список зауважень рев'ю пошкоджено — перевірку виправлень не можна завершити") { _, b in
+            String(localized: "The review’s list of findings is damaged — the check of the fixes cannot be finished", bundle: b)
+        },
         Template("Рев'ю зупинилось — потрібне твоє рішення") { _, b in
             String(localized: "The review stopped — your decision is needed", bundle: b)
         },
