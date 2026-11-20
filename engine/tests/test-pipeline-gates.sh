@@ -35,6 +35,7 @@ if printf '%s' "$prompt" | grep -q "RESEARCH REPORT"; then
   [ -n "${FAKE_REPORT_GARBLED:-}" ] && { echo "Я подумав і, здається, тут щось не так."; exit 0; }
   # A fix check (the report's ledger): answer its ids. FAKE_REPORT_STUCK keeps them open; otherwise a
   # FAIL fixes them and finds one new defect, so the report keeps moving; PASS fixes them all.
+  [ -n "${FAKE_REPORT_NOSTATE:-}" ] && { echo "VERDICT: PASS"; exit 0; }
   if printf '%s' "$prompt" | grep -q "FIX CHECK — this is not a first reading"; then
     ids="$(printf '%s\n' "$prompt" | grep -oE '^[TN][0-9]+:' | tr -d : | awk '!s[$0]++')"
     echo "STATE: COMPLETE"; echo "VERDICT: ${FAKE_REPORT_VERDICT:-PASS}"
@@ -186,7 +187,7 @@ echo "== a report's review keeps a list: it is not read from scratch every round
 # A server (Nov 18–19): a research report's review found 10, 10, 10, 8 defects, a new set each
 # reading, and every attempt ended at the limit. Now the first FAIL is a ledger (T1…), and the
 # rounds after it answer those ids.
-GATES_L='{"reportReview":true,"research":true,"reportMaxRounds":6}'
+GATES_L='{"reportReview":true,"research":true,"reportMaxRounds":8}'
 LEDGER="$SUPERVISOR_STATE_DIR/report-ledger-$RID"
 mkcase "$GATES_L"
 mkdir -p "$PROJ/artifacts"; printf '# Звіт\nРинок зріс на 40%%.\n' > "$PROJ/artifacts/report.md"
@@ -202,7 +203,7 @@ check "the chat is told how many items went back"        '[ "$(jq -c "select(.st
 check "T1 still open goes back by its id, no progress 1"    'printf "%s" "$out" | jq -r .reason | grep -q "^T1: " && [ "$(jq .stall "$LEDGER")" = 1 ] && [ ! -s "$IDIR/done" ]'
 out="$(FAKE_REPORT_VERDICT=FAIL FAKE_REPORT_STUCK=1 rungate s-led-1)"
 RJ="$(run_reports_dir "$(slug_for "$PROJ")")/review.json"
-check "two fix checks that close nothing: a person, at round 3 of 6" 'done_is needs-user && grep -q "no item closed for 2 fix checks" "$SUPERVISOR_STATE_DIR/supervisor.log"'
+check "two fix checks that close nothing: a person, at round 3 of 8" 'done_is needs-user && grep -q "no item closed for 2 fix checks" "$SUPERVISOR_STATE_DIR/supervisor.log"'
 check "…with the open item in review.json"                '[ "$(jq -r ".open_items[0].id" "$RJ")" = T1 ]'
 mkcase "$GATES_L"
 mkdir -p "$PROJ/artifacts"; printf '# Звіт\nРинок зріс на 40%%.\n' > "$PROJ/artifacts/report.md"
@@ -210,6 +211,8 @@ outcome succeeded_research "Готово: artifacts/report.md"
 FAKE_REPORT_VERDICT=FAIL rungate s-led-2 >/dev/null
 out="$(FAKE_REPORT_VERDICT=PASS FAKE_REPORT_BARE=1 rungate s-led-2)"
 check "a bare PASS that answers no id is not a pass: T1 goes back" '! done_is passed && printf "%s" "$out" | jq -r .reason | grep -q "^T1: "'
+out="$(FAKE_REPORT_NOSTATE=1 rungate s-led-2)"
+check "\"VERDICT: PASS\" with no STATE: COMPLETE accepts nothing: T1 open, the ledger kept" '! done_is passed && [ ! -s "$IDIR/done" ] && [ "$(python3 "$ROOT/bin/lib/review-ledger.py" open "$LEDGER" | cut -d: -f1)" = T1 ] && grep -q "PASS without STATE: COMPLETE" "$SUPERVISOR_STATE_DIR/supervisor.log"'
 FAKE_REPORT_VERDICT=FAIL rungate s-led-2 >/dev/null
 check "T1 fixed and a new tagged defect: N1 open, progress"  '[ "$(python3 "$ROOT/bin/lib/review-ledger.py" open "$LEDGER" | cut -d: -f1)" = N1 ] && [ "$(jq .stall "$LEDGER")" = 0 ]'
 FAKE_REPORT_VERDICT=PASS rungate s-led-2 >/dev/null

@@ -36348,6 +36348,22 @@
         }
       }
     },
+    "The report review’s list of findings is damaged — the check of the fixes cannot be finished" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Список замечаний ревью отчёта повреждён — проверку исправлений нельзя завершить"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Список зауважень рев'ю звіту пошкоджено — перевірку виправлень не можна завершити"
+          }
+        }
+      }
+    },
     "The report's decisions are not there any more." : {
       "extractionState" : "stale",
       "localizations" : {

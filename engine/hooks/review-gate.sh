@@ -1709,6 +1709,12 @@ $review"
   log "report review round $((rounds + 1)) verdict=${_rverdict:-?} ($_report)"
   _rcomplete=0
   printf '%s\n' "$_rhead" | grep -qE '^[[:space:]*]*STATE:[[:space:]]*COMPLETE[[:space:]*]*$' && _rcomplete=1
+  # A pass needs the whole header. "VERDICT: PASS" with no STATE: COMPLETE is no verdict: it neither
+  # answers the ledger nor accepts the report, and it goes back like any unreadable answer.
+  if [ "$_rverdict" = PASS ] && [ "$_rcomplete" != 1 ]; then
+    log "report review: VERDICT: PASS without STATE: COMPLETE — not a verdict, nothing accepted"
+    _rverdict=""
+  fi
   # The ledger, on a readable answer only (COMPLETE with PASS or FAIL). A fix check closes the ids
   # it reports FIXED; one still open makes a PASS a FAIL. A first reading's FAIL starts the ledger.
   _rstall=0

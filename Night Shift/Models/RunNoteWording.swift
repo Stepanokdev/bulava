@@ -182,6 +182,9 @@ nonisolated enum RunNoteWording {
         Template("Список зауважень рев'ю пошкоджено — перевірку виправлень не можна завершити") { _, b in
             String(localized: "The review’s list of findings is damaged — the check of the fixes cannot be finished", bundle: b)
         },
+        Template("Список зауважень рев'ю звіту пошкоджено — перевірку виправлень не можна завершити") { _, b in
+            String(localized: "The report review’s list of findings is damaged — the check of the fixes cannot be finished", bundle: b)
+        },
         Template("Рев'ю зупинилось — потрібне твоє рішення") { _, b in
             String(localized: "The review stopped — your decision is needed", bundle: b)
         },
