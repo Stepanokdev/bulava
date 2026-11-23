@@ -1,9 +1,10 @@
 #!/bin/bash
 # A check the worker registers: a command the engine runs itself, whose exit code is the evidence.
 #
-#   add-check [--timeout SECONDS] "<criterion>" -- <command> [args...]
+#   add-check [--final] [--timeout SECONDS] "<criterion>" -- <command> [args...]
 #                         register (the same criterion again replaces it; so does the same command,
-#                         in the same folder, under another name)
+#                         in the same folder, under another name). --final: a heavy check (a full
+#                         CI suite) that runs once the reviewer has passed the work, not every round
 #   add-check --list      what is registered for this task, and what an earlier task left aside
 #   add-check --remove "<criterion>"
 #                         a check that turned out wrong or no longer applies
@@ -18,9 +19,9 @@ set -u
 SELF="${BASH_SOURCE[0]}"; while [ -L "$SELF" ]; do d="$(cd -P "$(dirname "$SELF")" && pwd)"; SELF="$(readlink "$SELF")"; case "$SELF" in /*) ;; *) SELF="$d/$SELF";; esac; done
 BIN_DIR="$(cd -P "$(dirname "$SELF")" && pwd)"; . "$BIN_DIR/supervisor-lib.sh"
 
-usage() { sed -n '4,17p' "$SELF" | sed 's/^# \{0,1\}//' >&2; }
+usage() { sed -n '4,18p' "$SELF" | sed 's/^# \{0,1\}//' >&2; }
 
-ACTION=add; TIMEOUT=""; NAME=""
+ACTION=add; TIMEOUT=""; NAME=""; FINAL=0
 case "${1:-}" in
   --list) ACTION=list; shift ;;
   --remove) ACTION=remove; NAME="${2:-}"; shift 2 2>/dev/null || shift ;;
@@ -28,6 +29,8 @@ case "${1:-}" in
   --restore-all) ACTION=restore-all; shift ;;
   -h|--help) usage; exit 0 ;;
 esac
+# --final and --timeout, in either order.
+if [ "$ACTION" = add ] && [ "${1:-}" = --final ]; then FINAL=1; shift; fi
 if [ "$ACTION" = add ] && [ "${1:-}" = --timeout ]; then
   TIMEOUT="${2:-}"; shift 2 2>/dev/null || shift
   case "$TIMEOUT" in ''|*[!0-9]*) echo "❌ --timeout приймає ціле число секунд" >&2; exit 2 ;; esac
@@ -37,6 +40,7 @@ if [ "$ACTION" = add ] && [ "${1:-}" = --timeout ]; then
     echo "⚠️  --timeout $TIMEOUT більше за стелю $_max с — записую $_max" >&2; TIMEOUT="$_max"
   fi
 fi
+if [ "$ACTION" = add ] && [ "${1:-}" = --final ]; then FINAL=1; shift; fi
 case "$ACTION" in
   remove|restore) [ -n "$NAME" ] || { usage; exit 2; } ;;
 esac
@@ -80,8 +84,8 @@ set_aside_file() {
 # One check, written: replacing one of the same name, and one with the same command in the same
 # folder under another name — four copies of one command, each under a new name, is how a task ran
 # out of its ten (Tenders, 5 Nov).
-write_check() {   # $1 = criterion  $2 = argv JSON  $3 = cwd  $4 = timeout (or "")
-  local crit="$1" argv="$2" cwd="$3" to="$4" replaced="" line
+write_check() {   # $1 = criterion  $2 = argv JSON  $3 = cwd  $4 = timeout (or "")  [$5 = 1 for --final]
+  local crit="$1" argv="$2" cwd="$3" to="$4" fin="${5:-0}" replaced="" line
   if [ -f "$CHECKS" ]; then
     replaced="$(jq -r --arg c "$crit" --argjson a "$argv" --arg w "$cwd" \
                  'select(.criterion == $c or (.argv == $a and (.cwd // "") == $w)) | .criterion' "$CHECKS" 2>/dev/null)"
@@ -96,8 +100,9 @@ write_check() {   # $1 = criterion  $2 = argv JSON  $3 = cwd  $4 = timeout (or "
     return 2
   fi
   line="$(jq -nc --arg c "$crit" --argjson argv "$argv" --arg cwd "$cwd" --arg to "$to" \
-       --arg ts "$(date '+%F %T')" --arg rid "$(cat "$IDIR/run-id" 2>/dev/null || true)" \
-     '{ts:$ts, run_id:$rid, criterion:$c, argv:$argv, cwd:$cwd} + (if $to == "" then {} else {timeout:($to|tonumber)} end)')" \
+       --arg ts "$(date '+%F %T')" --arg rid "$(cat "$IDIR/run-id" 2>/dev/null || true)" --arg fin "$fin" \
+     '{ts:$ts, run_id:$rid, criterion:$c, argv:$argv, cwd:$cwd} + (if $to == "" then {} else {timeout:($to|tonumber)} end)
+      + (if $fin == "1" then {final:true} else {} end)')" \
     && printf '%s\n' "$line" >> "$CHECKS" \
     || { echo "❌ не зміг записати перевірку" >&2; return 1; }
   REPLACED="$replaced"
@@ -107,7 +112,7 @@ case "$ACTION" in
   list)
     if [ -s "$CHECKS" ]; then
       echo "Перевірки цієї задачі ($(count)/$MAX_CHECKS):"
-      jq -r '"  • \(.criterion)\(if .timeout then "  (до \(.timeout) с)" else "" end)\n      \(.argv | map(tostring) | join(" "))"' "$CHECKS" 2>/dev/null
+      jq -r '"  • \(.criterion)\(if .final then "  (фінальна: після того, як рев'"'"'ю прийме)" else "" end)\(if .timeout then "  (до \(.timeout) с)" else "" end)\n      \(.argv | map(tostring) | join(" "))"' "$CHECKS" 2>/dev/null
     else
       echo "Перевірок цієї задачі ще немає."
     fi
@@ -135,7 +140,8 @@ case "$ACTION" in
     while IFS= read -r one; do
       [ -n "$one" ] || continue
       write_check "$(jq -r '.criterion' <<<"$one")" "$(jq -c '.argv' <<<"$one")" \
-                  "$(jq -r '.cwd // ""' <<<"$one")" "$(jq -r '.timeout // ""' <<<"$one")" || exit $?
+                  "$(jq -r '.cwd // ""' <<<"$one")" "$(jq -r '.timeout // ""' <<<"$one")" \
+                  "$(jq -r 'if .final == true then 1 else 0 end' <<<"$one")" || exit $?
       n=$((n + 1))
     done < <(jq -c --arg c "$NAME" "$sel" "$f" 2>/dev/null)
     echo "повернув $n перевірк(у/и) з попередньої задачі — рушій виконає їх сам"
@@ -152,8 +158,9 @@ case "$ACTION" in
     argv_json="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@")" \
       || { echo "❌ не зміг записати перевірку" >&2; exit 1; }
     REPLACED=""
-    write_check "$CRIT" "$argv_json" "$PWD" "$TIMEOUT" || exit $?
+    write_check "$CRIT" "$argv_json" "$PWD" "$TIMEOUT" "$FINAL" || exit $?
     to_note=""; [ -n "$TIMEOUT" ] && to_note=" (до $TIMEOUT с)"
+    [ "$FINAL" = 1 ] && to_note="$to_note — фінальна: виконається один раз, коли рев'ю прийме роботу"
     if [ -n "$REPLACED" ]; then
       echo "замінив перевірку «$(printf '%s' "$REPLACED" | head -1)» на «${CRIT}»$to_note — рушій виконає її сам і занесе результат у evidence.json"
     else

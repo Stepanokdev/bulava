@@ -987,7 +987,7 @@ compose_task_prompt() {   # stdout = full injected task
   printf '\n[ДОКАЗ] Якщо твоє твердження не доводиться звичайною збіркою чи тестами (поведінка в UI, стан після скролу, нестандартний проєкт, вкладені репозиторії) — зареєструй перевірку КОМАНДОЮ, і рушій виконає її сам:\n'
   printf '  %s "що саме доводиться" -- <команда, що виходить з 0 лише коли твердження істинне>\n' "$idir/add-check"
   printf '  Статус береться з коду виходу, команду читає рев'"'"'юер. Це не спосіб оголосити щось доведеним.\n'
-  printf '  Довга перевірка: --timeout <секунди> перед назвою. Неправильну чи зайву прибери: --remove "назва"; усі — --list.\n'
+  printf '  Довга перевірка: --timeout <секунди> перед назвою. Важка (повний CI на десятки хвилин): --final — виконається один раз, коли рев'"'"'ю прийме роботу, а не перед кожним раундом. Неправильну чи зайву прибери: --remove "назва"; усі — --list.\n'
   # Checks the previous task registered, set aside when this one began (pipeline.sh record_dispatch).
   # Named, with the way back, only in the brief of the task they were set aside for.
   if [ -s "$idir/checks-set-aside.json" ] \

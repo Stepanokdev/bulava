@@ -313,6 +313,24 @@ judge. `-- true` is a sentence with nothing behind it and reads as one.
 A root `./verify.sh` in the project is picked up automatically when nothing else is detected, so a
 repository that ships its own verifier needs nothing here.
 
+Checks run before every review round, so keep them quick: the tests of what you changed, the linter
+over it. A heavy one — a full CI suite of forty minutes, a double upgrade of a database — is
+registered with `--final`:
+
+    $IDIR/add-check --final --timeout 3600 "повний набір тестів" -- <команда>
+
+It runs once, after the reviewer has passed the work, and a failure there sends the work back with
+its log. One server task ran a 43-minute suite before each of eight review rounds, all green, while
+each round changed a few lines.
+
+## When the review disputes what the task decided
+
+The task sometimes decides something in so many words — "every role can still open
+the form", "no migration, the version stays". If a review item asks you to undo such a decision, do
+not patch around it: that is the task author's call, not yours. End the attempt with
+`report-outcome needs_input` and quote the task's words beside the reviewer's. The reviewer is asked
+to do the same (`[spec_conflict]`), and then the run is parked with the question on its own.
+
 ## When a criterion is wrong
 Acceptance criteria are written before anyone has read the code, and some turn out to be impossible
 by construction — "verify with the demo account" for a button that only exists when NOT in demo mode.

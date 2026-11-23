@@ -8,6 +8,10 @@
   review-ledger.py open  <ledger>                                   the open items, one per line
   review-ledger.py count <ledger>                                   how many are open
   review-ledger.py grouped <ledger>                                 1 once duplicates were checked, else 0
+  review-ledger.py attempt <ledger> <run id>                        a new attempt of the task: its no-progress
+                                                                    count starts again, the open items stay
+  review-ledger.py reach <review-file>                              the answer with every blocking item whose
+                                                                    REACH is rare re-tagged [related_improvement]
 Exit 3 when the ledger cannot be read or written: the caller must not pass on it.
 
 Why a ledger and not the last round's list. Progress used to be "fewer [repeat]s than the last
@@ -29,7 +33,25 @@ closed id groups nothing. Statuses that disagree for one id (FIXED and OPEN
 both), or an OPEN said of any description of a defect, read as OPEN. [scope_violation]
 is never a ledger item: the gate quarantines it on its own path.
 
-The ledger file is JSON: {"items":[{"id","text","open","same_as"?}], "stall":n, "rounds":n, "grouped":bool,
+REACH. Every blocking item is asked for one: ordinary (a person meets it on the ordinary path of this
+task, or a written criterion is plainly unmet), data-loss, or rare. A rare one is advisory whatever its
+tag. The proportion rule used to be a sentence in the prompt, and on a server (Nov 2026) the
+reviewer kept tagging rare combinations [regression_from_patch]: "a caller that catches AccessError and
+continues", "a recordset of another model". Each blocked, the worker wrote one more guard, and the
+next round found a rare hole in that. A line the gate can read is something the gate can enforce; an
+item with no REACH still blocks, as before.
+
+Progress is the open count going down. It used to be "an id closed", and the same server task closed
+one id and gained one [regression_from_patch] round after round (6 → 4 → 2 → 2 open, stall 0 every
+time): the fixes were breeding the blockers. Now a round that does not leave fewer open items than it
+found is no progress, and "churn" counts the rounds in a row where new blockers came in and the open
+count did not fall, so the gate can say why it stopped. Grouping duplicates is not progress: the
+count before a round is taken after its SAME AS lines are applied.
+
+[spec_conflict] is not a ledger item either: the reviewer disputes something the task decided in so
+many words, and that goes to the task's author as a question (review-gate.sh), never to the worker.
+
+The ledger file is JSON: {"items":[{"id","text","open","same_as"?}], "stall":n, "churn":n, "rounds":n, "grouped":bool,
 "repos":[{"path","reviewed_sha"}]} — the commits of the last review, for the next one's diff.
 """
 import json
@@ -39,7 +61,9 @@ import sys
 
 NUMBERED = re.compile(r"^\s*[0-9]+[.)]\s*(.*)$")
 BLOCKING_TAG = re.compile(r"\[(acceptance_failure|regression_from_patch)\]")
-ADVISORY = re.compile(r"\[(related_improvement|pre_existing|harness_failure|scope_violation)\]")
+ADVISORY = re.compile(r"\[(related_improvement|pre_existing|harness_failure|scope_violation|spec_conflict)\]")
+# "REACH: rare", "**REACH:** rare", "REACH — rare"; the value decides, the spelling around it does not.
+REACH = re.compile(r"\bREACH\**\s*[:—–-]\s*\**\s*(ordinary|data[-_ ]?loss|rare)\b", re.I)
 # "T1: FIXED" and nothing after it but a full stop; "T1: OPEN — why"; "T2: SAME AS T1". Anything
 # else ("FIXED?", "FIXED or OPEN", "fixed, probably") is no status, and the id stays as it was.
 # The answer's own statement that it grouped the list: NONE (every id a different defect) or NAMED
@@ -79,11 +103,26 @@ def save(path, d):
     os.replace(tmp, path)
 
 
+def rare(line):
+    m = REACH.search(line)
+    return bool(m) and m.group(1).lower() == "rare"
+
+
+def demote(text):
+    """The answer with each blocking item marked REACH: rare re-tagged [related_improvement]."""
+    out = []
+    for ln in text.splitlines():
+        if NUMBERED.match(ln) and BLOCKING_TAG.search(ln) and rare(ln):
+            ln = BLOCKING_TAG.sub("[related_improvement]", ln, count=1) + " (rare: advisory, does not block)"
+        out.append(ln)
+    return "\n".join(out) + ("\n" if text.endswith("\n") else "")
+
+
 def blocking(text):
     out = []
     for ln in text.splitlines():
         m = NUMBERED.match(ln)
-        if m and not ADVISORY.search(ln):
+        if m and not ADVISORY.search(ln) and not (BLOCKING_TAG.search(ln) and rare(ln)):
             body = re.sub(r"\s*\[repeat\]", "", m.group(1)).strip()
             if body:
                 out.append(body)
@@ -136,11 +175,14 @@ def main():
 
 
 def run(cmd, path):
+    if cmd == "reach":
+        sys.stdout.write(demote(read(path)))
+        return 0
     if cmd == "init":
         text = read(sys.argv[3])
         items = [{"id": "T%d" % (i + 1), "text": t, "open": True} for i, t in enumerate(blocking(text))]
         one = len(sys.argv) > 5 and sys.argv[5] == "one"
-        save(path, {"items": items, "stall": 0, "rounds": 0, "grouped": one or len(items) <= 1,
+        save(path, {"items": items, "stall": 0, "churn": 0, "rounds": 0, "run": os.environ.get("LEDGER_RUN", ""), "grouped": one or len(items) <= 1,
                     "repos": snapshot(sys.argv[4] if len(sys.argv) > 4 else "")})
         print(len(items))
         return 0
@@ -153,6 +195,14 @@ def run(cmd, path):
         return 0
     if cmd == "count":
         print(sum(1 for it in counted if it["open"]))
+        return 0
+    if cmd == "attempt":
+        # The person who answered a parked task has spent the no-progress budget for it: the
+        # attempt that follows gets its own, and the open items are still there to check.
+        rid = sys.argv[3] if len(sys.argv) > 3 else ""
+        if rid and d.get("run") != rid:
+            d["run"], d["stall"], d["churn"] = rid, 0, 0
+            save(path, d)
         return 0
     if cmd == "repos":
         print(json.dumps(d.get("repos") or []))
@@ -202,8 +252,11 @@ def run(cmd, path):
             n += 1
             d["items"].append({"id": "N%d" % n, "text": t, "open": True})
             added.append("N%d" % n)
+        open_now = sum(1 for it in d["items"] if it["open"] and not it.get("same_as"))
         if was_open:
-            d["stall"] = 0 if closed else int(d.get("stall", 0)) + 1
+            # Fewer open than this round found is progress; a closing paid for with a new blocker is not.
+            d["stall"] = 0 if open_now < len(was_open) else int(d.get("stall", 0)) + 1
+            d["churn"] = int(d.get("churn", 0)) + 1 if (added and open_now >= len(was_open)) else 0
         d["grouped"] = grouped_now
         d["rounds"] = int(d.get("rounds", 0)) + 1
         snap = snapshot(sys.argv[4] if len(sys.argv) > 4 else "")
@@ -212,7 +265,7 @@ def run(cmd, path):
         save(path, d)
         print(json.dumps({"was_open": len(was_open), "closed": closed, "added": added,
                           "open": [it["id"] for it in d["items"] if it["open"] and not it.get("same_as")],
-                          "stall": d["stall"], "grouped": grouped_now}))
+                          "stall": d["stall"], "churn": int(d.get("churn", 0)), "grouped": grouped_now}))
         return 0
     return 2
 

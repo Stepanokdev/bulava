@@ -214,7 +214,9 @@ check "a bare PASS that answers no id is not a pass: T1 goes back" '! done_is pa
 out="$(FAKE_REPORT_NOSTATE=1 rungate s-led-2)"
 check "\"VERDICT: PASS\" with no STATE: COMPLETE accepts nothing: T1 open, the ledger kept" '! done_is passed && [ ! -s "$IDIR/done" ] && [ "$(python3 "$ROOT/bin/lib/review-ledger.py" open "$LEDGER" | cut -d: -f1)" = T1 ] && grep -q "PASS without STATE: COMPLETE" "$SUPERVISOR_STATE_DIR/supervisor.log"'
 FAKE_REPORT_VERDICT=FAIL rungate s-led-2 >/dev/null
-check "T1 fixed and a new tagged defect: N1 open, progress"  '[ "$(python3 "$ROOT/bin/lib/review-ledger.py" open "$LEDGER" | cut -d: -f1)" = N1 ] && [ "$(jq .stall "$LEDGER")" = 0 ]'
+# One closed and one new is the same number open: not progress (lib/review-ledger.py), so the
+# no-progress count goes on from the round before.
+check "T1 fixed and a new tagged defect: N1 open, no progress" '[ "$(python3 "$ROOT/bin/lib/review-ledger.py" open "$LEDGER" | cut -d: -f1)" = N1 ] && [ "$(jq .stall "$LEDGER")" -ge 1 ]'
 FAKE_REPORT_VERDICT=PASS rungate s-led-2 >/dev/null
 check "every id FIXED and PASS: accepted, the ledger gone"   'done_is passed && [ ! -e "$LEDGER" ]'
 
@@ -227,7 +229,7 @@ check "a report with no number of its own gets the engine's default, 5 rounds (i
 mkcase '{"reportReview":true,"research":true,"reportMaxRounds":0}'
 mkdir -p "$PROJ/artifacts"; printf '# Звіт\nРинок зріс на 40%%.\n' > "$PROJ/artifacts/report.md"
 outcome succeeded_research "Готово: artifacts/report.md"
-for i in 1 2 3 4; do out="$(SUPERVISOR_MAX_ROUNDS_HARD=3 FAKE_REPORT_VERDICT=FAIL rungate s-bud-2)"; done
+for i in 1 2 3 4; do out="$(SUPERVISOR_MAX_ROUNDS_HARD=3 FAKE_REPORT_VERDICT=FAIL SUPERVISOR_STALL_LIMIT=99 rungate s-bud-2)"; done
 check "a report limit of 0 is no limit: the 4th FAIL still goes back, past the code ceiling of 3" 'printf "%s" "$out" | grep -q "\"decision\": \"block\"" && [ ! -s "$IDIR/done" ]'
 check "…the chat is told the round with no maximum"   '[ "$(jq -c "select(.stage==\"gate.reportReview\" and .state==\"retrying\") | .max" "$IDIR/run-events.jsonl" | tail -1)" = null ]'
 check "…and the reviewer is not told of a limit"      '! grep -q "of at most" "$CODEX_CALLED.report-prompt"'
@@ -271,7 +273,7 @@ work; out="$(FAKE_VERDICT=FAIL FAKE_FINDING="[acceptance_failure] друге" ru
 check "…round 2 is the last one"                      'done_is debt'
 mkcase '{"roundsCeiling":30}'
 work; out="$(SUPERVISOR_MAX_ROUNDS_HARD=12 FAKE_VERDICT=FAIL FAKE_FINDING="[acceptance_failure] x" rungate s-bud-8)"
-check "a task's ceiling is its own, above the engine's" 'printf "%s" "$out" | grep -q "ще 29 можливих"'
+check "a task's ceiling is its own, above the engine's" 'printf "%s" "$out" | grep -q "стеля — 30"'
 
 mkcase '{"review":true,"maxRounds":0,"roundsCeiling":2}'
 work; out="$(FAKE_VERDICT=FAIL FAKE_FINDING="[acceptance_failure] перше" rungate s-bud-9)"
@@ -284,20 +286,20 @@ check "…and its 0 wins over the pipeline's number"   'printf "%s" "$out" | gre
 mkcase '{"roundsCeiling":3,"reportReview":true,"reportMaxRounds":5,"reportAtLimit":"accept"}'
 mkdir -p "$PROJ/artifacts"; printf '# Звіт\nРинок зріс на 40%%.\n' > "$PROJ/artifacts/report.md"
 outcome succeeded_research "Готово: artifacts/report.md"
-for i in 1 2 3 4; do out="$(SUPERVISOR_MAX_ROUNDS_HARD=20 FAKE_REPORT_VERDICT=FAIL rungate s-rep-5)"; done
+for i in 1 2 3 4; do out="$(SUPERVISOR_MAX_ROUNDS_HARD=20 FAKE_REPORT_VERDICT=FAIL SUPERVISOR_STALL_LIMIT=99 rungate s-rep-5)"; done
 check "--max-rounds 3 --report-max-rounds 5: the report's 4th FAIL still goes back, not accepted early" 'printf "%s" "$out" | grep -q "коло 4 з 5" && [ ! -s "$IDIR/done" ]'
-out="$(FAKE_REPORT_VERDICT=FAIL rungate s-rep-5)"
+out="$(FAKE_REPORT_VERDICT=FAIL SUPERVISOR_STALL_LIMIT=99 rungate s-rep-5)"
 check "…its 5th is the limit, and only then accepted with notes" 'done_is passed && jq -e .accepted_with_notes "$(run_reports_dir "$(slug_for "$PROJ")")/review.json" >/dev/null'
 mkcase '{"roundsCeiling":3,"reportReview":true,"reportMaxRounds":5}'
 mkdir -p "$PROJ/artifacts"; printf '# Звіт\nРинок зріс на 40%%.\n' > "$PROJ/artifacts/report.md"
 outcome succeeded_research "Готово: artifacts/report.md"
-for i in 1 2 3 4; do out="$(FAKE_REPORT_VERDICT=FAIL rungate s-rep-5b)"; done
+for i in 1 2 3 4; do out="$(FAKE_REPORT_VERDICT=FAIL SUPERVISOR_STALL_LIMIT=99 rungate s-rep-5b)"; done
 out="$(FAKE_REPORT_VERDICT=PASS rungate s-rep-5b)"
 check "…and a PASS on that 5th round passes"          'done_is passed && ! jq -e .accepted_with_notes "$(run_reports_dir "$(slug_for "$PROJ")")/review.json" >/dev/null 2>&1'
 mkcase '{"reportReview":true,"reportMaxRounds":30}'
 mkdir -p "$PROJ/artifacts"; printf '# Звіт\nРинок зріс на 40%%.\n' > "$PROJ/artifacts/report.md"
 outcome succeeded_research "Готово: artifacts/report.md"
-for i in $(seq 1 29); do out="$(SUPERVISOR_MAX_ROUNDS_HARD=20 FAKE_REPORT_VERDICT=FAIL rungate s-rep-30)"; done
+for i in $(seq 1 29); do out="$(SUPERVISOR_MAX_ROUNDS_HARD=20 FAKE_REPORT_VERDICT=FAIL SUPERVISOR_STALL_LIMIT=99 rungate s-rep-30)"; done
 check "--report-max-rounds 30 with the code ceiling at 20: the 29th FAIL still goes back" 'printf "%s" "$out" | grep -q "коло 29 з 30" && [ ! -s "$IDIR/done" ]'
 out="$(SUPERVISOR_MAX_ROUNDS_HARD=20 FAKE_REPORT_VERDICT=PASS rungate s-rep-30)"
 check "…and a PASS on the 30th passes"               'done_is passed'

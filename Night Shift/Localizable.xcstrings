@@ -36348,6 +36348,86 @@
         }
       }
     },
+    "The review accepted the work — running the final checks" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ревью приняло работу — выполняю финальные проверки"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рев'ю прийняло роботу — виконую фінальні перевірки"
+          }
+        }
+      }
+    },
+    "The final checks passed" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Финальные проверки прошли"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Фінальні перевірки пройшли"
+          }
+        }
+      }
+    },
+    "The final checks did not pass — the work was sent back" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Финальные проверки не прошли — работа возвращена"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Фінальні перевірки не пройшли — роботу повернуто"
+          }
+        }
+      }
+    },
+    "Every fix opens a new blocker — the review stopped, your decision is needed" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Каждое исправление открывает новый блокер — ревью остановлено, нужно твоё решение"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Кожне виправлення відкриває новий блокер — рев'ю зупинено, потрібне твоє рішення"
+          }
+        }
+      }
+    },
+    "The review disputes a decision written in the task — the task’s author needs to answer" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ревью оспаривает решение, записанное в задаче — нужен ответ автора задачи"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рев'ю заперечує рішення, записане в задачі — потрібна відповідь автора задачі"
+          }
+        }
+      }
+    },
     "The report review’s list of findings is damaged — the check of the fixes cannot be finished" : {
       "localizations" : {
         "ru" : {

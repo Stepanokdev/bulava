@@ -217,11 +217,13 @@ same budget; a task sent without them gets the engine's defaults, never a previo
 | `--report-criteria FILE` | what the report is judged by; **replaces** the server's rule about data changes rather than adding to it. Copied when the task is accepted: editing the file later changes nothing for it | the server's rule |
 | `--report-at-limit accept\|ask` | `accept`: a report still failing at its last round is accepted with the reviewer's notes: the task ends `done`, `review.json` keeps `verdict: FAIL` and the findings, with `disposition: passed` and `accepted_with_notes: true`; the receipt (`last_receipt`) says `review: passed`, `accepted_with_notes: true` and the notes in `review_why`, for the ticket. Only a readable verdict (`STATE: COMPLETE`, `VERDICT: FAIL`) is let through; an answer without one ends `needs-user`, recorded as `UNREADABLE`. `ask`: the task ends `failed` / `needs-user` | `ask` |
 
-A report is read in full once. Its first FAIL becomes the report's own ledger (`report-ledger-<run>`,
+A report is read in full once. Its first FAIL becomes the report's own ledger (`report-ledger-<task key>`,
+the run's id for a run with no task,
 apart from a code review's), with the same stable ids as code review: each later round answers
 those ids against the report as it now is (FIXED / OPEN / SAME AS), and a new defect blocks only when
 tagged `[acceptance_failure]` or `[regression_from_patch]`. A PASS with an id still open is a FAIL.
-`SUPERVISOR_STALL_LIMIT` rounds with no id closed end the review as its limit would: `needs-user`
+An item tagged `REACH: rare` does not hold the report back. `SUPERVISOR_STALL_LIMIT` rounds in which
+the open count did not fall end the review as its limit would: `needs-user`
 with `open_items` in `review.json`, or accepted with notes under `--report-at-limit accept`. Read from
 scratch every round, one report came back 10, 10, 10, 8 findings and reached its limit every attempt.
 
@@ -391,17 +393,35 @@ The team reads the change once. When its round goes back to the worker (a FAIL, 
 verifier overturned), what it found becomes a ledger: each blocking defect with a stable id (T1, T2,
 ...). The rounds after it are one Codex review that answers every open id, FIXED or OPEN, checks
 what the fixes broke (`git diff` since the last review), and lists new defects as N1, N2, ... A new
-defect blocks only if a person meets it on the ordinary path, it loses data, or a fix introduced it;
-anything else is `[related_improvement]`. Read on every round, the team kept finding the next rare
-case, the earlier items mostly closed, and a run never stalled.
+defect blocks only if a person meets it on the ordinary path or it loses data, and that holds for
+what a fix introduced too; anything else is `[related_improvement]`. Read on every round, the team
+kept finding the next rare case, the earlier items mostly closed, and a run never stalled.
+
+- **REACH.** Every blocking item ends with `REACH: ordinary`, `REACH: data-loss` or `REACH: rare`.
+  The gate re-tags a rare one `[related_improvement]` whatever its class: it does not block, does not
+  join the ledger, and the worker is not sent to fix it. An item with no REACH blocks as before.
+- **The task's own decisions.** A reviewer that disagrees with something the task states explicitly
+  ("every role can still open the form", "no migration") tags it `[spec_conflict]` with
+  the task's words quoted. The worker gets no FAIL for it: the run is parked, the task goes to
+  `needs_input` with `state_reason: spec_conflict` and a question (`question.text` quotes the
+  reviewer's line, two options: keep the task as written, or change it). The answer comes back as a
+  continuation and the ledger is still there.
+- **One ledger per task.** A task a bridge named keeps its ledger across attempts
+  (`review-ledger-<task key>`), so a continuation after a stop or a timeout is a fix check of the same
+  ids, not the team reading from scratch; its brief lists them under «Що лишилось відкритим з рев'ю».
+  A ledger an earlier attempt left under its run id is taken over on the first review. A pass, or
+  debt with nothing open, clears it.
 
 - An id the answer does not mention stays open. A PASS with ids still open is asked again once, and
   then counts as a FAIL with those ids sent back.
-- Progress is an id closed. Two members may describe one defect twice; the first fix check is asked
+- Progress is the open count going down. A round that closes one id and gains a new blocker is
+  not progress, and two such rounds in a row park the run saying that every fix opens a new blocker
+  (on a server one task went 6 → 4 → 2 → 2 open items, "progress" every round, for eight hours). Two
+  members may describe one defect twice; the first fix check is asked
   to name such pairs (`T2: SAME AS T1`, or `DUPLICATES: NONE`), and until an answer has done that a
   closed id is not counted as progress. After that two ids for one defect close together or not at
   all, so duplicates cannot look like progress. No extra call: the team's round is 3 calls, every
-  round after it 1. No id closed for `SUPERVISOR_STALL_LIMIT` rounds
+  round after it 1. No fall in the open count for `SUPERVISOR_STALL_LIMIT` rounds
   parks the run for a person, without waiting for the base patience (`SUPERVISOR_MAX_ROUNDS`), and
   with the open ids in `review.json`. At the round ceiling with ids still open it is `needs-user`,
   not debt.

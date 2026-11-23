@@ -47,6 +47,37 @@ PROJECT="Night Shift.xcodeproj"
 SCHEME="Night Shift"
 LOG="$(mktemp -t night-verify)"
 
+# A pass on these same inputs is not run again.
+#
+# The suite takes minutes, and a release ran it again for a version whose app sources had not
+# moved since the last green run — only the version number in project.pbxproj had. The key is the
+# content of everything the build and the tests read (the app, its tests and widgets, the shared
+# code, the bundled engine, the scripts the build phases run), the project file with its version
+# lines left out, and the macOS and Xcode it ran under. A failure always runs again. Off with
+# SUPERVISOR_TEST_CACHE=0 or `--no-cache`.
+CACHE_DIR="${SUPERVISOR_TEST_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/bulava-engine-tests}/app"
+CACHE_KEY=""
+[ "${1:-}" = "--no-cache" ] && SUPERVISOR_TEST_CACHE=0
+app_cache_key() {
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+  {
+    printf 'app-cache 1\n'
+    sw_vers 2>/dev/null; xcodebuild -version 2>/dev/null
+    git ls-files -co --exclude-standard -z -- "Night Shift" "Night ShiftTests" "Night ShiftUITests" \
+        BulavaMacWidgets Shared Frameworks link-protocol engine scripts bulava tools .night-verify.sh \
+        "Night Shift.xcodeproj" ':!Night Shift.xcodeproj/project.pbxproj' \
+      | xargs -0 shasum -a 256 2>/dev/null
+    sed -E '/(MARKETING_VERSION|CURRENT_PROJECT_VERSION) = /d' "$PROJECT/project.pbxproj" | shasum -a 256
+  } | shasum -a 256 | cut -c1-40
+}
+if [ "${SUPERVISOR_TEST_CACHE:-1}" = 1 ] && CACHE_KEY="$(app_cache_key)" && [ -n "$CACHE_KEY" ] \
+   && [ -f "$CACHE_DIR/$CACHE_KEY.pass" ]; then
+  grep -E "Executed [0-9]+ test" "$CACHE_DIR/$CACHE_KEY.log" 2>/dev/null | tail -1 | sed 's/^[[:space:]]*//'
+  echo "verified: build + tests pass (cached: passed $(cat "$CACHE_DIR/$CACHE_KEY.pass") on these same inputs; log $CACHE_DIR/$CACHE_KEY.log)"
+  rm -f "$LOG"
+  exit 0
+fi
+
 # Its OWN build directory, and this is not tidiness.
 #
 # Verification builds with CODE_SIGNING_ALLOWED=NO, which produces an ad-hoc, linker-signed app
@@ -121,6 +152,11 @@ tests_line="$(grep -E "Executed [0-9]+ test" "$LOG" | tail -1 | sed 's/^[[:space
 
 if grep -q "\*\* TEST SUCCEEDED \*\*" "$LOG"; then
   echo "verified: build + tests pass"
+  if [ -n "$CACHE_KEY" ] && mkdir -p "$CACHE_DIR" 2>/dev/null; then
+    grep -E "Executed [0-9]+ test|\*\* TEST SUCCEEDED \*\*" "$LOG" > "$CACHE_DIR/$CACHE_KEY.log" 2>/dev/null \
+      && date '+%F %T' > "$CACHE_DIR/$CACHE_KEY.pass"
+    find "$CACHE_DIR" -type f -mtime +30 -delete 2>/dev/null || true
+  fi
   rm -f "$LOG"
   exit 0
 fi

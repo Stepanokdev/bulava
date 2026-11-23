@@ -350,6 +350,81 @@ worktree_tree() {   # $1=repository → tree id
   t="$(GIT_INDEX_FILE="$idx" git -C "$1" write-tree 2>/dev/null)"
   rm -f "$idx"; printf '%s' "$t"
 }
+# The key a review ledger is filed under: the task's, when a bridge named one, so its attempts share
+# it; else the run's.
+ledger_key() {
+  local tid=""
+  [ -n "${IDIR_SCOPE:-}" ] && tid="$(cat "$IDIR_SCOPE/task-id" 2>/dev/null || true)"
+  if [ -n "$tid" ] && task_exists "$tid"; then printf '%s' "$(task_key "$tid")"; else printf '%s' "$RUN_KEY"; fi
+}
+# A task's first review on this engine takes over the ledger an earlier attempt left under its run
+# (written before ledgers were the task's), the newest one there is.
+ledger_adopt() {   # $1=review|report
+  local tid rid
+  [ "$LEDGER_KEY" != "$RUN_KEY" ] && [ ! -f "$LEDGER_F" ] || return 0
+  tid="$(cat "$IDIR_SCOPE/task-id" 2>/dev/null || true)"; [ -n "$tid" ] || return 0
+  for rid in $RUN_KEY $(task_get "$tid" '[.attempts[].run_id | select(. != null and . != "")] | reverse | .[]'); do
+    if [ -f "$STATE_DIR/$1-ledger-$rid" ]; then
+      mv -f "$STATE_DIR/$1-ledger-$rid" "$LEDGER_F" 2>/dev/null \
+        && echo "$(date '+%F %T') [review-gate] the task's $1 ledger continues from run $rid ($(python3 "$BIN_DIR/lib/review-ledger.py" count "$LEDGER_F" 2>/dev/null) open)" >> "$LOG"
+      return 0
+    fi
+  done
+}
+# REACH (lib/review-ledger.py): the answer with every blocking item the reviewer marked rare re-tagged
+# [related_improvement]. Anything that goes wrong leaves the answer as it was.
+review_demote_rare() {   # $1=answer
+  local t out
+  [ -n "${1:-}" ] || return 0
+  t="$(mktemp "${TMPDIR:-/tmp}/review-reach.XXXXXX")" || { printf '%s' "$1"; return 0; }
+  printf '%s\n' "$1" > "$t"
+  out="$(python3 "$BIN_DIR/lib/review-ledger.py" reach "$t" 2>/dev/null)" || out=""
+  rm -f "$t"
+  [ -n "$out" ] && printf '%s' "$out" || printf '%s' "$1"
+}
+# Checks the worker registered with `add-check --final`: heavy ones that run once the review passes.
+final_checks_registered() {
+  [ -n "${IDIR_SCOPE:-}" ] && [ -s "$IDIR_SCOPE/checks.jsonl" ] \
+    && jq -s -e 'any(.[]; .final == true)' "$IDIR_SCOPE/checks.jsonl" >/dev/null 2>&1
+}
+final_checks_names() {
+  jq -r 'select(.final == true) | "  - " + .criterion' "$IDIR_SCOPE/checks.jsonl" 2>/dev/null
+}
+
+# Why a stalled review stops, when the ledger can say more than "no progress": every round's fixes
+# brought in new blockers while the open count stayed where it was.
+stall_why() {
+  [ "${LEDGER_CHURN:-0}" -ge "${SUPERVISOR_STALL_LIMIT:-2}" ] \
+    && printf '%s' "Кожне виправлення відкриває новий блокер — рев'ю зупинено, потрібне твоє рішення"
+  return 0
+}
+# A [spec_conflict] parks the run with a question for the task's author (see where it is called).
+# The question is written beside the run for the task record (task_on_terminal → needs_input), in
+# English on a server, where it goes onto a ticket, and in Ukrainian on the Mac.
+spec_conflict_park() {   # $1=the items, one per line, tag removed
+  local items="$1" text o1 o2 qid
+  case "${SUPERVISOR_REPORT_LANGUAGE:-}:${SUPERVISOR_PROFILE:-}" in
+    [Ee]n*:*|:server|[Aa]uto:server)
+      text="The review disputes a decision the task states explicitly. The agent has not changed it. Which way should it go?
+$items"
+      o1="Keep the task as written"; o2="Change it as the review suggests" ;;
+    *)
+      text="Рев'ю заперечує рішення, яке явно записане в задачі. Виконавець його не міняв. Як робимо?
+$items"
+      o1="Лишити, як записано в задачі"; o2="Змінити, як пропонує рев'ю" ;;
+  esac
+  qid="spec-$(printf '%s' "$items" | shasum -a 256 | cut -c1-12)"
+  if [ -n "${IDIR_SCOPE:-}" ]; then
+    jq -n --arg id "$qid" --arg t "$text" --arg a "$o1" --arg b "$o2" '{id:$id, text:$t, options:[$a, $b], source:"review"}' \
+      > "$IDIR_SCOPE/gate-question.json.tmp" 2>/dev/null \
+      && mv -f "$IDIR_SCOPE/gate-question.json.tmp" "$IDIR_SCOPE/gate-question.json"
+  fi
+  emit_review_json COMPLETE FAIL needs-user "$review"
+  log "spec_conflict: the review disputes the task's own decision — parked with a question for its author ($qid)"
+  mark_done needs-user "Рев'ю заперечує рішення, записане в задачі — потрібна відповідь автора задачі"
+  exit 0
+}
+
 # After the team (lib/review-team.sh) has read the change in full, the rounds that follow check its
 # list, with one reviewer.
 #
@@ -365,7 +440,16 @@ worktree_tree() {   # $1=repository → tree id
 # open. Progress is an id closed, so one defect two members described closes once or not at all.
 # The ledger is written when a team round goes back to the worker — a FAIL, or a PASS the verifier
 # overturned — and goes with the review budget: a new request, a new task, a new piece, a pass.
-LEDGER_F="$STATE_DIR/review-ledger-$RUN_KEY"
+#
+# A task a bridge named keeps one ledger across its attempts (ledger_key). It was keyed by the run,
+# and a `/continue` is a new run: on a server (Nov 2026) the second attempt began with the team
+# reading from scratch, found five new blockers, two of which the first attempt never had, and the
+# worker was told nothing of what was still open. Now the continuation is a fix check of the same ids.
+LEDGER_KEY="$(ledger_key)"
+LEDGER_F="$STATE_DIR/review-ledger-$LEDGER_KEY"
+ledger_adopt review
+[ -f "$LEDGER_F" ] && [ "$LEDGER_KEY" != "$RUN_KEY" ] && python3 "$BIN_DIR/lib/review-ledger.py" attempt "$LEDGER_F" "$RUN_KEY" 2>/dev/null
+export LEDGER_RUN="$RUN_KEY"
 FIXCHECK=0; FIXCHECK_BLOCK=""
 if [ -f "$LEDGER_F" ]; then
   FIXCHECK=1
@@ -435,10 +519,13 @@ Right after the header lines, answer every id above on a line of its own, exactl
   T3: SAME AS T1        (when two ids are one defect described twice; answer it under T1)
 An id you do not answer counts as still open. VERDICT: PASS needs every id FIXED.
 ${_lgroup}Then, only if there are any, a numbered list of NEW defects — ones not on the list above. A new defect
-blocks only if a person meets it on the ordinary path of this task, it loses their data, or the fixes
-introduced it; anything else you notice — another rare combination, one more edge case, polish — is
-[related_improvement]: name it, and do not hold the work back for it. Do not read the whole change
-again looking for new depth; the full reading is done.
+blocks only if a person meets it on the ordinary path of this task or it loses their data — and that
+holds for what the fixes introduced too: a fix that breaks the ordinary path is [regression_from_patch],
+while a rare combination in the fix's own code (a caller that catches an error and carries on, an
+argument of the wrong model, a race needing exact timing) is [related_improvement]. Anything else you
+notice — another rare combination, one more edge case, polish — is
+[related_improvement]: name it, and do not hold the work back for it. End every blocking item with its
+REACH (see PROPORTION). Do not read the whole change again looking for new depth; the full reading is done.
 "
 fi
 
@@ -678,6 +765,10 @@ mark_done() {  # $1 = disposition, [$2] = why, in a sentence the person reads
   # A task a bridge named outlives this run: its record learns how the attempt ended (and, on a
   # server, the session is let go). Nothing happens for a run that was given no task id.
   [ -n "${IDIR_SCOPE:-}" ] && task_on_terminal "$IDIR_SCOPE" "$disposition"
+  [ -n "${IDIR_SCOPE:-}" ] && rm -f "$IDIR_SCOPE/gate-question.json" 2>/dev/null
+  # The list is settled with the work: a task's next attempt after a pass, or after debt with
+  # nothing open, is a new reading, not a fix check of an empty list.
+  case "$disposition" in passed|debt) [ -n "${LEDGER_F:-}" ] && rm -f "$LEDGER_F" 2>/dev/null ;; esac
   return 0
 }
 
@@ -1619,7 +1710,9 @@ If the task changed data — in production or anywhere else — the report says 
   # of reading it from scratch. Read from scratch, a research report on a server came back with
   # 10, 10, 10, 8 findings and never converged; each reading found a new set. A file of its own:
   # a code review later in the same run does not inherit a report's items, nor the other way round.
-  LEDGER_F="$STATE_DIR/report-ledger-$RUN_KEY"
+  LEDGER_F="$STATE_DIR/report-ledger-$LEDGER_KEY"
+  ledger_adopt report
+  [ -f "$LEDGER_F" ] && [ "$LEDGER_KEY" != "$RUN_KEY" ] && python3 "$BIN_DIR/lib/review-ledger.py" attempt "$LEDGER_F" "$RUN_KEY" 2>/dev/null
   _rfix=0; _rfix_block=""
   if [ -f "$LEDGER_F" ]; then
     _rfix=1
@@ -1648,7 +1741,9 @@ ${_rgroup}Then, only if there are any, a numbered list of NEW defects — ones n
 that does not support it, a question from the task left unanswered, invented numbers), or
 [regression_from_patch] when an edit since the last reading introduced it; anything else — wording,
 one more source that would be nice, depth — is [related_improvement] and does not hold the report
-back. Do not read the report again looking for new depth; the full reading is done.
+back. End each tagged line with REACH: ordinary (a reader of this report meets it), data-loss, or rare
+(it takes an unusual reading to meet it); an item marked REACH: rare does not hold the report back.
+Do not read the report again looking for new depth; the full reading is done.
 "
   fi
   rprompt="You are reviewing a RESEARCH REPORT, not code. The worker was asked to research a question and write
@@ -1685,6 +1780,7 @@ saying what is wrong and what would fix it, most important first."
   review_call "$rprompt" 1
   [ "$review_rc" != 0 ] && review=""
   [ "$review_refused" = 1 ] && review_refused_park
+  review="$(review_demote_rare "$review")"
   _rhead="$(printf '%s\n' "$review" | head -8)"
   # Whole header lines only, as for code review: "VERDICT: PASS?" or a quoted verdict is no verdict.
   _rverdict=$(printf '%s\n' "$_rhead" | grep -m1 -E '^[[:space:]*]*VERDICT:[[:space:]]*(PASS|FAIL)[[:space:]*]*$' | grep -oE 'PASS|FAIL' || echo "")
@@ -1965,6 +2061,15 @@ $diff_summary"
 fi
 
 verify_json=""; verify_status="skipped"; verify_fail_logs=""
+FINAL_PENDING_BLOCK=""
+if final_checks_registered; then
+  FINAL_PENDING_BLOCK="
+FINAL CHECKS (heavy; registered with add-check --final). They have NOT run this round: the engine runs
+them once, after you return VERDICT: PASS, and a failure there sends the work back with its log. Do not
+FAIL the work for their absence, and judge everything else by the evidence above:
+$(final_checks_names)
+"
+fi
 review_stage verifying
 if [ "${SUPERVISOR_VERIFIER_ENABLED:-1}" = 1 ] && [ -x "$BIN_DIR/verify.sh" ] && [ "${used:-0}" -lt "${SUPERVISOR_VERIFY_GUARD:-100}" ]; then
   ev="$("$BIN_DIR/verify.sh" "$cwd" "$session_id" "${IDIR_SCOPE:-}" "$BASE_SHA" 2>>"$CODEX_LOG")"
@@ -2009,6 +2114,8 @@ if [ -n "${IDIR_SCOPE:-}" ] && runspec_present "$IDIR_SCOPE" && [ "${RS_MODE:-br
  [scope_violation]      — a change OUTSIDE the RunSpec write_paths/objective. Do NOT ask the
                           worker to extend the change; this is quarantined by the harness.
  [related_improvement]  — a real but out-of-scope improvement. Goes to the backlog, NEVER reopens.
+ [spec_conflict]        — you disagree with something the task decided explicitly (quote it). Goes
+                          to the task's author as a question; never sent to the worker.
  [pre_existing]         — a defect that already existed at base-sha, untouched by this task. Note only.
  [harness_failure]      — the review tooling itself failed (verifier crashed, evidence unreadable).
 Only [acceptance_failure] and [regression_from_patch] may cause VERDICT: FAIL. A change consisting
@@ -2022,6 +2129,8 @@ else
                           it, or the current request in RECENT HUMAN TURNS. May reopen.
  [regression_from_patch]— work for that request broke behavior that worked before it. May reopen.
  [related_improvement]  — a real but unrequested improvement. Advisory only; NEVER reopens work.
+ [spec_conflict]        — you disagree with something the task decided explicitly (quote it). Goes
+                          to the task's author as a question; never sent to the worker.
  [pre_existing]         — a defect not introduced by the current request. Advisory only; NEVER reopens.
  [harness_failure]      — the review tooling itself failed (verifier crashed, evidence unreadable).
 Only [acceptance_failure] and [regression_from_patch] may cause VERDICT: FAIL. The product's general
@@ -2109,6 +2218,17 @@ in the middle of a write, a race needing exact timing — in a product that does
 survive it, or a polish detail a person would not notice in normal use, is [related_improvement]:
 name it so it is not lost, and do not hold the work back for it. Each round, look first at what
 you asked for last time; new depth is for defects of the first kind.
+End every [acceptance_failure] and [regression_from_patch] line with exactly one of
+  REACH: ordinary    — a person meets it on the ordinary path of this task, or a written criterion is plainly unmet
+  REACH: data-loss   — it loses or corrupts someone's data
+  REACH: rare        — it needs a rare combination of circumstances
+The gate reads it: an item marked REACH: rare does not block, whatever its tag.
+THE TASK'S OWN DECISIONS: when the task or its acceptance contract decides something in so many words
+(\"every role can still open the form\", \"no migration\", \"the version stays\") and you
+think that decision is wrong, that is not a defect for the worker to patch around. Tag it
+[spec_conflict] and quote the task's words: \"N. [spec_conflict] QUOTE: \"<the task's words>\" — <why
+you think otherwise and what you would decide instead>\". The gate puts it to the task's author as a
+question and the worker gets no FAIL for it.
 
 CLAUDE'S FINAL REPORT:
 ${last_msg:-（no final message captured)}
@@ -2128,7 +2248,7 @@ ${verify_json:-(verifier did not run)}
 
 Truncated logs for FAILING criteria:
 ${verify_fail_logs:-(none)}
-
+${FINAL_PENDING_BLOCK}
 ${VISUAL_BLOCK}
 
 STEP 3 — EVIDENCE GATE (applies when STATE: COMPLETE): a criterion counts as MET only if
@@ -2149,7 +2269,8 @@ VERDICT: PASS | FAIL | N/A
 ${CRITERIA_LINE_SPEC}
 Rules: give VERDICT: PASS or FAIL only when STATE: COMPLETE; use VERDICT: N/A for HANDOFF
 and BLOCKED. If VERDICT: FAIL — a numbered list of concrete defects (file, what's missing,
-what 'done' looks like), most important first, max 10, which Claude will fix verbatim.
+what 'done' looks like), most important first, max 10, which Claude will fix verbatim. Each
+blocking line ends with its REACH.
 If STATE: BLOCKED — one line stating exactly what human action / access is required."
 
 review_stage reviewing
@@ -2249,6 +2370,9 @@ state=$(printf '%s\n' "$review_head" | grep -m1 -E '^[[:space:]*]*STATE:[[:space
 verdict=$(printf '%s\n' "$review_head" | grep -m1 -E '^[[:space:]*]*VERDICT:[[:space:]]*(PASS|FAIL|N/A)[[:space:]*]*$' | grep -oE 'PASS|FAIL' || echo "")
 # A reviewer that answered is a reviewer that was reachable, whatever it then said about the work.
 [ -n "$state" ] && rm -f "$STATE_DIR/unreachable-$RUN_KEY" 2>/dev/null || true
+# REACH (lib/review-ledger.py): a blocking item the reviewer itself marks rare is advisory, so the
+# counts, the ledger and what the worker is sent below all read it as [related_improvement].
+review="$(review_demote_rare "$review")"
 # Who actually read it. A substitution nobody was told about is worse than the wall it went round,
 # and this line is what the worker, the report and the receipt all end up quoting.
 if [ "${REVIEWER:-codex}" = claude ] && [ -n "$review" ]; then
@@ -2304,7 +2428,7 @@ fi
 # The ledger (see FIX CHECK above). A fix check's answer closes the ids it reports FIXED; an id it
 # leaves out stays open, and a PASS with one still open is asked again once, then is a FAIL. A team
 # round that goes back to the worker starts the ledger.
-LEDGER_STALL=0; LEDGER_OPEN=0
+LEDGER_STALL=0; LEDGER_OPEN=0; LEDGER_CHURN=0
 # Only an answer with a readable header changes the ledger: COMPLETE with PASS or FAIL, from a call
 # that exited cleanly (a failed call's output was discarded above) and read the commits it was given
 # (checked above). An id it did not answer stays open, and a PASS with one still open is a FAIL.
@@ -2320,6 +2444,7 @@ if [ "$FIXCHECK" = 1 ] && [ "$state" = COMPLETE ] && { [ "$verdict" = PASS ] || 
   fi
   LEDGER_STALL="$(printf '%s' "$_lres" | jq -r '.stall // 0' 2>/dev/null)"; case "$LEDGER_STALL" in ''|*[!0-9]*) LEDGER_STALL=0 ;; esac
   LEDGER_OPEN="$(printf '%s' "$_lres" | jq -r '.open | length' 2>/dev/null)"; case "$LEDGER_OPEN" in ''|*[!0-9]*) LEDGER_OPEN=0 ;; esac
+  LEDGER_CHURN="$(printf '%s' "$_lres" | jq -r '.churn // 0' 2>/dev/null)"; case "$LEDGER_CHURN" in ''|*[!0-9]*) LEDGER_CHURN=0 ;; esac
   log "fix check: closed $(printf '%s' "$_lres" | jq -r '.closed | join(",")' 2>/dev/null) · new $(printf '%s' "$_lres" | jq -r '.added | join(",")' 2>/dev/null) · open $LEDGER_OPEN · no progress $LEDGER_STALL/$SUPERVISOR_STALL_LIMIT"
   if [ "$LEDGER_OPEN" -gt 0 ]; then
     [ "$verdict" = PASS ] && log "fix check PASS with items not confirmed fixed — FAIL"
@@ -2473,6 +2598,47 @@ if [ "$state" = "HANDOFF" ]; then
   exit 0
 fi
 
+# The heavy checks (add-check --final), now that the reviewer passed the work. Only a pass of them
+# lets the PASS stand; a failure goes back to the worker as a blocking defect with its log, and a run
+# that produced nothing readable is the tool's failure, not the work's. A commit that lands while
+# they run is caught at acceptance (guard_before_accept), as for the review itself.
+if [ "$state" = COMPLETE ] && [ "$verdict" = PASS ] && final_checks_registered; then
+  gate_event gate.verify running "Рев'ю прийняло роботу — виконую фінальні перевірки"
+  _fev="$(VERIFY_FINAL=1 "$BIN_DIR/verify.sh" "$cwd" "$session_id-final" "${IDIR_SCOPE:-}" "$BASE_SHA" 2>>"$CODEX_LOG")"
+  _fst=""; [ -n "$_fev" ] && [ -f "$_fev" ] && _fst="$(jq -r '.overall_status // empty' "$_fev" 2>/dev/null)"
+  log "final checks: ${_fst:-no evidence} (${_fev:-none})"
+  if [ "$_fst" = pass ]; then
+    gate_event gate.verify done "Фінальні перевірки пройшли"
+    # Nothing else ran (only --final checks were registered): they are the evidence.
+    if [ "$verify_status" = skipped ] || { [ "$verify_status" = inconclusive ] \
+         && printf '%s' "${verify_json:-}" | jq -e '([.criteria[]? | select(.status == "pass" or .status == "fail")] | length) == 0' >/dev/null 2>&1; }; then
+      verify_status=pass
+    fi
+  else
+    gate_event gate.verify failed "Фінальні перевірки не пройшли — роботу повернуто"
+    _ffail="$(jq -r '.criteria[]? | select(.status != "pass") | "\(.criterion) (\(.status), exit \(.exit_code)): \(.artifact)"' "$_fev" 2>/dev/null | head -5 | tr '\n' ';' | sed 's/;$//')"
+    _flogs="$(jq -r '.criteria[]? | select(.status != "pass") | .artifact' "$_fev" 2>/dev/null \
+      | while read -r f; do [ -f "$f" ] && { echo "----- $f -----"; tail -n 40 "$f"; }; done)"
+    verdict=FAIL; verify_status=fail
+    if [ "$_fst" = fail ]; then _ftag="[acceptance_failure]"; else _ftag="[harness_failure]"; fi
+    review="$review
+
+[FINAL CHECKS] The reviewer passed the work; the heavy checks registered with add-check --final then ran:
+1. $_ftag Final check not passed: ${_ffail:-the final checks produced no evidence}. Fix what it reports and finish again. REACH: ordinary
+${_flogs}"
+  fi
+fi
+
+# [spec_conflict]: the reviewer disputes something the task decided in so many words. That is the
+# task author's call, not a defect for the worker: on a server (Nov 2026) one such item — "a reader
+# sees the record's name", against a ticket that wrote that every role can still open the form —
+# went round three rounds and five hours of patches. The run is parked with the question; a bridge puts it on the ticket, and the answer comes back as a continuation that keeps
+# the task's ledger.
+if [ "$state" = COMPLETE ] && [ "$verdict" = FAIL ]; then
+  _spec="$(printf '%s\n' "$review" | grep -E '^[[:space:]]*[0-9]+[.)].*\[spec_conflict\]' | sed -E 's/^[[:space:]]*[0-9]+[.)][[:space:]]*//; s/\[spec_conflict\][[:space:]]*//' | head -5)"
+  [ -n "$_spec" ] && spec_conflict_park "$_spec"
+fi
+
 if [ "$verdict" = "FAIL" ]; then
   acc=$(printf '%s\n' "$review" | grep -cE '\[acceptance_failure\]|\[regression_from_patch\]')
   acc=$((acc + LEDGER_OPEN))   # an item still open on the ledger is a blocking defect
@@ -2584,8 +2750,8 @@ if [ "$verdict" = "FAIL" ]; then
     if { [ "$remediations" -ge 1 ] && [ "$_rstall" -ge "$SUPERVISOR_STALL_LIMIT" ]; } \
        || { [ "$LEDGER_OPEN" -gt 0 ] && [ "$LEDGER_STALL" -ge "$SUPERVISOR_STALL_LIMIT" ]; }; then
       emit_review_json COMPLETE FAIL needs-user "$review"
-      log "bounded: the same findings came back for $_rstall rounds — stalled, returning to operator"
-      mark_done needs-user; exit 0
+      log "bounded: the same findings came back for $_rstall rounds (ledger stall $LEDGER_STALL, churn $LEDGER_CHURN) — stalled, returning to operator"
+      mark_done needs-user "$(stall_why)"; exit 0
     fi
     if [ "$remediations" -lt "$_remax" ]; then
       _rn=$((remediations + 1))
@@ -2642,8 +2808,8 @@ $review
     { echo ""; echo "## $(date '+%F %T') — session $session_id (stalled: $findings findings, no progress for $stall rounds)"; \
       echo "$review"; } | legacy_note "$BLOCKED_OUT" BLOCKED.md
     emit_review_json COMPLETE FAIL needs-user "$review"
-    log "FAIL stalled at round $next ($stall no-progress rounds) — parking as needs-user"
-    mark_done needs-user
+    log "FAIL stalled at round $next ($stall no-progress rounds, churn $LEDGER_CHURN) — parking as needs-user"
+    mark_done needs-user "$(stall_why)"
     exit 0
   fi
   if [ "$next" -ge "$SUPERVISOR_MAX_ROUNDS_HARD" ] && [ "$LEDGER_OPEN" -gt 0 ]; then
@@ -2661,12 +2827,16 @@ $review
   fi
   gate_event "$GATE_REVIEW_STAGE" retrying "Повернуто на доопрацювання · зауважень: $findings" \
     "$(jq -nc --argjson r "$next" --argjson m "$MAX_ROUNDS" --argjson f "${findings:-0}" '{round:$r, max:$m, findings:$f}')"
-  _left="ще $((SUPERVISOR_MAX_ROUNDS_HARD - next)) можливих"; rounds_unlimited "$SUPERVISOR_MAX_ROUNDS_HARD" && _left="стелі раундів немає"
+  # What stops it, said as it is: the open items not getting fewer for STALL_LIMIT rounds, and the
+  # ceiling. "ще 17 можливих" promised rounds the stall rule would never give.
+  _left="зупинюсь, якщо $SUPERVISOR_STALL_LIMIT раунди поспіль відкритих пунктів не меншатиме"
+  if rounds_unlimited "$SUPERVISOR_MAX_ROUNDS_HARD"; then _left="$_left; стелі раундів немає"
+  else _left="$_left; стеля — $SUPERVISOR_MAX_ROUNDS_HARD"; fi
   jq -n --arg reason "🌙 Codex-супервізор НЕ приймає роботу (раунд $next, $_left):
 
 $review
 
-Виправ усі пункти повністю — без заглушок і 'на потім'. Роби відчутний прогрес щораунду: якщо ті самі пункти повертаються два раунди поспіль, зупинюсь і покличу людину. Потім завершуй знову." \
+Виправ усі пункти повністю — без заглушок і 'на потім'. Виправляй мінімально й по суті: кожен новий захисний код — нова поверхня, і якщо виправлення породжують нові блокери, рев'ю зупиниться й покличе людину. Пункт, що суперечить явному рішенню в задачі, не латай — заяви needs_input з цитатою задачі. Потім завершуй знову." \
     '{decision: "block", reason: $reason}'
   exit 0
 fi

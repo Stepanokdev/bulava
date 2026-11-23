@@ -173,6 +173,8 @@ stop_instance() {  # $1 = slug
   # …and the copy of a folder with no git, so a resume measures from what was accepted there.
   plain_shadow_keep "$idir"
   checks_keep "$idir"
+  # …and, for a task a bridge named, the attempt is closed on its record with the commits it left.
+  task_on_stop "$idir" 2>/dev/null || true
   rm -rf "$idir"   # removing the dir makes the watchdog loop exit
   echo "☀️ Зупинено: $proj"
   echo "   сесія '$session' залишена (tmux attach -t $session; закрити: tmux kill-session -t $session)"

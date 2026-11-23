@@ -48,15 +48,49 @@ skipped() {
 SCRUB=()
 while IFS='=' read -r _name _rest; do
   case "$_name" in
-    SUPERVISOR_TEST_JOBS|SUPERVISOR_TEST_SKIP) ;;
+    SUPERVISOR_TEST_JOBS|SUPERVISOR_TEST_SKIP|SUPERVISOR_TEST_CACHE|SUPERVISOR_TEST_CACHE_DIR) ;;
     SUPERVISOR_*|ORCHESTRATOR_*|IDIR|BULAVA_*)
       SCRUB=(${SCRUB[@]+"${SCRUB[@]}"} -u "$_name") ;;
   esac
 done <<EOF_ENV
 $(env | sed 's/=.*//' | sort -u)
 EOF_ENV
+# A test that passed on exactly these inputs is not run again (../bin/lib/test-cache.sh): its old log
+# is printed with a line saying so. `--no-cache` (or SUPERVISOR_TEST_CACHE=0) runs everything.
+for _a in "$@"; do [ "$_a" = --no-cache ] && export SUPERVISOR_TEST_CACHE=0; done
+. ../bin/lib/test-cache.sh
+CACHE_BASE=""
+test_cache_on && CACHE_BASE="$(test_cache_base "$(cd ../.. && pwd)")"
 run_test() {   # $1 = test file
-  env ${SCRUB[@]+"${SCRUB[@]}"} bash "$1"
+  local key="" hit tmp rc
+  if [ -n "$CACHE_BASE" ]; then
+    key="$(test_cache_key "$CACHE_BASE" "$1")"
+    if hit="$(test_cache_hit "$key")"; then
+      cat "$hit" 2>/dev/null
+      echo "  ↺ $(test_cache_note "$key")"
+      return 0
+    fi
+  fi
+  tmp="$(mktemp)"
+  env ${SCRUB[@]+"${SCRUB[@]}"} bash "$1" > "$tmp" 2>&1; rc=$?
+  cat "$tmp"
+  # Kept only once the whole run is over and its inputs are still what they were at the start
+  # (cache_commit): a file edited while the suite ran would otherwise file a pass under a key
+  # that describes other bytes.
+  if [ "$rc" = 0 ] && [ -n "$key" ]; then cp "$tmp" "$PENDING/$key.log"; fi
+  rm -f "$tmp"
+  return "$rc"
+}
+PENDING="$(mktemp -d)"
+cache_commit() {
+  local f
+  [ -n "$CACHE_BASE" ] || return 0
+  if [ "$(test_cache_base "$(cd ../.. && pwd)")" = "$CACHE_BASE" ]; then
+    for f in "$PENDING"/*.log; do [ -f "$f" ] && test_cache_store "$(basename "$f" .log)" "$f"; done
+  else
+    echo "↺ the engine changed while the suite ran — none of this run's passes are kept"
+  fi
+  rm -rf "$PENDING"
 }
 
 ORDER=""
@@ -68,7 +102,7 @@ for t in test-*.sh; do
 done
 
 OUT="$(mktemp -d)"
-trap 'rm -rf "$OUT"' EXIT
+trap 'rm -rf "$OUT" "${PENDING:-}"' EXIT
 
 if [ "$JOBS" = 1 ]; then
   rc=0
@@ -77,6 +111,7 @@ if [ "$JOBS" = 1 ]; then
     if run_test "$t"; then :; else rc=1; echo "  ^^ FAILED: $t"; fi
     echo
   done
+  cache_commit
   [ "$rc" = 0 ] && echo "✅ ALL SUITES PASSED" || echo "❌ SOME SUITES FAILED"
   exit $rc
 fi
@@ -100,14 +135,17 @@ for t in $ORDER; do
 done
 wait
 
-rc=0
+rc=0; cached=0
 for t in $ORDER; do
   echo "===== $t ====="
   cat "$OUT/$t.log" 2>/dev/null
+  grep -q '^  ↺ cached: ' "$OUT/$t.log" 2>/dev/null && cached=$((cached + 1))
   if [ "$(cat "$OUT/$t.rc" 2>/dev/null || echo 1)" != 0 ]; then
     rc=1; echo "  ^^ FAILED: $t"
   fi
   echo
 done
+cache_commit
+[ "$cached" -gt 0 ] && echo "↺ $cached suite(s) taken from the cache: they passed before on these same inputs (--no-cache runs them)"
 [ "$rc" = 0 ] && echo "✅ ALL SUITES PASSED" || echo "❌ SOME SUITES FAILED"
 exit $rc

@@ -20,6 +20,13 @@ else BASE_SHA="$(read_base_sha "$IDIR")"; fi
 
 VPROFILE="$(runspec_get "$IDIR" '.verification_profile')"; : "${VPROFILE:=standard}"
 
+# Checks registered with `add-check --final` are the heavy ones: a full CI suite of 43 minutes ran
+# before every review round of one server task (Nov 2026), eight times, all green, while each
+# round changed a few lines. They run only once the reviewer has passed the work (review-gate.sh,
+# VERIFY_FINAL=1): then only they run, and nothing of the stack's own steps.
+FINAL_MODE=0
+if [ "${VERIFY_FINAL:-0}" = 1 ]; then FINAL_MODE=1; SKIP_STACKS=1; fi
+
 CRIT_JSON=""   # accumulates JSON objects, comma-separated
 add_criterion() {  # $1 crit  $2 command  $3 exit_code  $4 artifact  $5 status  $6 note
   local obj; obj="$(jq -n --arg c "$1" --arg cmd "$2" --argjson ec "${3:-0}" \
@@ -159,7 +166,7 @@ changed_js_pkgs(){
 STACKS="$(detect_stacks "$PROJ")"
 ran_any=0
 
-if [ "$VPROFILE" = none ]; then
+if [ "$VPROFILE" = none ] && [ "$FINAL_MODE" = 0 ]; then
   add_criterion "automated verification" "(profile=none)" 0 "" skipped "verification_profile=none (docs/non-code task)"
 fi
 
@@ -167,7 +174,7 @@ fi
 # is still refused (an hour of xcodebuild for a run that may have touched one file), and that is said
 # as inconclusive, so the evidence never reads as a pass. But the suites run: skipping them because
 # "nothing changed" needs a base to say so, and with none the honest answer is to look.
-if [ "$VPROFILE" != none ] && [ -d "$IDIR" ] && [ -z "$BASE_SHA" ]; then
+if [ "$VPROFILE" != none ] && [ "$FINAL_MODE" = 0 ] && [ -d "$IDIR" ] && [ -z "$BASE_SHA" ]; then
   add_criterion "automated verification" "(no base_sha)" 0 "" inconclusive "instance run without a base SHA — refusing an unbounded full-tree build; test suites still run"
   NOBASE=1
 fi
@@ -459,6 +466,12 @@ for _tdir in tests engine/tests; do
   } > "$_log" 2>/dev/null
   redact "$_log"
   _note="${SHELL_SELECT_NOTE:-all tests}"
+  # Passes taken from the cache are said as such: the reviewer reads which ones and where their log is.
+  _cached_n="$(ls "$_rcdir"/*.cached 2>/dev/null | wc -l | tr -d ' ')"
+  if [ "${_cached_n:-0}" -gt 0 ]; then
+    _note="$_note; $_cached_n from the cache (passed before on byte-identical inputs: $(ls "$_rcdir"/*.cached 2>/dev/null | xargs -n1 basename | sed 's/\.cached$//' | tr '\n' ' ' | sed 's/ $//'))"
+    echo "cached (passed before on identical inputs): $_cached_n" >> "$_log"
+  fi
   if [ "$_ec" = 142 ] && [ "$_ran_n" -lt "$_selected_n" ]; then
     add_criterion "shell suite ($_tdir)" "bash tests" 142 "$_log" inconclusive "timed out after ${SH_TO}s; $_note"
     continue
@@ -600,6 +613,8 @@ fi
 
 fi   # end: VPROFILE != none — all stack build/test steps skipped for docs/non-code tasks
 
+# Set inside the stack block above, which the final pass skips.
+: "${_x_by_checks:=}" "${_x_covered:=}"
 CHECKS_FILE="$IDIR/checks.jsonl"
 if [ -f "$CHECKS_FILE" ]; then
   # Read the whole file FIRST, then run. Closing each step's stdin is the real fix, but a loop
@@ -617,6 +632,9 @@ if [ -f "$CHECKS_FILE" ]; then
     _n=$((_n + 1)); [ "$_n" -le 10 ] || break        # same cap add-check enforces
     _crit="$(printf '%s' "$_line" | jq -r '.criterion // empty' 2>/dev/null)"
     [ -n "$_crit" ] || continue
+    # A --final check runs in the final pass only, and only it runs there.
+    _fin="$(printf '%s' "$_line" | jq -r 'if .final == true then 1 else 0 end' 2>/dev/null)"
+    [ "${_fin:-0}" = "$FINAL_MODE" ] || continue
     _argv=()
     while IFS= read -r -d '' _a; do _argv+=("$_a"); done < <(
       printf '%s' "$_line" | jq -j '.argv[]? | . + "\u0000"' 2>/dev/null)

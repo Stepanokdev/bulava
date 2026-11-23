@@ -22,17 +22,46 @@ run_shell_suite() {   # $1 = tree to run in  $2 = tests dir (repo-relative)  $3 
   local scrub=() _name
   for _name in $(env | sed "s/=.*//" | sort -u); do
     case "$_name" in
-      SUPERVISOR_TEST_JOBS|SUPERVISOR_TEST_SKIP) ;;
+      SUPERVISOR_TEST_JOBS|SUPERVISOR_TEST_SKIP|SUPERVISOR_TEST_CACHE|SUPERVISOR_TEST_CACHE_DIR) ;;
       SUPERVISOR_*|ORCHESTRATOR_*|IDIR|BULAVA_*) scrub=(${scrub[@]+"${scrub[@]}"} -u "$_name") ;;
     esac
   done
+  # The engine's own suite keeps its passes (lib/test-cache.sh): between two review rounds most of
+  # the engine has not moved, and a test whose inputs are byte for byte the same passes the same.
+  local cbase="" key hit
+  if [ "$tdir" = engine/tests ] && [ -f "$tree/engine/bin/lib/test-cache.sh" ]; then
+    . "$tree/engine/bin/lib/test-cache.sh"
+    test_cache_on && cbase="$(test_cache_base "$tree")"
+  fi
   while IFS= read -r t; do
     [ -n "$t" ] || continue
     case " ${SUPERVISOR_TEST_SKIP:-} " in *" $(basename "$t") "*) continue ;; esac
     [ -f "$tree/$t" ] || { echo absent > "$rcdir/$(basename "$t").rc"; continue; }
+    key=""
+    if [ -n "$cbase" ]; then
+      key="$(test_cache_key "$cbase" "$tree/$t")"
+      if hit="$(test_cache_hit "$key")"; then
+        { cat "$hit" 2>/dev/null; echo "  ↺ $(test_cache_note "$key")"; } > "$rcdir/$(basename "$t").log"
+        echo 0 > "$rcdir/$(basename "$t").rc"; echo "$key" > "$rcdir/$(basename "$t").cached"
+        continue
+      fi
+    fi
+    [ -n "$key" ] && echo "$key" > "$rcdir/$(basename "$t").key"
     ( cd "$tree" && env ${scrub[@]+"${scrub[@]}"} bash "$t" >"$rcdir/$(basename "$t").log" 2>&1 </dev/null; echo $? > "$rcdir/$(basename "$t").rc" ) &
     pids+=("$!")
     if [ "${#pids[@]}" -ge "$jobs" ]; then wait "${pids[0]}" 2>/dev/null; pids=("${pids[@]:1}"); fi
   done
   wait
+  # Passes are kept only if the tree is still what the keys describe: a file the worker edited while
+  # the suite ran would otherwise file a pass under bytes it never ran on.
+  if [ -n "$cbase" ] && [ "$(test_cache_base "$tree")" = "$cbase" ]; then
+    local k
+    for k in "$rcdir"/*.key; do
+      [ -f "$k" ] || continue
+      t="$(basename "$k" .key)"
+      [ "$(cat "$rcdir/$t.rc" 2>/dev/null)" = 0 ] && test_cache_store "$(cat "$k")" "$rcdir/$t.log"
+    done
+  fi
+  rm -f "$rcdir"/*.key 2>/dev/null
+  return 0
 }

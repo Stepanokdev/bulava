@@ -166,6 +166,7 @@ task_attempt_begin() {   # $1=task id $2=instance dir $3=dispatch id $4=kind (in
     | .base_sha = (if (.base_sha // "") == "" then $b else .base_sha end)
     | .repo_bases = ($xb + (.repo_bases // {}))' \
     --arg k "$kind" --arg d "$did" --arg r "$rid" --arg i "$idir" --arg b "$base" --argjson xb "$xb" || return 1
+  rm -f "$idir/gate-question.json" 2>/dev/null
   task_event "$tid" attempt-started "$(jq -nc --arg k "$kind" --arg d "$did" --arg r "$rid" '{attempt_kind:$k, dispatch_id:$d, run_id:$r}')"
 }
 
@@ -293,6 +294,12 @@ task_on_terminal() {   # $1=instance dir $2=disposition
   # bridge publishes reviewed_sha, and a commit that landed after the verdict was never reviewed.
   repos="$(repos_as_reviewed "$repos")"
   q="$(jq -c '.question // null' "$idir/outcome.json" 2>/dev/null || echo null)"
+  # The review's own question (review-gate.sh, spec_conflict_park): the reviewer disputes something
+  # the task decided, and that is for the task's author to answer, whatever the worker declared.
+  if [ "$disp" = needs-user ] && [ -s "$idir/gate-question.json" ]; then
+    state=needs_input; reason=spec_conflict
+    q="$(jq -c '{id, text, options}' "$idir/gate-question.json" 2>/dev/null || echo null)"
+  fi
   # Whether Codex took part in all of this attempt, so a bridge can say so without opening the app:
   # a task that passed with Codex missing from a step is not reported as an ordinary pass.
   cx="$(codex_participation "$idir" 2>/dev/null)"
@@ -321,6 +328,33 @@ task_on_terminal() {   # $1=instance dir $2=disposition
   task_notify "$tid"
   [ "${SUPERVISOR_PROFILE:-}" = server ] && task_release_session "$idir" "$gen"
   return 0
+}
+
+# An attempt stopped from outside (`night-shift stop`: a bridge's timeout, a person) with no verdict.
+# It used to leave the record as it was: `repos: []`, `ended_at: null`, no material — and the brief of
+# the continuation then had nothing under "where the work is". The attempt is closed here the way a
+# verdict closes it, with the commits as they stand (none of them reviewed: no review finished), and
+# `result: stopped`. The task's state is left alone: the bridge that stopped it decides what it is
+# now. A verdict that settled the attempt first is never overwritten.
+task_on_stop() {   # $1=instance dir
+  local idir="$1" tid rid did repos
+  tid="$(cat "$idir/task-id" 2>/dev/null || true)"
+  [ -n "$tid" ] && task_exists "$tid" || return 0
+  rid="$(tr -d '[:space:]' < "$idir/run-id" 2>/dev/null || true)"
+  did="$(jq -r '.id // empty' "$idir/dispatch.json" 2>/dev/null || true)"
+  [ "$(task_get "$tid" '.attempts[-1].dispatch_id')" = "$did" ] || return 0
+  [ -z "$(task_get "$tid" '.attempts[-1].run_id')" ] || [ "$(task_get "$tid" '.attempts[-1].run_id')" = "$rid" ] || return 0
+  [ -z "$(task_get "$tid" '.attempts[-1].ended_at')" ] || return 0
+  repos="$(repos_state_json "$idir" "$(cat "$idir/project" 2>/dev/null)" 2>/dev/null || echo '[]')"
+  case "$repos" in '['*) ;; *) repos='[]' ;; esac
+  task_material_save "$tid" "$idir"
+  task_update "$tid" '
+    .repos = (if ($repos | length) > 0 then [$repos[] | del(.reviewed_sha)] else .repos end)
+    | .attempts |= (if length == 0 then . else
+        (.[-1] |= (if .ended_at == null then .ended_at = $_now | .result = "stopped" | .disposition = "stopped" else . end))
+      end)' \
+    --argjson repos "$repos" || return 1
+  task_event "$tid" attempt-stopped '{}'
 }
 
 # Tell the bridge to look now: SUPERVISOR_ON_OUTCOME=/path/script is run with the task file's path.
@@ -405,6 +439,16 @@ task_brief() {   # $1=task id $2=message $3=source $4=author [$5=question id ans
     git -C "$r" diff --stat "$b" 2>/dev/null | tail -1
   done
   printf '\n'
+  # What the review still has open (the task's ledger, review-gate.sh). The next review is a check of
+  # exactly these ids, not a new reading.
+  local lf lopen
+  lf="$SUP_STATE/review-ledger-$(task_key "$tid")"
+  if [ -s "$lf" ]; then
+    lopen="$(python3 "$_SUP_BIN_DIR/lib/review-ledger.py" open "$lf" 2>/dev/null)"
+    if [ -n "$lopen" ]; then
+      printf '## Що лишилось відкритим з рев'"'"'ю\nНаступне рев'"'"'ю перевірить саме ці пункти за їхніми id. Пункт, що суперечить явному рішенню в задачі, не латай: заяви needs_input з цитатою задачі.\n%s\n\n' "$lopen"
+    fi
+  fi
   if [ -n "$qid" ]; then
     printf '## Питання, на яке це відповідь\n%s\n\n' "$(task_get "$tid" '.question.text')"
   fi

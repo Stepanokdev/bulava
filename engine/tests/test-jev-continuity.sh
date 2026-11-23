@@ -289,7 +289,12 @@ check "dirname and readlink at the start were watched"   'ls "$SPYLOG" | grep -q
 check "security got it — on stdin"                       'grep -q -- "$HANDED" "$SPYLOG"/security.*.stdin'
 check "no process it started has it in its environment"  '! grep -l -- "$HANDED" "$SPYLOG"/*.env >/dev/null 2>&1'
 check "nor in its arguments"                             '! grep -l -- "$HANDED" "$SPYLOG"/*.argv >/dev/null 2>&1'
-check "the app hands it over on stdin, not in the environment" \
-  'grep -q "key set --stdin" "$ROOT/../Night Shift/Engine/JevClient.swift" && ! grep -q "JEV_HANDED_KEY" "$ROOT/../Night Shift/Engine/JevClient.swift" "$BIN_DIR/jev.sh"'
+check "jev.sh reads no key from its environment"         '! grep -q "JEV_HANDED_KEY" "$BIN_DIR/jev.sh"'
+# The app's side is in the app's sources, which an exported engine does not carry (test-export-suite.sh).
+APP_JEV="$ROOT/../Night Shift/Engine/JevClient.swift"
+if [ -f "$APP_JEV" ]; then
+  check "the app hands it over on stdin, not in the environment" \
+    'grep -q "key set --stdin" "$APP_JEV" && ! grep -q "JEV_HANDED_KEY" "$APP_JEV"'
+fi
 
 [ "$fails" -eq 0 ] && { echo "✅ jev continuity: all passed"; exit 0; } || { echo "❌ jev continuity: $fails failed"; exit 1; }

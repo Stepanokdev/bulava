@@ -284,8 +284,11 @@ nonisolated final class WorkerTrailTests: XCTestCase {
             let files = ((try? FileManager.default.contentsOfDirectory(atPath: sub.path)) ?? [])
                 .filter { $0.hasSuffix(".jsonl") }
                 .map { sub.appendingPathComponent($0) }
+            // Big and with tool calls in it: a long conversation of pasted text and no tools is
+            // substantial too, and its trail is rightly empty — that says nothing about the reader.
             if let big = files.first(where: {
                 ((try? FileManager.default.attributesOfItem(atPath: $0.path)[.size]) as? Int ?? 0) > 200_000
+                    && ((try? Data(contentsOf: $0))?.range(of: Data("\"tool_use\"".utf8)) != nil)
             }) { return big }
         }
         throw XCTSkip("no substantial transcript on this machine")
