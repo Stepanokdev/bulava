@@ -53,6 +53,23 @@ fi
 
 RUN_KEY="$session_id"
 if [ -n "${IDIR_SCOPE:-}" ]; then _rk="$(cat "$IDIR_SCOPE/run-id" 2>/dev/null || true)"; [ -n "$_rk" ] && RUN_KEY="$_rk"; fi
+# Which attempt this gate is about, taken now. A gate can run for an hour (a final check), and in that
+# time a /continue may hand this folder to the next attempt: its run id and dispatch record are then
+# that attempt's, and a verdict written from them would settle the wrong one. Everything this gate
+# writes is checked against these (gate_still_ours).
+GATE_RUN_ID=""; GATE_DISPATCH_ID=""
+if [ -n "${IDIR_SCOPE:-}" ]; then
+  GATE_RUN_ID="$(tr -d '[:space:]' < "$IDIR_SCOPE/run-id" 2>/dev/null || true)"
+  GATE_DISPATCH_ID="$(jq -r '.id // empty' "$IDIR_SCOPE/dispatch.json" 2>/dev/null || true)"
+  # Every event this gate writes is stamped with them, not with whatever the folder holds then: a
+  # runner reading the journal counts a line only for the attempt it names.
+  _gmid="$(jq -r '.message_id // empty' "$IDIR_SCOPE/dispatch.json" 2>/dev/null || true)"
+  [ -n "$GATE_DISPATCH_ID" ] && export RUN_EVENT_DISPATCH_ID="$GATE_DISPATCH_ID"
+  [ -n "$GATE_RUN_ID" ] && export RUN_EVENT_RUN_ID="$GATE_RUN_ID"
+  [ -n "$_gmid" ] && export RUN_EVENT_MESSAGE_ID="$_gmid"
+  _gpipe="$(jq -r '.pipeline // empty' "$IDIR_SCOPE/dispatch.json" 2>/dev/null || true)"
+  [ -n "$_gpipe" ] && [ -z "${RUN_EVENT_PIPELINE:-}" ] && export RUN_EVENT_PIPELINE="$_gpipe"
+fi
 
 # What the pipeline that prepared this piece of work asked of its gates, recorded in the dispatch
 # when the message was accepted. Absent for the built-in flow, which keeps every default. Nothing in
@@ -387,6 +404,15 @@ final_checks_registered() {
   [ -n "${IDIR_SCOPE:-}" ] && [ -s "$IDIR_SCOPE/checks.jsonl" ] \
     && jq -s -e 'any(.[]; .final == true)' "$IDIR_SCOPE/checks.jsonl" >/dev/null 2>&1
 }
+# Registered final checks that have not passed in THIS gate run: acceptance waits for them. Any way to
+# "passed" or "debt" — a round limit, a tool's failure banked as debt, a verifier that said nothing —
+# is turned into a stop for a person while one is unmet: a final check is never skipped by a path
+# that happens not to run it. FINAL_PASSED is set only where every one of them ran, exited 0 and
+# left its log.
+final_checks_unmet() {
+  final_checks_registered && [ "${FINAL_PASSED:-0}" != 1 ]
+}
+FINAL_UNMET_WHY="Фінальні перевірки не виконано або вони не пройшли — роботу не прийнято, потрібна людина"
 final_checks_names() {
   jq -r 'select(.final == true) | "  - " + .criterion' "$IDIR_SCOPE/checks.jsonl" 2>/dev/null
 }
@@ -579,10 +605,136 @@ ledger_open_json() {
     | jq -Rnc '[inputs | capture("^(?<id>[TN][0-9]+): (?<text>.*)$")]' 2>/dev/null || echo '[]'
 }
 
+# The heavy checks (add-check --final), on every way to acceptance: a code review's PASS, an
+# advisory-only FAIL made one, a report's PASS. They hold acceptance until every one of them ran,
+# exited 0 and left its log. Returns 0 when they passed (FINAL_PASSED=1); 1 when one ran and did not
+# pass — its log is appended to $review, and the caller sends the work back; nothing readable parks
+# the run for a person and the gate ends there.
+#   • a check that ran and did not pass (an exit code, or its time ran out): back to the worker as a
+#     blocking defect with the log — never debt, never accepted with notes;
+#   • nothing readable at all (no evidence, a check with no log, a command that could not start): the
+#     tool failed, not the work, and nobody can say whether it would pass — a person decides.
+# While they run, a line goes to the run's events every minute, so a runner that measures silence
+# sees a check that is working. A commit or an edit that lands while they run is caught at
+# acceptance (guard_before_accept compares the commits and the working trees the reviewer read).
+run_final_checks() {
+  gate_event gate.verify running "Рев'ю прийняло роботу — виконую фінальні перевірки"
+  _fout="$(mktemp "${TMPDIR:-/tmp}/final-checks.XXXXXX")"
+  ( VERIFY_FINAL=1 "$BIN_DIR/verify.sh" "$cwd" "$session_id-final" "${IDIR_SCOPE:-}" "$BASE_SHA" >"$_fout" 2>>"$CODEX_LOG" ) &
+  _fpid=$!; _fstart=$(date +%s); _fbeat=$_fstart
+  while kill -0 "$_fpid" 2>/dev/null; do
+    sleep "${SUPERVISOR_FINAL_POLL:-2}"
+    # The attempt was stopped or replaced while its checks ran: they stop, and so does the beat —
+    # a beat from here would keep the next attempt's silence timer from ever running out.
+    if ! gate_still_ours; then
+      pkill -TERM -P "$_fpid" 2>/dev/null; kill -TERM "$_fpid" 2>/dev/null; wait "$_fpid" 2>/dev/null
+      rm -f "$_fout"
+      abandon_if_not_ours checks
+    fi
+    if [ $(( $(date +%s) - _fbeat )) -ge "${SUPERVISOR_FINAL_HEARTBEAT:-60}" ]; then
+      _fbeat=$(date +%s)
+      gate_event gate.verify running "Фінальні перевірки ще йдуть ($(( (_fbeat - _fstart) / 60 )) хв)" \
+        "$(jq -nc --argjson s "$(( _fbeat - _fstart ))" '{heartbeat:true, elapsed_s:$s}')"
+    fi
+  done
+  wait "$_fpid" 2>/dev/null || true
+  _fev="$(tail -n 1 "$_fout" 2>/dev/null)"; rm -f "$_fout"
+  # An hour may have passed: the folder must still be this attempt's before anything is decided on it.
+  abandon_if_not_ours checks
+  _fst=""; [ -n "$_fev" ] && [ -f "$_fev" ] && _fst="$(jq -r '.overall_status // empty' "$_fev" 2>/dev/null)"
+  # Every REGISTERED final check, by its name, against its own line in the evidence. One passes only
+  # with all three: status pass, exit code 0, and its own log readable on disk. One that ran and
+  # exited non-zero (its time running out included) failed; anything else — not in the evidence,
+  # a command that could not start (126/127), no log, a status with no exit code — is unreadable.
+  # The overall status is not taken on its own: "pass" over a check whose log is gone is not one.
+  _fpass=0; _fran_fail=0; _funread=0; _freg=0
+  while IFS= read -r _fc; do
+    [ -n "$_fc" ] || continue
+    _freg=$((_freg + 1))
+    _fline=""; [ -n "$_fst" ] && _fline="$(jq -c --arg c "$_fc" '[.criteria[]? | select(.criterion == $c)] | last // empty' "$_fev" 2>/dev/null)"
+    if [ -z "$_fline" ]; then _funread=$((_funread + 1)); continue; fi
+    _fs="$(printf '%s' "$_fline" | jq -r '.status // ""')"
+    _fx="$(printf '%s' "$_fline" | jq -r 'if (.exit_code | type) == "number" then .exit_code else "" end')"
+    _fa="$(printf '%s' "$_fline" | jq -r '.artifact // ""')"
+    if [ "$_fs" = pass ] && [ "$_fx" = 0 ] && [ -n "$_fa" ] && [ -f "$_fa" ] && [ -r "$_fa" ]; then
+      _fpass=$((_fpass + 1))
+    elif [ -n "$_fx" ] && [ "$_fx" != 0 ] && [ "$_fx" != 126 ] && [ "$_fx" != 127 ] && [ -n "$_fa" ] && [ -r "$_fa" ]; then
+      _fran_fail=$((_fran_fail + 1))
+    else
+      _funread=$((_funread + 1))
+    fi
+  done < <(jq -r 'select(.final == true) | .criterion' "$IDIR_SCOPE/checks.jsonl" 2>/dev/null)
+  log "final checks: ${_fst:-no evidence} (${_fev:-none}); passed ${_fpass:-0}, failed ${_fran_fail:-0}, unreadable ${_funread:-0}"
+  if [ "$_freg" -gt 0 ] && [ "$_fpass" -eq "$_freg" ]; then
+    gate_event gate.verify done "Фінальні перевірки пройшли"
+    FINAL_PASSED=1
+    # Nothing else ran (only --final checks were registered): they are the evidence.
+    if [ "${verify_status:-}" = skipped ] || { [ "${verify_status:-}" = inconclusive ] \
+         && printf '%s' "${verify_json:-}" | jq -e '([.criteria[]? | select(.status == "pass" or .status == "fail")] | length) == 0' >/dev/null 2>&1; }; then
+      verify_status=pass
+    fi
+    return 0
+  elif [ "${_fran_fail:-0}" -gt 0 ]; then
+    gate_event gate.verify failed "Фінальні перевірки не пройшли — роботу повернуто"
+    _ffail="$(jq -r '.criteria[]? | select(.status != "pass") | "\(.criterion) (\(.status), exit \(.exit_code)): \(.artifact)"' "$_fev" 2>/dev/null | head -5 | tr '\n' ';' | sed 's/;$//')"
+    _flogs="$(jq -r '.criteria[]? | select(.status != "pass") | .artifact' "$_fev" 2>/dev/null \
+      | while read -r f; do [ -f "$f" ] && { echo "----- $f -----"; tail -n 40 "$f"; }; done)"
+    verify_status=fail
+    review="$review
+
+[FINAL CHECKS] The reviewer passed the work; the heavy checks registered with add-check --final then ran:
+1. [acceptance_failure] Final check not passed: ${_ffail}. Fix what it reports and finish again. REACH: ordinary
+${_flogs}"
+    return 1
+  else
+    # Nothing to read: no evidence, an empty list, or a check that left no log. Not the worker's to
+    # fix and not a pass: a person decides.
+    gate_event gate.verify failed "Фінальні перевірки не дали результату — потрібна людина"
+    emit_review_json COMPLETE FAIL needs-user "$review
+
+[FINAL CHECKS] The final checks produced no readable result (${_fev:-no evidence}); nothing is accepted on them."
+    log "final checks produced no readable result — parked for a person, not accepted"
+    mark_done needs-user "Фінальні перевірки не дали результату, який можна прочитати — роботу не прийнято, потрібна людина"
+    exit 0
+  fi
+}
+
+# The folder still belongs to the attempt this gate started for. When it does not, nothing is written
+# here — not the review, not the done mark, not the ledger, not the task record (a `stale-verdict`
+# event says it came) — and the gate ends quietly.
+gate_still_ours() {
+  [ -n "${IDIR_SCOPE:-}" ] || return 0
+  local rid did
+  rid="$(tr -d '[:space:]' < "$IDIR_SCOPE/run-id" 2>/dev/null || true)"
+  did="$(jq -r '.id // empty' "$IDIR_SCOPE/dispatch.json" 2>/dev/null || true)"
+  [ "$rid" = "$GATE_RUN_ID" ] && [ "$did" = "$GATE_DISPATCH_ID" ] || return 1
+  # And the task's record agrees: a stop closes the attempt there (and may leave the folder as it
+  # was for a moment), a /continue opens the next one. Read under the task's lock.
+  local tid; tid="$(cat "$IDIR_SCOPE/task-id" 2>/dev/null || true)"
+  [ -n "$tid" ] && task_exists "$tid" || return 0
+  task_attempt_is "$tid" "$GATE_DISPATCH_ID" "$GATE_RUN_ID"
+}
+abandon_if_not_ours() {   # $1 = the disposition that was about to be written
+  gate_still_ours && return 0
+  log "the folder now belongs to another attempt (run $GATE_RUN_ID → $(tr -d '[:space:]' < "$IDIR_SCOPE/run-id" 2>/dev/null)) — this verdict (${1:-?}) is not written"
+  local _tid; _tid="$(cat "$IDIR_SCOPE/task-id" 2>/dev/null || true)"
+  [ -n "$_tid" ] && task_exists "$_tid" \
+    && task_event "$_tid" stale-verdict "$(jq -nc --arg d "${1:-?}" --arg did "$GATE_DISPATCH_ID" --arg r "$GATE_RUN_ID" '{disposition:$d, dispatch_id:$did, run_id:$r, source:"gate"}')"
+  exit 0
+}
 emit_review_json() {
+  abandon_if_not_ours "${3:-}"
   # Every pass, and every debt, is written here first, before the ledger is dropped or a piece is
   # accepted: the place to make sure it is still about what the reviewer read.
   case "${3:-}" in passed|debt) guard_before_accept ;; esac
+  case "${3:-}" in passed|debt)
+    if final_checks_unmet; then
+      log "a ${3} without the final checks passing in this run — written as needs-user"
+      set -- "${1:-}" "${2:-}" needs-user "${4:-}
+
+[FINAL CHECKS] Registered with add-check --final and not passed in this run; nothing is accepted without them."
+    fi ;;
+  esac
   [ -n "${REVIEW_JSON:-}" ] || return 0
   if [ "${3:-}" = debt ] && [ -n "$(ledger_open_ids)" ]; then
     set -- "${1:-}" "${2:-}" needs-user "${4:-}
@@ -650,20 +802,37 @@ block_if_repo_joined() {
 # accepted): the repositories are still the ones the reviewer read, at the commits it read. One
 # joined, or a commit moved, since then: nothing is accepted, and the work is read again as it is.
 guard_before_accept() {
+  abandon_if_not_ours passed
   block_if_repo_joined
   [ -n "${REVIEW_SNAPSHOT:-}" ] || return 0
   local _now _moved
   _now="$(review_snapshot)"
-  _moved="$(jq -rn --argjson a "$REVIEW_SNAPSHOT" --argjson b "${_now:-[]}" \
-    '[$b[] | . as $r | select(([$a[] | select(.path == $r.path) | .reviewed_sha] | first) != $r.reviewed_sha) | .path] | join(" ")' 2>/dev/null)"
+  # The whole snapshot, both ways: every repository read then is here now at the same commit with the
+  # same working tree, and none is here that was not read. A snapshot that cannot be read now, or a
+  # repository that is gone, is not "nothing moved": nothing is accepted on it.
+  if ! printf '%s' "$REVIEW_SNAPSHOT" | jq -e 'type == "array"' >/dev/null 2>&1 \
+     || ! printf '%s' "${_now:-}" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    _moved="(the state of the repositories could not be read)"
+  else
+    _moved="$(jq -rn --argjson a "$REVIEW_SNAPSHOT" --argjson b "$_now" '
+      ([$b[] | . as $r | ([$a[] | select(.path == $r.path)] | first) as $o
+         | select($o == null or $o.reviewed_sha != $r.reviewed_sha or (($o.tree // "") != ($r.tree // ""))) | .path]
+       + [$a[] | . as $o | select(([$b[] | select(.path == $o.path)] | length) == 0) | .path])
+      | unique | join(" ")' 2>/dev/null)" || _moved="(the snapshot could not be compared)"
+  fi
   [ -n "$_moved" ] || return 0
   log "the commits moved after the review was read ($_moved) — nothing accepted; reviewing again"
-  jq -n --arg reason "🌙 Після того як Codex прочитав роботу, у репозиторії ($_moved) зʼявився новий коміт. Вердикт не стосується того, що є зараз, тож роботу не прийнято: заверши знову, і її прочитають такою, як вона є." \
+  jq -n --arg reason "🌙 Після того як Codex прочитав роботу, у репозиторії ($_moved) змінився код (новий коміт або незакомічена правка). Вердикт не стосується того, що є зараз, тож роботу не прийнято: заверши знову, і її прочитають такою, як вона є." \
     '{decision: "block", reason: $reason}'
   exit 0
 }
 mark_done() {  # $1 = disposition, [$2] = why, in a sentence the person reads
   local disposition="${1:-passed}" why="${2:-}" _unc _lo
+  abandon_if_not_ours "$disposition"
+  if { [ "$disposition" = passed ] || [ "$disposition" = debt ]; } && final_checks_unmet; then
+    log "a $disposition without the final checks passing in this run — settled as needs-user"
+    disposition=needs-user; why="$FINAL_UNMET_WHY"
+  fi
   # The same guard once more, for any path that reaches a pass without passing emit_review_json.
   [ "$disposition" = passed ] && guard_before_accept
   _lo="$(ledger_open_ids)"
@@ -764,11 +933,20 @@ mark_done() {  # $1 = disposition, [$2] = why, in a sentence the person reads
   rm -f "$STATE_DIR/unreachable-$RUN_KEY" 2>/dev/null || true
   # A task a bridge named outlives this run: its record learns how the attempt ended (and, on a
   # server, the session is let go). Nothing happens for a run that was given no task id.
-  [ -n "${IDIR_SCOPE:-}" ] && task_on_terminal "$IDIR_SCOPE" "$disposition"
+  # The attempt's ids as this gate took them at its start, never as the folder has them now.
+  _tot=0
+  if [ -n "${IDIR_SCOPE:-}" ]; then
+    TASK_RUN_ID="$GATE_RUN_ID" TASK_DISPATCH_ID="$GATE_DISPATCH_ID" task_on_terminal "$IDIR_SCOPE" "$disposition"; _tot=$?
+  fi
   [ -n "${IDIR_SCOPE:-}" ] && rm -f "$IDIR_SCOPE/gate-question.json" 2>/dev/null
   # The list is settled with the work: a task's next attempt after a pass, or after debt with
-  # nothing open, is a new reading, not a fix check of an empty list.
-  case "$disposition" in passed|debt) [ -n "${LEDGER_F:-}" ] && rm -f "$LEDGER_F" 2>/dev/null ;; esac
+  # nothing open, is a new reading, not a fix check of an empty list. Not when the task record said
+  # this verdict is stale (3): the list then belongs to the attempt that is running.
+  if [ "$_tot" != 3 ]; then
+    case "$disposition" in passed|debt) [ -n "${LEDGER_F:-}" ] && rm -f "$LEDGER_F" 2>/dev/null ;; esac
+  else
+    log "the task record refused this verdict as stale — the review list is left to the attempt that holds it"
+  fi
   return 0
 }
 
@@ -1741,8 +1919,10 @@ ${_rgroup}Then, only if there are any, a numbered list of NEW defects — ones n
 that does not support it, a question from the task left unanswered, invented numbers), or
 [regression_from_patch] when an edit since the last reading introduced it; anything else — wording,
 one more source that would be nice, depth — is [related_improvement] and does not hold the report
-back. End each tagged line with REACH: ordinary (a reader of this report meets it), data-loss, or rare
-(it takes an unusual reading to meet it); an item marked REACH: rare does not hold the report back.
+back; [spec_conflict] when the report does what the task explicitly asked and the objection is to the
+task itself (quote it). End each tagged line with REACH: ordinary (a reader of this report meets it),
+data-loss, or rare (it takes an unusual reading to meet it); an item marked REACH: rare does not hold
+the report back.
 Do not read the report again looking for new depth; the full reading is done.
 "
   fi
@@ -1770,15 +1950,25 @@ OUTPUT FORMAT — STRICT (header lines, in this order):
 STATE: COMPLETE
 VERDICT: PASS | FAIL
 If VERDICT: FAIL — a numbered list of concrete defects (max 10), each quoting the claim or section,
-saying what is wrong and what would fix it, most important first."
+saying what is wrong and what would fix it, most important first. Tag each: [acceptance_failure] when
+it is grounds for FAIL by the criteria; [related_improvement] for anything else (wording, one more
+source, depth) — it does not hold the report back; [spec_conflict] when the report does what the task
+explicitly asked and your objection is to the task itself (quote the task's words) — that is for the
+task's author to answer, not for the worker to change. End each line with REACH: ordinary (a reader of
+this report meets it), data-loss, or rare (it takes an unusual reading to meet it);
+an item marked REACH: rare does not hold the report back."
   review_stage reviewing
   rm -f "$IDIR_SCOPE/review-pending" 2>/dev/null || true
   if [ "${REVIEWER:-codex}" != claude ] && [ "$(codex_fallback_choice "${IDIR_SCOPE:-}" 2>/dev/null || true)" = claude ]; then
     REVIEWER=claude
   fi
   review_prompt_fit rprompt _task _crit _text
+  # What the reviewer is about to read, as for code: acceptance later (after the final checks too)
+  # compares the repositories with it, so an edit made while the report was read is not accepted.
+  REVIEW_SNAPSHOT="$(review_snapshot)"
   review_call "$rprompt" 1
   [ "$review_rc" != 0 ] && review=""
+  abandon_if_not_ours review
   [ "$review_refused" = 1 ] && review_refused_park
   review="$(review_demote_rare "$review")"
   _rhead="$(printf '%s\n' "$review" | head -8)"
@@ -1845,6 +2035,35 @@ $(python3 "$BIN_DIR/lib/review-ledger.py" open "$LEDGER_F" 2>/dev/null)"
       rm -f "$_rtmp"
     fi
   fi
+  # A readable FAIL, judged by the same rules as code review, on the first reading and on a fix check:
+  #   • an item tagged [spec_conflict] disputes what the task itself asked for — the task's author
+  #     answers that, so the run is parked with the question (spec_conflict_park), not sent back;
+  #   • nothing left that blocks — every numbered item advisory (a REACH: rare one is, by now) and,
+  #     on a fix check, every id on the ledger closed — is a pass. A FAIL with an empty list of
+  #     blockers used to send the report round again for notes nobody was asked to act on.
+  if [ "$_rcomplete" = 1 ] && [ "$_rverdict" = FAIL ]; then
+    _rspec="$(printf '%s\n' "$review" | grep -E '^[[:space:]]*[0-9]+[.)].*\[spec_conflict\]' | sed -E 's/^[[:space:]]*[0-9]+[.)][[:space:]]*//; s/\[spec_conflict\][[:space:]]*//' | head -5)"
+    [ -n "$_rspec" ] && spec_conflict_park "$_rspec"
+    _rnum=$(printf '%s\n' "$review" | grep -cE '^[[:space:]]*[0-9]+[.)]' 2>/dev/null || true)
+    _rblk=$(printf '%s\n' "$review" | grep -E '^[[:space:]]*[0-9]+[.)]' 2>/dev/null | grep -vcE '\[(related_improvement|pre_existing)\]' || true)
+    _radv=0
+    if [ "$_rfix" = 1 ]; then
+      [ "${_ropen:-1}" -eq 0 ] && [ "${_rblk:-0}" -eq 0 ] && _radv=1
+    else
+      [ "${_rnum:-0}" -gt 0 ] && [ "${_rblk:-0}" -eq 0 ] && _radv=1
+    fi
+    if [ "$_radv" = 1 ]; then
+      _rverdict=PASS
+      review="$review
+
+[GATE OVERRIDE] Жодне зауваження не блокує звіт: усі вони — рекомендації."
+      log "report review: FAIL with nothing that blocks — accepted"
+    fi
+  fi
+  # A report is accepted through the final checks too, as code is.
+  if [ "$_rverdict" = PASS ] && final_checks_registered; then
+    run_final_checks || { _rverdict=FAIL; log "report review: the final checks did not pass — the report goes back"; }
+  fi
   if [ "$_rverdict" = PASS ]; then
     rm -f "$rounds_file" "$STATE_DIR/rounds-meta-$RUN_KEY" "$STATE_DIR/rounds-findings-$RUN_KEY" "$LEDGER_F" 2>/dev/null || true
     emit_review_json COMPLETE PASS passed "$review"
@@ -1868,6 +2087,14 @@ $(python3 "$BIN_DIR/lib/review-ledger.py" open "$LEDGER_F" 2>/dev/null)"
     # The sender asked for this: a report still failing at its limit goes out with the reviewer's
     # notes instead of waiting for a person. The verdict stays FAIL in the record and the notes stay
     # with it; only the disposition says it was let through, and why.
+    # Not past the final checks, though: they run before anything is accepted or cleared, and a
+    # report whose checks did not pass is not let through with notes — a person decides.
+    if final_checks_registered && ! run_final_checks; then
+      emit_review_json COMPLETE FAIL needs-user "$review"
+      log "report review at its limit: the final checks did not pass — not accepted with notes"
+      mark_done needs-user "Фінальні перевірки звіту не пройшли — звіт не прийнято навіть із зауваженнями"
+      exit 0
+    fi
     ACCEPTED_WITH_NOTES=1
     emit_review_json COMPLETE FAIL passed "$review"
     rm -f "$rounds_file" "$STATE_DIR/rounds-meta-$RUN_KEY" "$STATE_DIR/rounds-findings-$RUN_KEY" "$LEDGER_F" 2>/dev/null || true
@@ -2329,6 +2556,7 @@ else
   review_call "$prompt"
 fi
 [ "$review_refused" = 1 ] && review_refused_park
+abandon_if_not_ours review
 
 # A commit that landed while the reviewer read is not what it read. Nothing is decided on this
 # answer: the work is reviewed again as it now stands (twice in a row, and a person is asked).
@@ -2598,35 +2826,27 @@ if [ "$state" = "HANDOFF" ]; then
   exit 0
 fi
 
-# The heavy checks (add-check --final), now that the reviewer passed the work. Only a pass of them
-# lets the PASS stand; a failure goes back to the worker as a blocking defect with its log, and a run
-# that produced nothing readable is the tool's failure, not the work's. A commit that lands while
-# they run is caught at acceptance (guard_before_accept), as for the review itself.
-if [ "$state" = COMPLETE ] && [ "$verdict" = PASS ] && final_checks_registered; then
-  gate_event gate.verify running "Рев'ю прийняло роботу — виконую фінальні перевірки"
-  _fev="$(VERIFY_FINAL=1 "$BIN_DIR/verify.sh" "$cwd" "$session_id-final" "${IDIR_SCOPE:-}" "$BASE_SHA" 2>>"$CODEX_LOG")"
-  _fst=""; [ -n "$_fev" ] && [ -f "$_fev" ] && _fst="$(jq -r '.overall_status // empty' "$_fev" 2>/dev/null)"
-  log "final checks: ${_fst:-no evidence} (${_fev:-none})"
-  if [ "$_fst" = pass ]; then
-    gate_event gate.verify done "Фінальні перевірки пройшли"
-    # Nothing else ran (only --final checks were registered): they are the evidence.
-    if [ "$verify_status" = skipped ] || { [ "$verify_status" = inconclusive ] \
-         && printf '%s' "${verify_json:-}" | jq -e '([.criteria[]? | select(.status == "pass" or .status == "fail")] | length) == 0' >/dev/null 2>&1; }; then
-      verify_status=pass
-    fi
-  else
-    gate_event gate.verify failed "Фінальні перевірки не пройшли — роботу повернуто"
-    _ffail="$(jq -r '.criteria[]? | select(.status != "pass") | "\(.criterion) (\(.status), exit \(.exit_code)): \(.artifact)"' "$_fev" 2>/dev/null | head -5 | tr '\n' ';' | sed 's/;$//')"
-    _flogs="$(jq -r '.criteria[]? | select(.status != "pass") | .artifact' "$_fev" 2>/dev/null \
-      | while read -r f; do [ -f "$f" ] && { echo "----- $f -----"; tail -n 40 "$f"; }; done)"
-    verdict=FAIL; verify_status=fail
-    if [ "$_fst" = fail ]; then _ftag="[acceptance_failure]"; else _ftag="[harness_failure]"; fi
+# A FAIL whose every numbered item is advisory ([related_improvement], [pre_existing] — a REACH: rare
+# item is one by now) holds nothing back: it is a pass. It is made one HERE, before the final checks,
+# so that this way to acceptance goes through them like a plain PASS does. Decided after it, as it
+# was, an advisory-only FAIL was accepted with the --final checks never run.
+if [ "$state" = COMPLETE ] && [ "$verdict" = FAIL ]; then
+  _ov_numbered=$(printf '%s\n' "$review" | grep -cE '^[[:space:]]*[0-9]+[.)]' 2>/dev/null || true)
+  _ov_advisory=$(printf '%s\n' "$review" | grep -E '^[[:space:]]*[0-9]+[.)]' 2>/dev/null \
+    | grep -cE '\[(related_improvement|pre_existing)\]' || true)
+  if [ "${LEDGER_OPEN:-0}" -eq 0 ] && [ "${verify_status:-}" != fail ] \
+     && [ "${_ov_numbered:-0}" -gt 0 ] && [ "${_ov_numbered:-0}" -eq "${_ov_advisory:-0}" ]; then
+    verdict=PASS
     review="$review
 
-[FINAL CHECKS] The reviewer passed the work; the heavy checks registered with add-check --final then ran:
-1. $_ftag Final check not passed: ${_ffail:-the final checks produced no evidence}. Fix what it reports and finish again. REACH: ordinary
-${_flogs}"
+[GATE OVERRIDE] Усі зауваження поза межами поточного запиту й не блокують його приймання."
+    log "advisory-only FAIL taken as PASS (it still goes through the final checks)"
   fi
+fi
+
+# The heavy checks (add-check --final) — run_final_checks, defined with the helpers above.
+if [ "$state" = COMPLETE ] && [ "$verdict" = PASS ] && final_checks_registered; then
+  run_final_checks || verdict=FAIL
 fi
 
 # [spec_conflict]: the reviewer disputes something the task decided in so many words. That is the
@@ -2685,20 +2905,7 @@ if [ "$verdict" = "FAIL" ]; then
       log "scope_violation only — quarantined, not reopening"
       mark_done needs-user; exit 0
     fi
-    _numbered=$(printf '%s\n' "$review" | grep -cE '^[[:space:]]*[0-9]+[.)]' 2>/dev/null || true)
-    _advisory=$(printf '%s\n' "$review" | grep -E '^[[:space:]]*[0-9]+[.)]' 2>/dev/null \
-      | grep -cE '\[(related_improvement|pre_existing)\]' || true)
-    if [ "$acc" -eq 0 ] && [ "${verify_status:-}" != fail ] \
-       && [ "${_numbered:-0}" -gt 0 ] && [ "${_numbered:-0}" -eq "${_advisory:-0}" ]; then
-      review="$review
-
-[GATE OVERRIDE] Усі зауваження поза межами поточного запиту й не блокують його приймання."
-      emit_review_json COMPLETE PASS passed "$review"
-      rm -f "$LEDGER_F" 2>/dev/null || true
-      log "advisory-only FAIL overridden to task PASS"
-      piece_after_pass && exit 0
-      mark_done passed; exit 0
-    fi
+    # An advisory-only FAIL never reaches here: it was taken as a PASS before the final checks.
   fi
 
   if [ "$BOUNDED" = 1 ]; then

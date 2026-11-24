@@ -203,7 +203,7 @@ if task_exists "$TID"; then
   rm -f "$IDIR/task-id"
   check "a run without the task sees none" '! piece status | grep -q Острів'
 else
-  echo "  (task_create unavailable here — case skipped)"
+  echo "  (SKIP: task_create unavailable here — the case did not run)"
 fi
 
 echo "===== a new request does not inherit the last one's plan ====="

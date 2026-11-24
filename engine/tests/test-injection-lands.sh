@@ -31,7 +31,7 @@ echo "===== the CLI's own status is the answer when it keeps one ====="
 
 tmux new-session -d -s "$SESSION" "bash -c 'while :; do printf \"\\r%s\" \"\$RANDOM\"; sleep 0.2; done'" 2>/dev/null
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
-  echo "  ⚠️  tmux unavailable — skipping the live half"
+  echo "  SKIP: tmux unavailable — the live half did not run"
 else
   cat > "$HOME/.claude/sessions/$$.json" <<JSON
 {"pid":$$,"sessionId":"deadbeef","tmux":"$SESSION:@1.%1","status":"idle"}
@@ -122,7 +122,7 @@ cat > "$SESSFILE" <<JSON
 JSON
 tmux new-session -d -s "$PHASE_SESSION" "bash '$TMP/pane.sh'" 2>/dev/null
 if ! tmux has-session -t "$PHASE_SESSION" 2>/dev/null; then
-  echo "  ⚠️  tmux unavailable — skipping the phase sequence"
+  echo "  SKIP: tmux unavailable — the phase sequence did not run"
 else
   sleep 1
   # Read from the trail the injection itself appends, not by sampling the marker: `typed` and
@@ -207,7 +207,7 @@ WSESSION="bulava-withdraw-test-$$"
 rm -f "$TMP/pane-received"
 start_pane "$WSESSION" 0
 if ! tmux has-session -t "$WSESSION" 2>/dev/null; then
-  echo "  ⚠️  tmux unavailable — skipping the live withdrawal"
+  echo "  SKIP: tmux unavailable — the live withdrawal did not run"
 else
   PF="$TMP/wphase"; rm -f "$PF" "$PF.log"
   # A long settle keeps the handoff at `typing` for as long as it takes to notice and act.
@@ -240,7 +240,7 @@ rm -f "$TMP/pane-received" "$(delivering_file "$WIDIR")"
 rm -rf "$WIDIR/withdrawn" "$WIDIR/cancelled" 2>/dev/null
 start_pane "$WSESSION2" 6      # the pane takes its time admitting the turn began
 if ! tmux has-session -t "$WSESSION2" 2>/dev/null; then
-  echo "  ⚠️  tmux unavailable — skipping the post-Enter half"
+  echo "  SKIP: tmux unavailable — the post-Enter half did not run"
 else
   PF2="$TMP/wphase2"; rm -f "$PF2" "$PF2.log"
   ( INJECT_PHASE_FILE="$PF2" SUPERVISOR_PROMPT_WAIT=20 SUPERVISOR_INJECT_CALM=0 \

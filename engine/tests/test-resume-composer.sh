@@ -180,7 +180,7 @@ if tmux has-session -t "$BLOCKED" 2>/dev/null; then
   if [ -f "$IDIR2/stalled.json" ]; then ok "blocked pane parked for a human"; else bad "blocked pane never escalated"; fi
   tmux kill-session -t "$BLOCKED" 2>/dev/null
 else
-  echo "  (skipped: could not start the blocked-pane harness)"
+  echo "  (SKIP: could not start the blocked-pane harness)"
 fi
 
 echo "===== a working turn clears the state ====="
@@ -232,7 +232,7 @@ if tmux has-session -t "$BUSY" 2>/dev/null; then
   else bad "an idle session no longer accepts a task — dispatch would never start"; fi
   tmux kill-session -t "$IDLE" 2>/dev/null
 else
-  echo "  (skipped: could not start the busy-pane harness)"
+  echo "  (SKIP: could not start the busy-pane harness)"
 fi
 
 echo

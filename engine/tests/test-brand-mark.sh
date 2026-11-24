@@ -1,4 +1,5 @@
 #!/bin/bash
+# test-cache: reads tools/icongen "Night Shift/Design"
 # One logo, three renderings.
 #
 # The `b` is described once, in the app (Night Shift/Design/BulavaGlyph.swift). The Dock icon is cut

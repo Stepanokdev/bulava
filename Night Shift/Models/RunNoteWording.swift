@@ -191,6 +191,21 @@ nonisolated enum RunNoteWording {
         Template("Фінальні перевірки пройшли") { _, b in
             String(localized: "The final checks passed", bundle: b)
         },
+        Template("Фінальні перевірки ще йдуть \\((.+) хв\\)") { g, b in
+            String(localized: "The final checks are still running (\(g[0] ?? "") min)", bundle: b)
+        },
+        Template("Фінальні перевірки не виконано або вони не пройшли — роботу не прийнято, потрібна людина") { _, b in
+            String(localized: "The final checks did not run or did not pass — the work was not accepted, a person is needed", bundle: b)
+        },
+        Template("Фінальні перевірки звіту не пройшли — звіт не прийнято навіть із зауваженнями") { _, b in
+            String(localized: "The report’s final checks did not pass — the report was not accepted, not even with notes", bundle: b)
+        },
+        Template("Фінальні перевірки не дали результату — потрібна людина") { _, b in
+            String(localized: "The final checks gave no result — a person is needed", bundle: b)
+        },
+        Template("Фінальні перевірки не дали результату, який можна прочитати — роботу не прийнято, потрібна людина") { _, b in
+            String(localized: "The final checks gave no result that can be read — the work was not accepted, a person is needed", bundle: b)
+        },
         Template("Фінальні перевірки не пройшли — роботу повернуто") { _, b in
             String(localized: "The final checks did not pass — the work was sent back", bundle: b)
         },

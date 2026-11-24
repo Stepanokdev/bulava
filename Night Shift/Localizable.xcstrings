@@ -36380,6 +36380,86 @@
         }
       }
     },
+    "The final checks are still running (%@ min)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Финальные проверки ещё идут (%@ мин)"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Фінальні перевірки ще йдуть (%@ хв)"
+          }
+        }
+      }
+    },
+    "The final checks did not run or did not pass — the work was not accepted, a person is needed" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Финальные проверки не выполнены или не прошли — работа не принята, нужен человек"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Фінальні перевірки не виконано або вони не пройшли — роботу не прийнято, потрібна людина"
+          }
+        }
+      }
+    },
+    "The report’s final checks did not pass — the report was not accepted, not even with notes" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Финальные проверки отчёта не прошли — отчёт не принят даже с замечаниями"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Фінальні перевірки звіту не пройшли — звіт не прийнято навіть із зауваженнями"
+          }
+        }
+      }
+    },
+    "The final checks gave no result — a person is needed" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Финальные проверки не дали результата — нужен человек"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Фінальні перевірки не дали результату — потрібна людина"
+          }
+        }
+      }
+    },
+    "The final checks gave no result that can be read — the work was not accepted, a person is needed" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Финальные проверки не дали результата, который можно прочитать — работа не принята, нужен человек"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Фінальні перевірки не дали результату, який можна прочитати — роботу не прийнято, потрібна людина"
+          }
+        }
+      }
+    },
     "The final checks did not pass — the work was sent back" : {
       "localizations" : {
         "ru" : {

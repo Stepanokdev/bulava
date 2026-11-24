@@ -86,7 +86,7 @@ cache_commit() {
   local f
   [ -n "$CACHE_BASE" ] || return 0
   if [ "$(test_cache_base "$(cd ../.. && pwd)")" = "$CACHE_BASE" ]; then
-    for f in "$PENDING"/*.log; do [ -f "$f" ] && test_cache_store "$(basename "$f" .log)" "$f"; done
+    for f in "$PENDING"/*.log; do [ -f "$f" ] && test_cache_store "$(basename "$f" .log)" "$f" "$CACHE_BASE" "$(cd ../.. && pwd)"; done
   else
     echo "↺ the engine changed while the suite ran — none of this run's passes are kept"
   fi

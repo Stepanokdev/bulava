@@ -59,7 +59,7 @@ run_shell_suite() {   # $1 = tree to run in  $2 = tests dir (repo-relative)  $3 
     for k in "$rcdir"/*.key; do
       [ -f "$k" ] || continue
       t="$(basename "$k" .key)"
-      [ "$(cat "$rcdir/$t.rc" 2>/dev/null)" = 0 ] && test_cache_store "$(cat "$k")" "$rcdir/$t.log"
+      [ "$(cat "$rcdir/$t.rc" 2>/dev/null)" = 0 ] && test_cache_store "$(cat "$k")" "$rcdir/$t.log" "$cbase" "$tree"
     done
   fi
   rm -f "$rcdir"/*.key 2>/dev/null

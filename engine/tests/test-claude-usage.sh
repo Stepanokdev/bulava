@@ -1,4 +1,5 @@
 #!/bin/bash
+# test-cache: off — it asks a network endpoint.
 # Claude's limits come from the endpoint the CLI itself uses, not from a statusline render.
 #
 # They used to come only from a statusline render, which happens only while an interactive session is

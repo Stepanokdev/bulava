@@ -65,14 +65,62 @@ _iso_now() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
 # (`--arg name value`, `--argjson name json`). A write that cannot happen is an error to the caller:
 # a state change that did not reach the disk must not be reported as made.
 task_update() {   # $1=task id $2=jq filter [jq args…]
-  local tid="$1" filter="$2" f tmp rc
+  local tid="$1" filter="$2" f rc
   shift 2
   f="$(task_file "$tid")"; [ -s "$f" ] || return 1
   _task_lock "$tid" || return 1
+  _task_apply "$f" "$filter" "$@"; rc=$?
+  _task_unlock "$tid"
+  return "$rc"
+}
+_task_apply() {   # $1=task file $2=jq filter [jq args…] — the caller holds the lock
+  local f="$1" filter="$2" tmp rc
+  shift 2
   tmp="$f.tmp.$$"
   jq --arg _now "$(_iso_now)" "$@" "$filter | .updated_at = \$_now" "$f" > "$tmp" 2>/dev/null \
     && [ -s "$tmp" ] && mv -f "$tmp" "$f"; rc=$?
   [ "$rc" = 0 ] || rm -f "$tmp" 2>/dev/null
+  return "$rc"
+}
+
+# Is the task's last attempt still this one (dispatch id, run id, not stopped or superseded)? Read
+# under the task's lock, so a stop or a /continue is either before it or after it. 0 = yes.
+task_attempt_is() {   # $1=task id $2=dispatch id $3=run id
+  local tid="$1" did="$2" rid="$3" f rc
+  f="$(task_file "$tid")"; [ -s "$f" ] || return 1
+  _task_lock "$tid" || return 1
+  jq -e --arg d "$did" --arg r "$rid" '
+      (.attempts[-1] // null) as $a
+      | $a != null and ($a.dispatch_id // "") == $d
+        and ((($a.run_id // "") == "") or $a.run_id == $r)
+        and ((($a.disposition // "") | IN("stopped", "superseded")) | not)' "$f" >/dev/null 2>&1; rc=$?
+  _task_unlock "$tid"
+  return "$rc"
+}
+
+# The same, only if the task's last attempt is still the one this run is: its dispatch id, its run id
+# (when the attempt has one), and not closed by a stop. Checked under the lock that guards the write,
+# so nothing can start or stop an attempt between the check and the write — read before the lock, a
+# late verdict could settle an attempt that `stop` had closed a moment earlier, or one a /continue
+# had just opened. Returns 3, writing nothing, when the attempt is not this run's any more.
+# TASK_ATTEMPT_OPEN_ONLY=1: and only while nothing has ended it (a stop never closes a settled one).
+# An attempt a verdict ended may be settled again by a later verdict of the same live run (a run
+# parked as needs-user, answered in the chat, then passed): that is the newer word on the same work.
+task_update_attempt() {   # $1=task id $2=dispatch id $3=run id $4=jq filter [jq args…]
+  local tid="$1" did="$2" rid="$3" filter="$4" f rc
+  shift 4
+  f="$(task_file "$tid")"; [ -s "$f" ] || return 1
+  _task_lock "$tid" || return 1
+  if ! jq -e --arg d "$did" --arg r "$rid" --arg open "${TASK_ATTEMPT_OPEN_ONLY:-0}" '
+        (.attempts[-1] // null) as $a
+        | $a != null and ($a.dispatch_id // "") == $d
+          and ((($a.run_id // "") == "") or $a.run_id == $r)
+          and ((($a.disposition // "") | IN("stopped", "superseded")) | not)
+          and ($open != "1" or $a.ended_at == null)' "$f" >/dev/null 2>&1; then
+    _task_unlock "$tid"
+    return 3
+  fi
+  _task_apply "$f" "$filter" "$@"; rc=$?
   _task_unlock "$tid"
   return "$rc"
 }
@@ -158,8 +206,13 @@ task_attempt_begin() {   # $1=task id $2=instance dir $3=dispatch id $4=kind (in
   xb="$(cut -d$'\037' -f1,2 "$idir/extra-repos" 2>/dev/null \
         | jq -Rn '[inputs | split("\u001f") | select(length == 2 and .[0] != "" and .[1] != "") | {(.[0]): .[1]}] | add // {}' 2>/dev/null)"
   case "$xb" in '{'*) ;; *) xb='{}' ;; esac
+  # One attempt is open at a time: one still open when the next begins (a second /continue before the
+  # first got its verdict) is closed as superseded, and its late verdict is then stale.
   task_update "$tid" '
-    .attempts += [{n:((.attempts | length) + 1), kind:$k, dispatch_id:$d, run_id:$r,
+    .attempts |= (if length == 0 then . else
+        (.[-1] |= (if .ended_at == null then .ended_at = $_now | .result = "superseded" | .disposition = "superseded" else . end))
+      end)
+    | .attempts += [{n:((.attempts | length) + 1), kind:$k, dispatch_id:$d, run_id:$r,
                    instance:$i, started_at:$_now, ended_at:null, result:null, review:null}]
     | .state = "running" | .state_reason = ""
     | .question = (if $k == "continue" then null else .question end)
@@ -265,8 +318,8 @@ task_state_for() {   # $1=disposition $2=declared result → state
 # An attempt has ended: record it on the task, tell the bridge, and on a server let the session go.
 # Called by the review gate when it settles a run (`mark_done`) and by the server's Codex policy.
 # The state is on disk before anyone is told about it, so whatever a notification says can be read.
-task_on_terminal() {   # $1=instance dir $2=disposition
-  local idir="$1" disp="${2:-}" tid result state reason receipt repos q gen rid did cx
+task_on_terminal() {   # $1=instance dir $2=disposition → 3 when the verdict was stale and nothing was written
+  local idir="$1" disp="${2:-}" tid result state reason receipt repos q gen rid did cx rc
   tid="$(cat "$idir/task-id" 2>/dev/null || true)"
   [ -n "$tid" ] && task_exists "$tid" || return 0
   # Which worker this verdict is about, read before anything is published: once the state says
@@ -274,13 +327,12 @@ task_on_terminal() {   # $1=instance dir $2=disposition
   gen="$(cat "$idir/worker-generation" 2>/dev/null || true)"
   # And only the attempt this run is: a late verdict from an attempt that has since been replaced
   # must not settle the one that replaced it.
-  rid="$(tr -d '[:space:]' < "$idir/run-id" 2>/dev/null || true)"
-  did="$(jq -r '.id // empty' "$idir/dispatch.json" 2>/dev/null || true)"
-  if [ "$(task_get "$tid" '.attempts[-1].dispatch_id')" != "$did" ] \
-     || { [ -n "$(task_get "$tid" '.attempts[-1].run_id')" ] && [ "$(task_get "$tid" '.attempts[-1].run_id')" != "$rid" ]; }; then
-    task_event "$tid" stale-verdict "$(jq -nc --arg d "$disp" --arg did "$did" '{disposition:$d, dispatch_id:$did}')"
-    return 0
-  fi
+  # The ids the caller took when it started (the review gate: TASK_RUN_ID / TASK_DISPATCH_ID), else
+  # the folder's. A gate that ran for an hour must not read them now: a /continue may have given this
+  # folder to the next attempt meanwhile.
+  rid="${TASK_RUN_ID:-$(tr -d '[:space:]' < "$idir/run-id" 2>/dev/null || true)}"
+  did="${TASK_DISPATCH_ID:-$(jq -r '.id // empty' "$idir/dispatch.json" 2>/dev/null || true)}"
+  # Checked where it counts: under the task's lock, in the same step as the write below.
   result="$(jq -r '.result // empty' "$idir/outcome.json" 2>/dev/null)"
   state="$(task_state_for "$disp" "$result")"
   reason="$(jq -r '.reason // empty' "$idir/outcome.json" 2>/dev/null)"
@@ -305,10 +357,9 @@ task_on_terminal() {   # $1=instance dir $2=disposition
   cx="$(codex_participation "$idir" 2>/dev/null)"
   case "$cx" in '{'*) ;; *) cx='{"status":"full"}' ;; esac
   [ "$state" = needs_input ] || q=null
-  task_material_save "$tid" "$idir"
   # What a passing review saw in each repository: the next attempt has work to review there only
   # once HEAD moves past it.
-  task_update "$tid" '
+  task_update_attempt "$tid" "$did" "$rid" '
     .state = $st | .state_reason = $why | .repos = $repos
     | .repo_reviewed = ((.repo_reviewed // {}) + (if $disp == "passed"
         then ([$repos[] | select((.path // "") != "" and (.reviewed_sha // "") != "") | {(.path): .reviewed_sha}] | add // {})
@@ -322,7 +373,14 @@ task_on_terminal() {   # $1=instance dir $2=disposition
     --arg st "$state" --arg why "$reason" --argjson repos "$repos" --argjson rc "$receipt" \
     --argjson q "$q" --arg res "$result" --arg disp "$disp" \
     --argjson cx "$cx" \
-    --argjson oc "$(jq -c . "$idir/outcome.json" 2>/dev/null || echo null)" || return 1
+    --argjson oc "$(jq -c . "$idir/outcome.json" 2>/dev/null || echo null)"; rc=$?
+  if [ "$rc" = 3 ]; then
+    task_event "$tid" stale-verdict "$(jq -nc --arg d "$disp" --arg did "$did" '{disposition:$d, dispatch_id:$did}')"
+    return 3
+  fi
+  [ "$rc" = 0 ] || return 1
+  # Only now: a stale verdict must not leave its folder's files as the task's material either.
+  task_material_save "$tid" "$idir"
   task_event "$tid" attempt-ended "$(jq -nc --arg d "$disp" --arg r "$result" --arg why "$reason" --argjson cx "$cx" \
       '{disposition:$d, result:(if $r == "" then null else $r end), reason:$why, codex:$cx}')"
   task_notify "$tid"
@@ -342,18 +400,17 @@ task_on_stop() {   # $1=instance dir
   [ -n "$tid" ] && task_exists "$tid" || return 0
   rid="$(tr -d '[:space:]' < "$idir/run-id" 2>/dev/null || true)"
   did="$(jq -r '.id // empty' "$idir/dispatch.json" 2>/dev/null || true)"
-  [ "$(task_get "$tid" '.attempts[-1].dispatch_id')" = "$did" ] || return 0
-  [ -z "$(task_get "$tid" '.attempts[-1].run_id')" ] || [ "$(task_get "$tid" '.attempts[-1].run_id')" = "$rid" ] || return 0
   [ -z "$(task_get "$tid" '.attempts[-1].ended_at')" ] || return 0
   repos="$(repos_state_json "$idir" "$(cat "$idir/project" 2>/dev/null)" 2>/dev/null || echo '[]')"
   case "$repos" in '['*) ;; *) repos='[]' ;; esac
-  task_material_save "$tid" "$idir"
-  task_update "$tid" '
+  # Whose attempt it is and whether a verdict closed it first: decided under the lock, with the write.
+  TASK_ATTEMPT_OPEN_ONLY=1 task_update_attempt "$tid" "$did" "$rid" '
     .repos = (if ($repos | length) > 0 then [$repos[] | del(.reviewed_sha)] else .repos end)
     | .attempts |= (if length == 0 then . else
         (.[-1] |= (if .ended_at == null then .ended_at = $_now | .result = "stopped" | .disposition = "stopped" else . end))
       end)' \
-    --argjson repos "$repos" || return 1
+    --argjson repos "$repos" || return 0
+  task_material_save "$tid" "$idir"
   task_event "$tid" attempt-stopped '{}'
 }
 

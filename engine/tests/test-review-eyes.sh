@@ -126,7 +126,7 @@ if command -v ffmpeg >/dev/null 2>&1; then
   check "each says which clip and when"      'prompt | grep -q "з кліпу cast.mp4: 2. закид"'
   check "the clip itself is not attached"    '! after -i | grep -q "cast.mp4$"'
 else
-  echo "  (no ffmpeg — clip case skipped)"
+  echo "  (SKIP: no ffmpeg — the clip case did not run)"
 fi
 
 echo "===== an image the change added is attached unasked ====="

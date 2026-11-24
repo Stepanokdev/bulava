@@ -58,7 +58,7 @@ check "how the run was STARTED never picks the machine" \
 # numbers say that; a comment that happens to sit above it does not, and anchoring there broke the
 # moment comments were removed.
 check "the class rules are not bounded-only"           \
-      '[ "$(grep -n "advisory-only FAIL overridden" "$GATE" | head -1 | cut -d: -f1)" \
+      '[ "$(grep -n "advisory-only FAIL taken as PASS" "$GATE" | head -1 | cut -d: -f1)" \
          -lt "$(grep -n "if \[ \"\$BOUNDED\" = 1 \]; then" "$GATE" | tail -1 | cut -d: -f1)" ]'
 check "recent human turns define chat scope"           'grep -q "RECENT HUMAN TURNS" "$GATE"'
 check "product concerns cannot fail a chat task"       'grep -q "release readiness, old backlog and unrelated files are not acceptance criteria" "$GATE"'

@@ -3715,7 +3715,9 @@ run_event() {  # $1=instance dir $2=stage $3=state [$4=note] [$5=extra json obje
     did="$(jq -r '.id // empty' "$idir/dispatch.json" 2>/dev/null)"
     [ -n "$pipe" ] || pipe="$(jq -r '.pipeline // empty' "$idir/dispatch.json" 2>/dev/null)"
   fi
-  rid="$(tr -d '[:space:]' 2>/dev/null < "$idir/run-id" || true)"
+  # A caller that knows which attempt it speaks for says so (the review gate: the ids it started
+  # with); the folder may already be the next attempt's.
+  rid="${RUN_EVENT_RUN_ID:-$(tr -d '[:space:]' 2>/dev/null < "$idir/run-id" || true)}"
   case "$extra" in '{'*'}') ;; *) extra='{}' ;; esac
   if [ -f "$f" ] && [ "$(wc -c < "$f" 2>/dev/null | tr -d ' ')" -gt "${SUPERVISOR_RUN_EVENTS_MAX:-2000000}" ] 2>/dev/null; then
     mv -f "$f" "$f.1" 2>/dev/null || true

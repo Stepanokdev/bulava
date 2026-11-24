@@ -1,4 +1,5 @@
 #!/bin/bash
+# test-cache: off — it reads the built application on this Mac, which no key describes.
 # The app carries the engine, and installing the app is the whole installation.
 #
 # A stranger downloads one file. Everything the engine needs after that — Claude Code's hooks, the

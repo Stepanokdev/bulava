@@ -1,4 +1,5 @@
 #!/bin/bash
+# test-cache: off — it runs the browser and ffmpeg installed on this machine.
 # A web report can have a real video, and it needs no permission for it.
 #
 # Chrome renders the page, so Chrome can hand over its frames through the DevTools protocol. Nothing

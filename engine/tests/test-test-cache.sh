@@ -4,6 +4,7 @@
 #   • the same tree twice: the second run takes the pass from the cache and says so
 #   • an engine file changed: every test runs again; one test changed: only that one
 #   • a failure is never kept; a tree without the engine's layout is never cached
+#   • a skip is not a pass; a pass without its log, or an old record, runs again; `# test-cache: off`
 #   • the export test's key covers every other test; SUPERVISOR_TEST_CACHE=0 turns it off
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -57,6 +58,41 @@ suite3(){ rm -rf "$W/rc"; printf 'engine/tests/test-a.sh\nengine/tests/test-c.sh
 suite3; before_a="$(count a)"; suite3
 check "the tree moved during the run: no pass kept" '[ "$(count a)" = $((before_a + 1)) ] && [ "$(count c)" = 2 ]'
 rm -f "$T/engine/tests/test-c.sh"
+
+echo "===== a skip, a missing log, an opt-out ====="
+printf '#!/bin/bash\necho run >> "%s/count.s"\necho "  ➖ no built application here"\n' "$W" > "$T/engine/tests/test-s.sh"
+suite_s(){ rm -rf "$W/rc"; printf 'engine/tests/test-s.sh\n' \
+  | bash -c '. "$0"; run_shell_suite "$1" engine/tests "$2"' "$ROOT/bin/verify-suite-lib.sh" "$T" "$W/rc"; }
+suite_s; suite_s
+check "a test that skipped is run again, not taken as a pass" '[ "$(count s)" = 2 ]'
+printf '#!/bin/bash\necho run >> "%s/count.s"\necho "  (SKIP: tmux not installed)"\n' "$W" > "$T/engine/tests/test-s.sh"
+suite_s; suite_s
+check "so is one that printed SKIP"                 '[ "$(count s)" = 4 ]'
+printf '#!/bin/bash\n# test-cache: off — it reads the built app\necho run >> "%s/count.s"\necho ok\n' "$W" > "$T/engine/tests/test-s.sh"
+suite_s; suite_s
+check "a test marked test-cache: off is never cached" '[ "$(count s)" = 6 ] && ! test_cache_key "$(test_cache_base "$T")" "$T/engine/tests/test-s.sh" >/dev/null'
+rm -f "$T/engine/tests/test-s.sh"
+printf '#!/bin/bash\n# test-cache: reads tools/icongen "Night Shift/Design"\necho ok\n' > "$T/engine/tests/test-r.sh"
+BB="$(test_cache_base "$T")"
+k_abs="$(test_cache_key "$BB" "$T/engine/tests/test-r.sh")"
+mkdir -p "$T/tools/icongen" "$T/Night Shift/Design"; echo v1 > "$T/tools/icongen/build.sh"
+k_v1="$(test_cache_key "$BB" "$T/engine/tests/test-r.sh")"
+echo v2 > "$T/Night Shift/Design/mark.svg"
+k_v2="$(test_cache_key "$BB" "$T/engine/tests/test-r.sh")"
+check "a declared outside input appearing changes the key" '[ "$k_abs" != "$k_v1" ]'
+check "and so does a change in it (a path with a space)"  '[ "$k_v1" != "$k_v2" ]'
+rm -rf "$T/engine/tests/test-r.sh" "$T/tools" "$T/Night Shift"
+# One wording for a skip across the suite, or the cache cannot tell a skip from a pass.
+check "no test says it skipped in other words"     '[ -z "$(grep -lE "(echo|printf).*(— skipp(ed|ing)|\\(skipped|skipped\\))" "$ROOT"/tests/test-*.sh | grep -v "/test-test-cache.sh$")" ]'
+suite; before_a="$(count a)"
+KA="$(test_cache_key "$(test_cache_base "$T")" "$T/engine/tests/test-a.sh")"
+check "a pass records its base and commit"          'grep -qE " base [0-9a-f]{40} commit [^ ]+$" "$W/cache/$KA.pass"'
+rm -f "$W/cache/$KA.log"; suite
+check "a pass whose log is gone runs again"         '[ "$(count a)" = $((before_a + 1)) ]'
+date '+%F %T' > "$W/cache/$KA.pass"; suite
+check "an old record with only a date runs again"   '[ "$(count a)" = $((before_a + 2)) ]'
+suite
+check "and the fresh record is taken next time"     '[ "$(count a)" = $((before_a + 2)) ]'
 
 echo "===== keys ====="
 B="$(test_cache_base "$T")"

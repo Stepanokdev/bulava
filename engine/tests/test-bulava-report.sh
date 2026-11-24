@@ -8,7 +8,7 @@
 #     "NOT CHECKED", an error, never "no reports"
 #   • the MCP server speaks the protocol: initialize, tools/list, tools/call, errors, nothing else on stdout
 set -u
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"   # resolved, as the engine writes it (/var → /private/var)
 B="$ROOT/bin/bulava-report.sh"; MCP="$ROOT/bin/bulava-report-mcp.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 export SUPERVISOR_STATE_DIR="$TMP/here"

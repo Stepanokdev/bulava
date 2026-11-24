@@ -14,7 +14,7 @@
 #   5. a REQUIRED stage that fails inside a parallel group stops the run.
 set -u
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-tmux.sh"
-BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/../bin" && pwd)"
+BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/../bin" && pwd -P)"   # resolved, as the engine writes it (/var → /private/var)
 ENGINE_ROOT="$(cd "$BIN/.." && pwd)"
 TOOL="$BIN/pipeline-tool.py"
 fails=0

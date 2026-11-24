@@ -65,9 +65,12 @@ RID="$(cat "$I/run-id")"
 ( cd "$API" && echo "def health(): return 200" > health.py && git add health.py && gitq commit -qm health )
 jq -nc --arg ts "$(date '+%F %T')" --arg rid "$RID" '{schema:1, result:"succeeded_changes", summary:"x", ts:$ts, run_id:$rid}' > "$I/outcome.json"
 mkdir -p "$I/report"; jq -nc '{result:"succeeded_changes", review:"pending"}' > "$I/report/receipt.json"
+# One reviewer: the server's default team is three calls side by side, all writing the one prompt
+# file this fake keeps, and "named once" would then count three prompts as one.
 gate() {   # $1 = where the worker stands
   printf '{"session_id":"s1","transcript_path":"%s","cwd":"%s","stop_hook_active":false}' "$TR" "$1" \
     | ORCHESTRATOR_RUN_ID="$RID" SUPERVISOR_CODEX_USAGE_CMD=/usr/bin/true SUPERVISOR_RELEASE_DELAY=600 \
+      SUPERVISOR_REVIEW_TEAM=off \
       PATH="$FAKE:$PATH" bash "$ROOT/hooks/review-gate.sh" 2>/dev/null
 }
 # An uncommitted clone the home repository ignores is still uncommitted work.

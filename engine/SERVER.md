@@ -411,6 +411,25 @@ kept finding the next rare case, the earlier items mostly closed, and a run neve
   ids, not the team reading from scratch; its brief lists them under «Що лишилось відкритим з рев'ю».
   A ledger an earlier attempt left under its run id is taken over on the first review. A pass, or
   debt with nothing open, clears it.
+- **Attempts on the record.** One attempt is open at a time. `night-shift stop` closes the open one
+  with `result: stopped`; an attempt still open when the next begins (a second continuation before
+  the first got its verdict) is closed with `result: superseded`. A verdict settles an attempt only
+  if it is still that run's (dispatch id, run id) and was not stopped, checked under the task's lock
+  in the same step as the write; any other is recorded as a `stale-verdict` event and changes nothing.
+  The gate takes the attempt's ids when it starts; if the folder has gone to another attempt by the
+  time it would write (a continuation during a long final check), it writes nothing at all — no
+  verdict, no done mark, no cleared review list.
+- **Final checks.** A check registered with `add-check --final` runs once, when the review accepts
+  the work (a PASS, or a FAIL whose every item is advisory). The work is accepted only when every
+  final check exited 0 and left its log. A check that failed or ran out of time sends the work back
+  as a blocking defect; one that could not start or left nothing to read parks the run for a person.
+  It is never debt: any way to `passed` or `debt` — a round limit, a tool failure — with a final check
+  registered and not passed in that gate run is settled as needs-user. While they run, `gate.verify running` is repeated every minute, so a runner that
+  measures silence sees a check at work. Acceptance compares the commits and the working trees with
+  what the reviewer read, every repository both ways: one gone, one new, or a state that cannot be
+  read is not accepted.
+- **Research reports.** The same rules apply to a report's review: a report whose only items are
+  advisory (or `REACH: rare`) is accepted, and a `[spec_conflict]` parks it with the question.
 
 - An id the answer does not mention stays open. A PASS with ids still open is asked again once, and
   then counts as a FAIL with those ids sent back.

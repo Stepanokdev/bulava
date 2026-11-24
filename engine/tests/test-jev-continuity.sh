@@ -244,7 +244,7 @@ if command -v tmux >/dev/null 2>&1; then
   check "but the task was still kept, for when Jev is on" '[ -s "$CARRY/thread/current.json" ]'
   stop_now
 else
-  echo "  (tmux not installed — skipped)"
+  echo "  (SKIP: tmux not installed)"
 fi
 
 echo "===== the key stays out of everything ====="

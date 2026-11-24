@@ -11,7 +11,7 @@ ENGINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # This test's whole subject is the difference between the working tree and an export. Run from
 # inside an export it would build an export of an export, forever, and prove nothing.
 if [ ! -d "$ENGINE/../Night Shift" ] && [ ! -f "$ENGINE/../tools/icongen/build.sh" ]; then
-  echo "â already running from an exported tree — nothing further to prove here"
+  echo "SKIP: already running from an exported tree — nothing further to prove here"
   exit 0
 fi
 
@@ -46,6 +46,11 @@ if [ "$rc" != 0 ]; then
   echo
   echo "❌ the shipped tree does not pass its own suite"
   grep -nE "FAILED|problem\(s\)" "$TMP/suite.log" | head -20 | sed 's/^/   /'
+  # What failed, not only where: the checks that said ❌, and the whole log kept beside the temp dir.
+  echo "   the failing checks:"
+  grep -E "❌" "$TMP/suite.log" | grep -v "SOME SUITES FAILED" | head -30 | sed 's/^/     /'
+  cp -f "$TMP/suite.log" "${TMPDIR:-/tmp}/bulava-export-suite-last.log" 2>/dev/null \
+    && echo "   whole log: ${TMPDIR:-/tmp}/bulava-export-suite-last.log"
   exit 1
 fi
 
