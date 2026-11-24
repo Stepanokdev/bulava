@@ -418,8 +418,11 @@ kept finding the next rare case, the earlier items mostly closed, and a run neve
   in the same step as the write; any other is recorded as a `stale-verdict` event and changes nothing.
   The gate takes the attempt's ids when it starts; if the folder has gone to another attempt by the
   time it would write (a continuation during a long final check), it writes nothing at all — no
-  verdict, no done mark, no cleared review list. What it had already written to the review list for that answer (ids closed,
-  new ones added) is put back as it was, unless something has written the list since.
+  verdict, no done mark, no cleared review list. The gate works on a private copy of the review list: the shared file, which a
+  continuation's brief reads, changes only when the gate ends and only if the attempt is still its
+  own, so ids an answer closed during a long final check are still open for a continuation. A folder
+  with no git, reviewed through its copy, is fingerprinted before the review and again before
+  acceptance: an edit in between is not accepted and the copy's base does not move onto it.
 - **Final checks.** A check registered with `add-check --final` runs once per gate run, before
   anything is accepted: a PASS, a FAIL whose every item is advisory, a report, a plain folder's
   declared outcome, a round limit or a tool failure banked as debt — the first of these in a gate run

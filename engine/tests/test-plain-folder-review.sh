@@ -154,6 +154,18 @@ done_is passed && bad "a FAIL passed" || ok "a FAIL does not pass"
 printf '%s\n' "$(plain_shadow_changed "$GIDIR" "$G")" | grep -qx app/roulette.js \
   && ok "and the base stays: the change is still owed a review" || bad "the base moved on a FAIL"
 
+echo "===== a final check that edits the folder: not accepted, the base stays ====="
+mkcase
+printf 'const spin = () => 2\n' > "$G/app/roulette.js"
+declare_outcome succeeded_changes
+( cd "$G" && IDIR="$GIDIR" bash "$ROOT/bin/add-check.sh" --final "the wheel spins" -- bash -c "printf 'const spin = () => 99\n' > app/roulette.js" >/dev/null )
+out="$(rungate)"
+reviewed && ok "the change was reviewed first" || bad "not reviewed: $out"
+done_is passed && bad "an edit made by the final check was accepted" || ok "an edit made during the final check is not accepted"
+printf '%s' "$out" | grep -q "файли в теці змінилися" && ok "and the worker is told the folder changed after it was read" || bad "no such reason: $out"
+printf '%s\n' "$(plain_shadow_changed "$GIDIR" "$G")" | grep -qx app/roulette.js \
+  && ok "the copy's base stays where it was: the edit is still owed a review" || bad "the base moved onto the check's edit"
+
 echo "===== 3. where the declared outcome stands, as before ====="
 mkcase
 printf '\nmore notes\n' >> "$G/notes.md"

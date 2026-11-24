@@ -98,6 +98,19 @@ plain_shadow_changed() {   # $1=instance dir $2=folder
   _plain_shadow_git "$idir" "$proj" diff --cached --no-renames --name-only refs/plain/base 2>/dev/null
 }
 
+# The folder's state as the copy sees it: the tree of everything a review can read, and the list of
+# what it cannot (too large, secrets), as one digest. Taken before a review and again before
+# acceptance: a final check that edits the folder must not be accepted, nor the base moved onto
+# its edit. Fails — prints nothing — when it cannot be taken; that is never "unchanged".
+plain_shadow_fingerprint() {   # $1=instance dir $2=folder
+  local idir="$1" proj="$2" t u
+  plain_shadow_present "$idir" || return 1
+  _plain_shadow_stage "$idir" "$proj" || return 1
+  t="$(_plain_shadow_git "$idir" "$proj" write-tree 2>/dev/null)" && [ -n "$t" ] || return 1
+  u="$(_plain_shadow_uncopied "$proj" | shasum -a 256 | cut -c1-16)" || return 1
+  printf '%s:%s' "$t" "$u"
+}
+
 # Prose: a change to it alone needs no review of code.
 _plain_shadow_not_prose() { grep -viE '\.(md|markdown|rst|adoc|txt)$' | grep . || true; }
 

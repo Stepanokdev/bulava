@@ -348,6 +348,7 @@ cat > "$FAKE/continue.sh" <<EOF2
 printf '%s\n' "conv-run-next" > "$IDIR/run-id"
 jq -nc '{id:"d-next", task:"Add the record model"}' > "$IDIR/dispatch.json"
 task_attempt_begin "$TID" "$IDIR" "d-next" continue
+task_brief "$TID" "/continue" youtrack someone > "$FAKE/brief-continue"
 EOF2
 chmod +x "$FAKE/continue.sh"
 ( cd "$PROJ" && IDIR="$IDIR" "$ROOT/bin/add-check.sh" --final "full suite" -- "$FAKE/continue.sh" >/dev/null )
@@ -361,6 +362,7 @@ VERIFIER=1 rungate
 check "the old gate's PASS settles nothing"          '[ "$(task_get "$TID" .state)" = running ] && [ "$(task_get "$TID" ".attempts[-1].dispatch_id")" = d-next ] && [ -z "$(task_get "$TID" ".attempts[-1].ended_at")" ]'
 check "the attempt it was about is closed as superseded" '[ "$(task_get "$TID" ".attempts[-2].result")" = superseded ]'
 # The closures of the abandoned answer are taken back: the next attempt's brief still sees T1.
+check "the continuation's brief, read mid-check, lists T1" 'grep -q "^T1: " "$FAKE/brief-continue"'
 check "its review list is as it was before that answer" '[ -s "$TLEDGER" ] && python3 "$LEDGER" open "$TLEDGER" | grep -q "^T1: " && task_brief "$TID" "/continue" youtrack someone | grep -q "^T1: "'
 check "no done mark, no pass written in the folder"  '! done_is passed && grep -q "\"kind\":\"stale-verdict\"" "$(task_dir "$TID")/events.jsonl"'
 
@@ -419,6 +421,9 @@ cat > "$FAKE/stop.sh" <<EOF2
 #!/bin/bash
 . "$ROOT/bin/supervisor-lib.sh" >/dev/null 2>&1
 task_on_stop "$IDIR"
+# The continuation's brief, read now — while the old gate is still inside its final check.
+task_brief "$TID" "/continue" youtrack someone > "$FAKE/brief-during"
+python3 "$LEDGER" open "$TLEDGER" > "$FAKE/open-during"
 EOF2
 chmod +x "$FAKE/stop.sh"
 ( cd "$PROJ" && IDIR="$IDIR" "$ROOT/bin/add-check.sh" --final "full suite" -- "$FAKE/stop.sh" >/dev/null )
@@ -432,6 +437,7 @@ T3: SAME AS T1"
 VERIFIER=1 rungate
 check "a stop during the final checks: no pass is written" '! done_is passed && ! jq -e ".disposition == \"passed\"" "$IDIR/review.json" >/dev/null 2>&1'
 check "the stopped attempt stays stopped"            '[ "$(task_get "$TID" ".attempts[-1].result")" = stopped ]'
+check "the brief read during the old gate's check still lists T1" 'grep -q "^T1: " "$FAKE/brief-during" && grep -q "^T1: " "$FAKE/open-during"'
 check "and its review list keeps T1 open for the next attempt" '[ -s "$TLEDGER" ] && python3 "$LEDGER" open "$TLEDGER" | grep -q "^T1: " && task_brief "$TID" "/continue" youtrack someone | grep -q "^T1: "'
 
 echo "===== the beat stops with the attempt ====="

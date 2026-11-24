@@ -173,7 +173,8 @@ if [ -n "${IDIR_SCOPE:-}" ]; then
     && mv -f "$IDIR_SCOPE/review-active.tmp" "$IDIR_SCOPE/review-active" 2>/dev/null \
     || : > "$IDIR_SCOPE/review-active" 2>/dev/null || true
   printf '%s\n' preparing > "$IDIR_SCOPE/review-stage" 2>/dev/null || true
-  trap 'rm -f "$IDIR_SCOPE/review-active" "$IDIR_SCOPE/review-active.tmp" "$IDIR_SCOPE/review-stage" 2>/dev/null || true' EXIT
+  REVIEW_ACTIVE_SET=1   # cleared on exit (gate_on_exit once it is defined below)
+  trap 'if type gate_on_exit >/dev/null 2>&1; then gate_on_exit; else rm -f "$IDIR_SCOPE/review-active" "$IDIR_SCOPE/review-active.tmp" "$IDIR_SCOPE/review-stage" 2>/dev/null; fi' EXIT
   gate_event gate running "Виконавець зупинився — ворота перевіряють"
 fi
 review_stage() { # $1=preparing|verifying|reviewing
@@ -472,6 +473,48 @@ $items"
 # The ledger is written when a team round goes back to the worker — a FAIL, or a PASS the verifier
 # overturned — and goes with the review budget: a new request, a new task, a new piece, a pass.
 #
+# The review list this gate works on is a private copy (ledger_work_begin): the shared file — what a
+# continuation's brief reads — changes only when the gate ends, and only if its attempt is still its
+# own (ledger_work_publish, from the exit trap). A fix check that closed ids during a long final check
+# was otherwise visible at once: a /continue after a stop read a list with those ids gone, though
+# nothing had been accepted.
+LEDGER_HOME=""; LEDGER_HOME_SUM=""; LEDGER_WORK=""
+_ledger_sum() { if [ -f "$1" ]; then shasum -a 256 < "$1" | cut -c1-64; else printf 'absent'; fi; }
+ledger_work_begin() {
+  [ -n "${LEDGER_F:-}" ] || return 0
+  local target="$LEDGER_F"
+  # A report's list after a code review's in the same gate: the first one is settled first.
+  ledger_work_publish
+  LEDGER_HOME="$target"
+  LEDGER_HOME_SUM="$(_ledger_sum "$LEDGER_HOME")"
+  LEDGER_WORK="$(mktemp "${TMPDIR:-/tmp}/review-ledger-work.XXXXXX")" || { LEDGER_WORK=""; LEDGER_HOME=""; LEDGER_F="$target"; return 0; }
+  if [ -f "$LEDGER_HOME" ]; then cp -p "$LEDGER_HOME" "$LEDGER_WORK"; else rm -f "$LEDGER_WORK"; fi
+  LEDGER_F="$LEDGER_WORK"
+}
+ledger_work_publish() {
+  [ -n "$LEDGER_HOME" ] && [ -n "$LEDGER_WORK" ] || return 0
+  local home="$LEDGER_HOME" work="$LEDGER_WORK"
+  LEDGER_HOME=""; LEDGER_WORK=""
+  [ "${LEDGER_F:-}" = "$work" ] && LEDGER_F="$home"
+  if ! gate_still_ours; then
+    rm -f "$work" 2>/dev/null
+    echo "$(date '+%F %T') [review-gate] the review list of an attempt no longer this gate's is left as it was" >> "$LOG"
+    return 0
+  fi
+  if [ "$(_ledger_sum "$home")" != "$LEDGER_HOME_SUM" ]; then
+    rm -f "$work" 2>/dev/null
+    echo "$(date '+%F %T') [review-gate] the review list changed while this gate ran — its own answer is not written over it" >> "$LOG"
+    return 0
+  fi
+  if [ -f "$work" ]; then mv -f "$work" "$home"; else rm -f "$home"; fi
+}
+gate_on_exit() {
+  ledger_work_publish
+  [ "${REVIEW_ACTIVE_SET:-0}" = 1 ] && rm -f "$IDIR_SCOPE/review-active" "$IDIR_SCOPE/review-active.tmp" "$IDIR_SCOPE/review-stage" 2>/dev/null
+  return 0
+}
+trap 'if type gate_on_exit >/dev/null 2>&1; then gate_on_exit; else rm -f "$IDIR_SCOPE/review-active" "$IDIR_SCOPE/review-active.tmp" "$IDIR_SCOPE/review-stage" 2>/dev/null; fi' EXIT
+
 # A task a bridge named keeps one ledger across its attempts (ledger_key). It was keyed by the run,
 # and a `/continue` is a new run: on a server (Nov 2026) the second attempt began with the team
 # reading from scratch, found five new blockers, two of which the first attempt never had, and the
@@ -480,6 +523,7 @@ LEDGER_KEY="$(ledger_key)"
 LEDGER_F="$STATE_DIR/review-ledger-$LEDGER_KEY"
 ledger_adopt review
 [ -f "$LEDGER_F" ] && [ "$LEDGER_KEY" != "$RUN_KEY" ] && python3 "$BIN_DIR/lib/review-ledger.py" attempt "$LEDGER_F" "$RUN_KEY" 2>/dev/null
+ledger_work_begin
 export LEDGER_RUN="$RUN_KEY"
 FIXCHECK=0; FIXCHECK_BLOCK=""
 if [ -f "$LEDGER_F" ]; then
@@ -632,6 +676,7 @@ run_final_checks() {
     return "$FINAL_RAN"
   fi
   FINAL_RAN=1
+  [ -n "$PLAIN_SNAPSHOT" ] || plain_snapshot_take
   gate_event gate.verify running "Рев'ю прийняло роботу — виконую фінальні перевірки"
   _fout="$(mktemp "${TMPDIR:-/tmp}/final-checks.XXXXXX")"
   ( VERIFY_FINAL=1 "$BIN_DIR/verify.sh" "$cwd" "$session_id-final" "${IDIR_SCOPE:-}" "$BASE_SHA" >"$_fout" 2>>"$CODEX_LOG" ) &
@@ -716,32 +761,6 @@ ${_flogs}"
   fi
 }
 
-# What this gate did to the review list, kept undoable until the gate is sure it still speaks for its
-# attempt. A fix check closes ids as the reviewer confirms them — but if the attempt is stopped or
-# replaced before this gate settles (a long final check is where that happens), those closures were
-# never accepted, and the continuation's brief must still see the ids open. ledger_stage copies the
-# list before the answer is applied; ledger_undo puts it back — only if nothing else has written it
-# since — when the gate abandons its attempt.
-LEDGER_BACKUP=""; LEDGER_WRITTEN=""
-ledger_stage() {
-  [ -n "${LEDGER_F:-}" ] || return 0
-  LEDGER_BACKUP="$(mktemp "${TMPDIR:-/tmp}/review-ledger-before.XXXXXX")" || { LEDGER_BACKUP=""; return 0; }
-  if [ -f "$LEDGER_F" ]; then cp -p "$LEDGER_F" "$LEDGER_BACKUP"; else rm -f "$LEDGER_BACKUP"; LEDGER_BACKUP="$LEDGER_BACKUP.absent"; fi
-}
-ledger_written() {
-  [ -n "$LEDGER_BACKUP" ] && [ -f "${LEDGER_F:-}" ] || return 0
-  LEDGER_WRITTEN="$(shasum -a 256 < "$LEDGER_F" | cut -c1-64)"
-}
-ledger_undo() {
-  [ -n "$LEDGER_BACKUP" ] && [ -n "$LEDGER_WRITTEN" ] && [ -f "${LEDGER_F:-}" ] || return 0
-  [ "$(shasum -a 256 < "$LEDGER_F" | cut -c1-64)" = "$LEDGER_WRITTEN" ] || { log "the review list changed after this gate wrote it — left as it is"; return 0; }
-  case "$LEDGER_BACKUP" in
-    *.absent) rm -f "$LEDGER_F" ;;
-    *) mv -f "$LEDGER_BACKUP" "$LEDGER_F" ;;
-  esac
-  log "the review list is put back as it was before this gate's answer (its attempt is no longer this gate's)"
-}
-
 # Before any "passed" or "debt" is written: the registered final checks, if this gate run has not run
 # them yet. Every way to acceptance comes through here — a code review's PASS, an advisory-only FAIL,
 # a report, a plain folder's declared outcome, a round limit, a tool's failure banked as debt — so a
@@ -762,6 +781,16 @@ $(printf '%s\n' "${review:-}" | sed -n '/^\[FINAL CHECKS\]/,$p')
   exit 0
 }
 
+# A folder with no git, reviewed through its copy (lib/plain-shadow.sh): its state is not in
+# REVIEW_SNAPSHOT (that is repositories), so it is fingerprinted beside it, at the same moments.
+PLAIN_SNAPSHOT=""
+plain_snapshot_take() {
+  [ -n "${IDIR_SCOPE:-}" ] && plain_shadow_present "$IDIR_SCOPE" 2>/dev/null || return 0
+  PLAIN_SNAPSHOT="$(plain_shadow_fingerprint "$IDIR_SCOPE" "$cwd" 2>/dev/null)"
+  [ -n "$PLAIN_SNAPSHOT" ] || PLAIN_SNAPSHOT="unreadable"
+}
+
+
 # The folder still belongs to the attempt this gate started for. When it does not, nothing is written
 # here — not the review, not the done mark, not the ledger, not the task record (a `stale-verdict`
 # event says it came) — and the gate ends quietly.
@@ -780,7 +809,6 @@ gate_still_ours() {
 abandon_if_not_ours() {   # $1 = the disposition that was about to be written
   gate_still_ours && return 0
   log "the folder now belongs to another attempt (run $GATE_RUN_ID → $(tr -d '[:space:]' < "$IDIR_SCOPE/run-id" 2>/dev/null)) — this verdict (${1:-?}) is not written"
-  ledger_undo
   local _tid; _tid="$(cat "$IDIR_SCOPE/task-id" 2>/dev/null || true)"
   [ -n "$_tid" ] && task_exists "$_tid" \
     && task_event "$_tid" stale-verdict "$(jq -nc --arg d "${1:-?}" --arg did "$GATE_DISPATCH_ID" --arg r "$GATE_RUN_ID" '{disposition:$d, dispatch_id:$did, run_id:$r, source:"gate"}')"
@@ -868,6 +896,15 @@ block_if_repo_joined() {
 guard_before_accept() {
   abandon_if_not_ours passed
   block_if_repo_joined
+  if [ -n "$PLAIN_SNAPSHOT" ]; then
+    local _pnow; _pnow="$(plain_shadow_fingerprint "$IDIR_SCOPE" "$cwd" 2>/dev/null)"
+    if [ "$PLAIN_SNAPSHOT" = unreadable ] || [ -z "$_pnow" ] || [ "$_pnow" != "$PLAIN_SNAPSHOT" ]; then
+      log "the folder (no git) changed after it was read, or its state cannot be read — nothing accepted; reviewing again"
+      jq -n --arg reason "🌙 Після того як Codex прочитав роботу, файли в теці змінилися (або їхній стан не вдалося прочитати). Вердикт не стосується того, що є зараз, тож роботу не прийнято: заверши знову, і її прочитають такою, як вона є." \
+        '{decision: "block", reason: $reason}'
+      exit 0
+    fi
+  fi
   [ -n "${REVIEW_SNAPSHOT:-}" ] || return 0
   local _now _moved
   _now="$(review_snapshot)"
@@ -1959,6 +1996,7 @@ If the task changed data — in production or anywhere else — the report says 
   LEDGER_F="$STATE_DIR/report-ledger-$LEDGER_KEY"
   ledger_adopt report
   [ -f "$LEDGER_F" ] && [ "$LEDGER_KEY" != "$RUN_KEY" ] && python3 "$BIN_DIR/lib/review-ledger.py" attempt "$LEDGER_F" "$RUN_KEY" 2>/dev/null
+  ledger_work_begin
   _rfix=0; _rfix_block=""
   if [ -f "$LEDGER_F" ]; then
     _rfix=1
@@ -2033,7 +2071,7 @@ an item marked REACH: rare does not hold the report back."
   review_prompt_fit rprompt _task _crit _text
   # What the reviewer is about to read, as for code: acceptance later (after the final checks too)
   # compares the repositories with it, so an edit made while the report was read is not accepted.
-  REVIEW_SNAPSHOT="$(review_snapshot)"
+  REVIEW_SNAPSHOT="$(review_snapshot)"; plain_snapshot_take
   review_call "$rprompt" 1
   [ "$review_rc" != 0 ] && review=""
   abandon_if_not_ours review
@@ -2075,10 +2113,8 @@ $review"
   if [ "$_rcomplete" = 1 ] && [ -n "$_rverdict" ]; then
     _rtmp="$(mktemp "${TMPDIR:-/tmp}/review-answer.XXXXXX")"; printf '%s\n' "$review" > "$_rtmp"
     if [ "$_rfix" = 1 ]; then
-      ledger_stage
-      _lres="$(python3 "$BIN_DIR/lib/review-ledger.py" apply "$LEDGER_F" "$_rtmp" "[]" 2>>"$CODEX_LOG")"; _lrc=$?
-      ledger_written
-      rm -f "$_rtmp"
+          _lres="$(python3 "$BIN_DIR/lib/review-ledger.py" apply "$LEDGER_F" "$_rtmp" "[]" 2>>"$CODEX_LOG")"; _lrc=$?
+          rm -f "$_rtmp"
       if [ "$_lrc" != 0 ]; then
         log "the report's review ledger could not be read or written (exit $_lrc) — nothing is accepted on it"
         emit_review_json COMPLETE FAIL needs-user "$review"
@@ -2099,10 +2135,8 @@ $(python3 "$BIN_DIR/lib/review-ledger.py" open "$LEDGER_F" 2>/dev/null)"
     else
       if [ "$_rverdict" = FAIL ]; then
         # One reviewer's own numbered list: its items are already distinct, nothing to group.
-        ledger_stage
-        _ln="$(python3 "$BIN_DIR/lib/review-ledger.py" init "$LEDGER_F" "$_rtmp" "[]" one 2>>"$CODEX_LOG")"
-        ledger_written
-        log "report review goes back: ${_ln:-0} item(s) on the report's ledger — the next rounds check them"
+              _ln="$(python3 "$BIN_DIR/lib/review-ledger.py" init "$LEDGER_F" "$_rtmp" "[]" one 2>>"$CODEX_LOG")"
+              log "report review goes back: ${_ln:-0} item(s) on the report's ledger — the next rounds check them"
       fi
       rm -f "$_rtmp"
     fi
@@ -2619,7 +2653,7 @@ fi
 # The commit(s) the reviewer is about to read. The verdict belongs to these and the receipt names
 # them (restamp_receipt); a commit that lands while the review runs was not read, and the verdict is
 # not taken for it.
-REVIEW_SNAPSHOT="$(review_snapshot)"
+REVIEW_SNAPSHOT="$(review_snapshot)"; plain_snapshot_take
 if [ -n "$REVIEW_TEAM" ]; then
   TEAM_ROUND=1
   log "review by a team: $(printf '%s' "$REVIEW_TEAM" | tr '\n' ' ')"
@@ -2734,9 +2768,7 @@ LEDGER_STALL=0; LEDGER_OPEN=0; LEDGER_CHURN=0
 # (checked above). An id it did not answer stays open, and a PASS with one still open is a FAIL.
 if [ "$FIXCHECK" = 1 ] && [ "$state" = COMPLETE ] && { [ "$verdict" = PASS ] || [ "$verdict" = FAIL ]; }; then
   _rtmp="$(mktemp "${TMPDIR:-/tmp}/review-answer.XXXXXX")"; printf '%s\n' "$review" > "$_rtmp"
-  ledger_stage
   _lres="$(python3 "$BIN_DIR/lib/review-ledger.py" apply "$LEDGER_F" "$_rtmp" "${REVIEW_SNAPSHOT:-[]}" 2>>"$CODEX_LOG")"; _lrc=$?
-  ledger_written
   rm -f "$_rtmp"
   if [ "$_lrc" != 0 ]; then
     log "the review ledger could not be read or written (exit $_lrc) — nothing is accepted on it"
@@ -2759,9 +2791,7 @@ $(python3 "$BIN_DIR/lib/review-ledger.py" open "$LEDGER_F" 2>/dev/null)"
 fi
 if [ "${TEAM_ROUND:-0}" = 1 ] && [ "$state" = COMPLETE ] && [ "$verdict" = FAIL ]; then
   _rtmp="$(mktemp "${TMPDIR:-/tmp}/review-answer.XXXXXX")"; printf '%s\n' "$review" > "$_rtmp"
-  ledger_stage
   _ln="$(python3 "$BIN_DIR/lib/review-ledger.py" init "$LEDGER_F" "$_rtmp" "${REVIEW_SNAPSHOT:-[]}" 2>>"$CODEX_LOG")"
-  ledger_written
   rm -f "$_rtmp"
   case "$_ln" in ''|*[!0-9]*) _ln=0 ;; esac
   LEDGER_OPEN="$_ln"
