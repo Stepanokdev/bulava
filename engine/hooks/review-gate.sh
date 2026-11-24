@@ -510,6 +510,7 @@ ledger_work_publish() {
 }
 gate_on_exit() {
   ledger_work_publish
+  type task_release_hold >/dev/null 2>&1 && task_release_hold
   [ "${REVIEW_ACTIVE_SET:-0}" = 1 ] && rm -f "$IDIR_SCOPE/review-active" "$IDIR_SCOPE/review-active.tmp" "$IDIR_SCOPE/review-stage" 2>/dev/null
   return 0
 }
@@ -791,6 +792,25 @@ plain_snapshot_take() {
 }
 
 
+# The verdict's publication, held against a stop or a /continue (task_hold_attempt): taken before the
+# first thing a verdict writes (review.json, in emit_review_json) and kept until the last (the task
+# record and the shared review list, at the end of mark_done). If the attempt is no longer this
+# gate's when the hold is taken, nothing at all is written. A run no task named has nothing to hold.
+gate_hold_attempt() {
+  [ -n "${IDIR_SCOPE:-}" ] || return 0
+  local tid rc; tid="$(cat "$IDIR_SCOPE/task-id" 2>/dev/null || true)"
+  [ -n "$tid" ] && task_exists "$tid" || return 0
+  [ -n "${SUPERVISOR_TEST_HOOK_BEFORE_HOLD:-}" ] && bash "$SUPERVISOR_TEST_HOOK_BEFORE_HOLD" >/dev/null 2>&1
+  task_hold_attempt "$tid" "$GATE_DISPATCH_ID" "$GATE_RUN_ID"; rc=$?
+  if [ "$rc" = 0 ]; then
+    [ -n "${SUPERVISOR_TEST_HOOK_IN_HOLD:-}" ] && bash "$SUPERVISOR_TEST_HOOK_IN_HOLD" >/dev/null 2>&1
+    return 0
+  fi
+  log "the task's attempt is no longer this gate's (hold: $rc) — the verdict is not published"
+  task_event "$tid" stale-verdict "$(jq -nc --arg did "$GATE_DISPATCH_ID" --arg r "$GATE_RUN_ID" '{dispatch_id:$did, run_id:$r, source:"gate"}')"
+  exit 0
+}
+
 # The folder still belongs to the attempt this gate started for. When it does not, nothing is written
 # here — not the review, not the done mark, not the ledger, not the task record (a `stale-verdict`
 # event says it came) — and the gate ends quietly.
@@ -816,6 +836,7 @@ abandon_if_not_ours() {   # $1 = the disposition that was about to be written
 }
 emit_review_json() {
   abandon_if_not_ours "${3:-}"
+  gate_hold_attempt
   # Every pass, and every debt, is written here first, before the ledger is dropped or a piece is
   # accepted: the place to make sure it is still about what the reviewer read.
   case "${3:-}" in passed|debt) finals_before_accept; guard_before_accept ;; esac
@@ -933,6 +954,7 @@ guard_before_accept() {
 mark_done() {  # $1 = disposition, [$2] = why, in a sentence the person reads
   local disposition="${1:-passed}" why="${2:-}" _unc _lo
   abandon_if_not_ours "$disposition"
+  gate_hold_attempt
   { [ "$disposition" = passed ] || [ "$disposition" = debt ]; } && finals_before_accept
   if { [ "$disposition" = passed ] || [ "$disposition" = debt ]; } && final_checks_unmet; then
     log "a $disposition without the final checks passing in this run — settled as needs-user"
@@ -1052,6 +1074,9 @@ mark_done() {  # $1 = disposition, [$2] = why, in a sentence the person reads
   else
     log "the task record refused this verdict as stale — the review list is left to the attempt that holds it"
   fi
+  # The review list goes out with the verdict, inside the same hold; then the hold is let go.
+  ledger_work_publish
+  task_release_hold
   return 0
 }
 

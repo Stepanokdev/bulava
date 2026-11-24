@@ -416,6 +416,10 @@ kept finding the next rare case, the earlier items mostly closed, and a run neve
   the first got its verdict) is closed with `result: superseded`. A verdict settles an attempt only
   if it is still that run's (dispatch id, run id) and was not stopped, checked under the task's lock
   in the same step as the write; any other is recorded as a `stale-verdict` event and changes nothing.
+  The gate publishes a verdict under the task's lock, held from the check that the attempt is still
+  its own to the last thing written (review.json, the done mark, the run's events, the task record,
+  the shared review list): a stop or a continuation lands wholly before it (nothing is published) or
+  wholly after it (and finds the attempt settled).
   The gate takes the attempt's ids when it starts; if the folder has gone to another attempt by the
   time it would write (a continuation during a long final check), it writes nothing at all — no
   verdict, no done mark, no cleared review list. The gate works on a private copy of the review list: the shared file, which a

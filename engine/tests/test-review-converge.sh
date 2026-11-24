@@ -536,6 +536,51 @@ VERDICT: PASS"
 rungate
 check "PASS, final fails, at the limit with accept: one run, not accepted" '[ "$(grep -c . "$FAKE/rep-count")" = 1 ] && ! done_is passed'
 
+echo "===== a stop between the last ownership check and the publication ====="
+team_on; mkcase "PRJ-$RANDOM"
+answer team "STATE: COMPLETE
+VERDICT: FAIL
+1. [acceptance_failure] src/a.ts — the empty state is missing REACH: ordinary"
+rungate; unset SUPERVISOR_REVIEW_TEAM; work
+TLEDGER="$SUPERVISOR_STATE_DIR/review-ledger-$(task_key "$TID")"
+cat > "$FAKE/stop-now.sh" <<EOF2
+#!/bin/bash
+. "$ROOT/bin/supervisor-lib.sh" >/dev/null 2>&1
+task_on_stop "$IDIR"
+EOF2
+answer single "STATE: COMPLETE
+VERDICT: PASS
+DUPLICATES: NAMED
+T1: FIXED
+T2: SAME AS T1
+T3: SAME AS T1"
+rm -f "$IDIR/review.json"
+SUPERVISOR_TEST_HOOK_BEFORE_HOLD="$FAKE/stop-now.sh" rungate
+check "stopped just before the publication: no PASS anywhere" '! done_is passed && ! jq -e ".disposition == \"passed\"" "$IDIR/review.json" >/dev/null 2>&1 && ! jq -e "select(.state == \"passed\" or .note == \"Прийнято\")" "$IDIR/run-events.jsonl" 2>/dev/null | grep -q . && [ ! -e "$IDIR/dispatches/$DID.done" ]'
+check "the attempt is the stop's, the open ids kept"  '[ "$(task_get "$TID" ".attempts[-1].result")" = stopped ] && python3 "$LEDGER" open "$TLEDGER" | grep -q "^T1: " && task_brief "$TID" "/continue" youtrack someone | grep -q "^T1: "'
+
+team_on; mkcase "PRJ-$RANDOM"
+answer team "STATE: COMPLETE
+VERDICT: FAIL
+1. [acceptance_failure] src/a.ts — the empty state is missing REACH: ordinary"
+rungate; unset SUPERVISOR_REVIEW_TEAM; work
+cat > "$FAKE/stop-later.sh" <<EOF2
+#!/bin/bash
+( . "$ROOT/bin/supervisor-lib.sh" >/dev/null 2>&1; task_on_stop "$IDIR"; date +%s > "$FAKE/stop-done" ) </dev/null >/dev/null 2>&1 &
+sleep 2
+EOF2
+rm -f "$FAKE/stop-done"
+answer single "STATE: COMPLETE
+VERDICT: PASS
+DUPLICATES: NAMED
+T1: FIXED
+T2: SAME AS T1
+T3: SAME AS T1"
+SUPERVISOR_TEST_HOOK_IN_HOLD="$FAKE/stop-later.sh" rungate
+for _w in $(seq 1 100); do [ -s "$FAKE/stop-done" ] && break; sleep 0.1; done
+check "a stop arriving during the publication waits for it" '[ -s "$FAKE/stop-done" ] && done_is passed'
+check "and finds the attempt settled: the record says passed, not stopped" '[ "$(task_get "$TID" ".attempts[-1].disposition")" = passed ] && [ "$(task_get "$TID" ".attempts[-1].result")" != stopped ]'
+
 echo
 echo "review converges: $pass passed, $fail failed"
 [ "$fail" = 0 ]

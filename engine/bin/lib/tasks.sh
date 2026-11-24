@@ -37,9 +37,36 @@ task_get() {   # $1=task id $2=jq expression
   jq -r "${2:-.} // empty" "$(task_file "$1")" 2>/dev/null
 }
 
-_task_lock()   { local l i=0; l="$(task_dir "$1")/.lock"; mkdir -p "$(dirname "$l")" 2>/dev/null
-                 until _take_lock "$l"; do i=$((i + 1)); [ "$i" -ge 100 ] && return 1; sleep 0.1; done; }
-_task_unlock() { rm -rf "$(task_dir "$1")/.lock" 2>/dev/null; }
+# A process that holds a task's lock for a whole publication (task_hold_attempt) takes it once: the
+# task_* calls it makes meanwhile find it held by themselves and neither wait for it nor let it go.
+# Up to a minute of waiting: a verdict being published holds it for that long at most, and a stop
+# must wait for it rather than give up and record nothing.
+_task_lock()   { [ -n "${TASK_LOCK_HELD:-}" ] && [ "$TASK_LOCK_HELD" = "$1" ] && return 0
+                 local l i=0; l="$(task_dir "$1")/.lock"; mkdir -p "$(dirname "$l")" 2>/dev/null
+                 until _take_lock "$l"; do i=$((i + 1)); [ "$i" -ge 600 ] && return 1; sleep 0.1; done; }
+_task_unlock() { [ -n "${TASK_LOCK_HELD:-}" ] && [ "$TASK_LOCK_HELD" = "$1" ] && return 0
+                 rm -rf "$(task_dir "$1")/.lock" 2>/dev/null; }
+
+# Hold the task's lock while a verdict is published, from the check that the attempt is still this
+# run's to the last thing written about it: a stop or a /continue then lands wholly before (and the
+# check fails: nothing is published) or wholly after (and finds the attempt settled). Returns 3, not
+# holding anything, when the attempt is not this run's; 1 when the lock could not be had.
+task_hold_attempt() {   # $1=task id $2=dispatch id $3=run id
+  local tid="$1"
+  [ -n "${TASK_LOCK_HELD:-}" ] && [ "$TASK_LOCK_HELD" = "$tid" ] && return 0
+  _task_lock "$tid" || return 1
+  TASK_LOCK_HELD="$tid"
+  if ! task_attempt_is "$tid" "$2" "$3"; then
+    task_release_hold
+    return 3
+  fi
+  return 0
+}
+task_release_hold() {
+  [ -n "${TASK_LOCK_HELD:-}" ] || return 0
+  local tid="$TASK_LOCK_HELD"; TASK_LOCK_HELD=""
+  _task_unlock "$tid"
+}
 
 # One attempt's life in one folder at a time. Held by a dispatch from the moment it checks that the
 # task is free until the new attempt is on the record, and by a settled attempt's release from the
