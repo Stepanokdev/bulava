@@ -184,6 +184,20 @@ for result in succeeded_changes succeeded_no_change succeeded_research; do
   [ -s "$CODEX_CALLED" ] && bad "$result: Codex was asked to review a plain folder" || ok "$result: no Codex round"
 done
 
+# A final check registered for the job (add-check --final) runs before its outcome is taken, as on
+# every other way to acceptance: exit 0 with its own log lets it through, a failure sends it back.
+FCNT="$TMP/final-count"; : > "$FCNT"
+mkcase; declare_outcome succeeded_research
+( cd "$G" && IDIR="$GIDIR" bash "$BIN_DIR/add-check.sh" --final "the tasks were added" -- bash -c "echo ran >> '$FCNT'; echo checked" >/dev/null )
+out="$(rungate)"
+done_is passed && [ "$(grep -c . "$FCNT")" = 1 ] && ok "a passing final check runs once and lets the plain run through" \
+  || bad "plain + passing final: done=$(cat "$GIDIR/done" 2>/dev/null) ran=$(grep -c . "$FCNT") out=$out"
+mkcase; declare_outcome succeeded_research
+( cd "$G" && IDIR="$GIDIR" bash "$BIN_DIR/add-check.sh" --final "the tasks were added" -- bash -c "echo missing; exit 5" >/dev/null )
+out="$(rungate)"
+{ ! done_is passed && printf '%s' "$out" | grep -q '"decision"' && printf '%s' "$out" | grep -q "the tasks were added"; } \
+  && ok "a failing final check sends the plain run back, not accepted" || bad "plain + failing final: done=$(cat "$GIDIR/done" 2>/dev/null) out=$out"
+
 mkcase; declare_outcome failed; rungate >/dev/null
 done_is needs-user && ok "failed → needs-user, as for every run" || bad "failed → $(cat "$GIDIR/done" 2>/dev/null)"
 

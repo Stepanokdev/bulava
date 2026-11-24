@@ -362,9 +362,14 @@ fi
 # the repository's own index and files are not touched.
 worktree_tree() {   # $1=repository → tree id
   local idx t; idx="$(mktemp "${TMPDIR:-/tmp}/review-index.XXXXXX")" || return 0; rm -f "$idx"
-  GIT_INDEX_FILE="$idx" git -C "$1" read-tree HEAD >/dev/null 2>&1
-  GIT_INDEX_FILE="$idx" git -C "$1" add -A . >/dev/null 2>&1
-  t="$(GIT_INDEX_FILE="$idx" git -C "$1" write-tree 2>/dev/null)"
+  # Every step must succeed: an `add` that could not write a blob leaves HEAD's tree in the index,
+  # and a changed file would then fingerprint as unchanged. No fingerprint is better than a wrong one.
+  if GIT_INDEX_FILE="$idx" git -C "$1" read-tree HEAD >/dev/null 2>&1 \
+     && GIT_INDEX_FILE="$idx" git -C "$1" add -A . >/dev/null 2>&1; then
+    t="$(GIT_INDEX_FILE="$idx" git -C "$1" write-tree 2>/dev/null)"
+  else
+    t=""
+  fi
   rm -f "$idx"; printf '%s' "$t"
 }
 # The key a review ledger is filed under: the task's, when a bridge named one, so its attempts share
@@ -617,7 +622,16 @@ ledger_open_json() {
 # While they run, a line goes to the run's events every minute, so a runner that measures silence
 # sees a check that is working. A commit or an edit that lands while they run is caught at
 # acceptance (guard_before_accept compares the commits and the working trees the reviewer read).
+FINAL_RAN=""   # this gate run's result of the final checks: "" not run, 0 passed, 1 failed
 run_final_checks() {
+  # Once per gate run. A second path to acceptance in the same run (a report that passed, failed its
+  # final check, and then reached its limit with "accept") takes the first result; running them again
+  # could turn the first failure into a pass nobody looked at.
+  if [ -n "$FINAL_RAN" ]; then
+    log "final checks already ran in this gate run (result $FINAL_RAN) — that result stands"
+    return "$FINAL_RAN"
+  fi
+  FINAL_RAN=1
   gate_event gate.verify running "Рев'ю прийняло роботу — виконую фінальні перевірки"
   _fout="$(mktemp "${TMPDIR:-/tmp}/final-checks.XXXXXX")"
   ( VERIFY_FINAL=1 "$BIN_DIR/verify.sh" "$cwd" "$session_id-final" "${IDIR_SCOPE:-}" "$BASE_SHA" >"$_fout" 2>>"$CODEX_LOG" ) &
@@ -656,6 +670,9 @@ run_final_checks() {
     _fs="$(printf '%s' "$_fline" | jq -r '.status // ""')"
     _fx="$(printf '%s' "$_fline" | jq -r 'if (.exit_code | type) == "number" then .exit_code else "" end')"
     _fa="$(printf '%s' "$_fline" | jq -r '.artifact // ""')"
+    # A log is one check's own: one that another registered check also names proves neither.
+    _fshared="$(jq -r --arg a "$_fa" '[.criteria[]? | select(.artifact == $a)] | length' "$_fev" 2>/dev/null)"
+    if [ -n "$_fa" ] && [ "${_fshared:-0}" -gt 1 ]; then _funread=$((_funread + 1)); continue; fi
     if [ "$_fs" = pass ] && [ "$_fx" = 0 ] && [ -n "$_fa" ] && [ -f "$_fa" ] && [ -r "$_fa" ]; then
       _fpass=$((_fpass + 1))
     elif [ -n "$_fx" ] && [ "$_fx" != 0 ] && [ "$_fx" != 126 ] && [ "$_fx" != 127 ] && [ -n "$_fa" ] && [ -r "$_fa" ]; then
@@ -667,7 +684,7 @@ run_final_checks() {
   log "final checks: ${_fst:-no evidence} (${_fev:-none}); passed ${_fpass:-0}, failed ${_fran_fail:-0}, unreadable ${_funread:-0}"
   if [ "$_freg" -gt 0 ] && [ "$_fpass" -eq "$_freg" ]; then
     gate_event gate.verify done "Фінальні перевірки пройшли"
-    FINAL_PASSED=1
+    FINAL_PASSED=1; FINAL_RAN=0
     # Nothing else ran (only --final checks were registered): they are the evidence.
     if [ "${verify_status:-}" = skipped ] || { [ "${verify_status:-}" = inconclusive ] \
          && printf '%s' "${verify_json:-}" | jq -e '([.criteria[]? | select(.status == "pass" or .status == "fail")] | length) == 0' >/dev/null 2>&1; }; then
@@ -680,9 +697,9 @@ run_final_checks() {
     _flogs="$(jq -r '.criteria[]? | select(.status != "pass") | .artifact' "$_fev" 2>/dev/null \
       | while read -r f; do [ -f "$f" ] && { echo "----- $f -----"; tail -n 40 "$f"; }; done)"
     verify_status=fail
-    review="$review
+    review="${review:-}
 
-[FINAL CHECKS] The reviewer passed the work; the heavy checks registered with add-check --final then ran:
+[FINAL CHECKS] The work was about to be accepted; the heavy checks registered with add-check --final then ran:
 1. [acceptance_failure] Final check not passed: ${_ffail}. Fix what it reports and finish again. REACH: ordinary
 ${_flogs}"
     return 1
@@ -690,13 +707,59 @@ ${_flogs}"
     # Nothing to read: no evidence, an empty list, or a check that left no log. Not the worker's to
     # fix and not a pass: a person decides.
     gate_event gate.verify failed "Фінальні перевірки не дали результату — потрібна людина"
-    emit_review_json COMPLETE FAIL needs-user "$review
+    emit_review_json COMPLETE FAIL needs-user "${review:-}
 
 [FINAL CHECKS] The final checks produced no readable result (${_fev:-no evidence}); nothing is accepted on them."
     log "final checks produced no readable result — parked for a person, not accepted"
     mark_done needs-user "Фінальні перевірки не дали результату, який можна прочитати — роботу не прийнято, потрібна людина"
     exit 0
   fi
+}
+
+# What this gate did to the review list, kept undoable until the gate is sure it still speaks for its
+# attempt. A fix check closes ids as the reviewer confirms them — but if the attempt is stopped or
+# replaced before this gate settles (a long final check is where that happens), those closures were
+# never accepted, and the continuation's brief must still see the ids open. ledger_stage copies the
+# list before the answer is applied; ledger_undo puts it back — only if nothing else has written it
+# since — when the gate abandons its attempt.
+LEDGER_BACKUP=""; LEDGER_WRITTEN=""
+ledger_stage() {
+  [ -n "${LEDGER_F:-}" ] || return 0
+  LEDGER_BACKUP="$(mktemp "${TMPDIR:-/tmp}/review-ledger-before.XXXXXX")" || { LEDGER_BACKUP=""; return 0; }
+  if [ -f "$LEDGER_F" ]; then cp -p "$LEDGER_F" "$LEDGER_BACKUP"; else rm -f "$LEDGER_BACKUP"; LEDGER_BACKUP="$LEDGER_BACKUP.absent"; fi
+}
+ledger_written() {
+  [ -n "$LEDGER_BACKUP" ] && [ -f "${LEDGER_F:-}" ] || return 0
+  LEDGER_WRITTEN="$(shasum -a 256 < "$LEDGER_F" | cut -c1-64)"
+}
+ledger_undo() {
+  [ -n "$LEDGER_BACKUP" ] && [ -n "$LEDGER_WRITTEN" ] && [ -f "${LEDGER_F:-}" ] || return 0
+  [ "$(shasum -a 256 < "$LEDGER_F" | cut -c1-64)" = "$LEDGER_WRITTEN" ] || { log "the review list changed after this gate wrote it — left as it is"; return 0; }
+  case "$LEDGER_BACKUP" in
+    *.absent) rm -f "$LEDGER_F" ;;
+    *) mv -f "$LEDGER_BACKUP" "$LEDGER_F" ;;
+  esac
+  log "the review list is put back as it was before this gate's answer (its attempt is no longer this gate's)"
+}
+
+# Before any "passed" or "debt" is written: the registered final checks, if this gate run has not run
+# them yet. Every way to acceptance comes through here — a code review's PASS, an advisory-only FAIL,
+# a report, a plain folder's declared outcome, a round limit, a tool's failure banked as debt — so a
+# path that never thought about final checks cannot skip them. They ran and failed: the work goes back
+# to the worker with their log, nothing is accepted. Nothing readable: run_final_checks has parked the
+# run for a person already.
+finals_before_accept() {
+  final_checks_registered && [ -z "$FINAL_RAN" ] || return 0
+  run_final_checks && return 0
+  FINAL_SENDING_BACK=1
+  emit_review_json COMPLETE FAIL remediation "${review:-}"
+  log "final checks did not pass on the way to acceptance — the work goes back"
+  jq -n --arg reason "🌙 Фінальні перевірки (add-check --final) не пройшли — роботу не прийнято:
+
+$(printf '%s\n' "${review:-}" | sed -n '/^\[FINAL CHECKS\]/,$p')
+
+Виправ те, про що вони кажуть, і заверши знову." '{decision: "block", reason: $reason}'
+  exit 0
 }
 
 # The folder still belongs to the attempt this gate started for. When it does not, nothing is written
@@ -717,6 +780,7 @@ gate_still_ours() {
 abandon_if_not_ours() {   # $1 = the disposition that was about to be written
   gate_still_ours && return 0
   log "the folder now belongs to another attempt (run $GATE_RUN_ID → $(tr -d '[:space:]' < "$IDIR_SCOPE/run-id" 2>/dev/null)) — this verdict (${1:-?}) is not written"
+  ledger_undo
   local _tid; _tid="$(cat "$IDIR_SCOPE/task-id" 2>/dev/null || true)"
   [ -n "$_tid" ] && task_exists "$_tid" \
     && task_event "$_tid" stale-verdict "$(jq -nc --arg d "${1:-?}" --arg did "$GATE_DISPATCH_ID" --arg r "$GATE_RUN_ID" '{disposition:$d, dispatch_id:$did, run_id:$r, source:"gate"}')"
@@ -726,7 +790,7 @@ emit_review_json() {
   abandon_if_not_ours "${3:-}"
   # Every pass, and every debt, is written here first, before the ledger is dropped or a piece is
   # accepted: the place to make sure it is still about what the reviewer read.
-  case "${3:-}" in passed|debt) guard_before_accept ;; esac
+  case "${3:-}" in passed|debt) finals_before_accept; guard_before_accept ;; esac
   case "${3:-}" in passed|debt)
     if final_checks_unmet; then
       log "a ${3} without the final checks passing in this run — written as needs-user"
@@ -817,7 +881,10 @@ guard_before_accept() {
     _moved="$(jq -rn --argjson a "$REVIEW_SNAPSHOT" --argjson b "$_now" '
       ([$b[] | . as $r | ([$a[] | select(.path == $r.path)] | first) as $o
          | select($o == null or $o.reviewed_sha != $r.reviewed_sha or (($o.tree // "") != ($r.tree // ""))) | .path]
-       + [$a[] | . as $o | select(([$b[] | select(.path == $o.path)] | length) == 0) | .path])
+       + [$a[] | . as $o | select(([$b[] | select(.path == $o.path)] | length) == 0) | .path]
+       # A git repository whose working-tree fingerprint could not be taken, then or now: two
+       # empty fingerprints are not "the same tree".
+       + [($a[], $b[]) | select((.reviewed_sha // "") != "" and (.tree // "") == "") | .path])
       | unique | join(" ")' 2>/dev/null)" || _moved="(the snapshot could not be compared)"
   fi
   [ -n "$_moved" ] || return 0
@@ -829,6 +896,7 @@ guard_before_accept() {
 mark_done() {  # $1 = disposition, [$2] = why, in a sentence the person reads
   local disposition="${1:-passed}" why="${2:-}" _unc _lo
   abandon_if_not_ours "$disposition"
+  { [ "$disposition" = passed ] || [ "$disposition" = debt ]; } && finals_before_accept
   if { [ "$disposition" = passed ] || [ "$disposition" = debt ]; } && final_checks_unmet; then
     log "a $disposition without the final checks passing in this run — settled as needs-user"
     disposition=needs-user; why="$FINAL_UNMET_WHY"
@@ -2007,7 +2075,9 @@ $review"
   if [ "$_rcomplete" = 1 ] && [ -n "$_rverdict" ]; then
     _rtmp="$(mktemp "${TMPDIR:-/tmp}/review-answer.XXXXXX")"; printf '%s\n' "$review" > "$_rtmp"
     if [ "$_rfix" = 1 ]; then
+      ledger_stage
       _lres="$(python3 "$BIN_DIR/lib/review-ledger.py" apply "$LEDGER_F" "$_rtmp" "[]" 2>>"$CODEX_LOG")"; _lrc=$?
+      ledger_written
       rm -f "$_rtmp"
       if [ "$_lrc" != 0 ]; then
         log "the report's review ledger could not be read or written (exit $_lrc) — nothing is accepted on it"
@@ -2029,7 +2099,9 @@ $(python3 "$BIN_DIR/lib/review-ledger.py" open "$LEDGER_F" 2>/dev/null)"
     else
       if [ "$_rverdict" = FAIL ]; then
         # One reviewer's own numbered list: its items are already distinct, nothing to group.
+        ledger_stage
         _ln="$(python3 "$BIN_DIR/lib/review-ledger.py" init "$LEDGER_F" "$_rtmp" "[]" one 2>>"$CODEX_LOG")"
+        ledger_written
         log "report review goes back: ${_ln:-0} item(s) on the report's ledger — the next rounds check them"
       fi
       rm -f "$_rtmp"
@@ -2662,7 +2734,9 @@ LEDGER_STALL=0; LEDGER_OPEN=0; LEDGER_CHURN=0
 # (checked above). An id it did not answer stays open, and a PASS with one still open is a FAIL.
 if [ "$FIXCHECK" = 1 ] && [ "$state" = COMPLETE ] && { [ "$verdict" = PASS ] || [ "$verdict" = FAIL ]; }; then
   _rtmp="$(mktemp "${TMPDIR:-/tmp}/review-answer.XXXXXX")"; printf '%s\n' "$review" > "$_rtmp"
+  ledger_stage
   _lres="$(python3 "$BIN_DIR/lib/review-ledger.py" apply "$LEDGER_F" "$_rtmp" "${REVIEW_SNAPSHOT:-[]}" 2>>"$CODEX_LOG")"; _lrc=$?
+  ledger_written
   rm -f "$_rtmp"
   if [ "$_lrc" != 0 ]; then
     log "the review ledger could not be read or written (exit $_lrc) — nothing is accepted on it"
@@ -2685,7 +2759,9 @@ $(python3 "$BIN_DIR/lib/review-ledger.py" open "$LEDGER_F" 2>/dev/null)"
 fi
 if [ "${TEAM_ROUND:-0}" = 1 ] && [ "$state" = COMPLETE ] && [ "$verdict" = FAIL ]; then
   _rtmp="$(mktemp "${TMPDIR:-/tmp}/review-answer.XXXXXX")"; printf '%s\n' "$review" > "$_rtmp"
+  ledger_stage
   _ln="$(python3 "$BIN_DIR/lib/review-ledger.py" init "$LEDGER_F" "$_rtmp" "${REVIEW_SNAPSHOT:-[]}" 2>>"$CODEX_LOG")"
+  ledger_written
   rm -f "$_rtmp"
   case "$_ln" in ''|*[!0-9]*) _ln=0 ;; esac
   LEDGER_OPEN="$_ln"

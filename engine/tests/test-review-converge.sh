@@ -360,19 +360,27 @@ T3: SAME AS T1"
 VERIFIER=1 rungate
 check "the old gate's PASS settles nothing"          '[ "$(task_get "$TID" .state)" = running ] && [ "$(task_get "$TID" ".attempts[-1].dispatch_id")" = d-next ] && [ -z "$(task_get "$TID" ".attempts[-1].ended_at")" ]'
 check "the attempt it was about is closed as superseded" '[ "$(task_get "$TID" ".attempts[-2].result")" = superseded ]'
-# (The old gate answered the list while the folder was still its own; it is not cleared after.)
-check "its review list is not cleared"               '[ -s "$TLEDGER" ]'
+# The closures of the abandoned answer are taken back: the next attempt's brief still sees T1.
+check "its review list is as it was before that answer" '[ -s "$TLEDGER" ] && python3 "$LEDGER" open "$TLEDGER" | grep -q "^T1: " && task_brief "$TID" "/continue" youtrack someone | grep -q "^T1: "'
 check "no done mark, no pass written in the folder"  '! done_is passed && grep -q "\"kind\":\"stale-verdict\"" "$(task_dir "$TID")/events.jsonl"'
 
 echo "===== any acceptance waits for the final checks, debt included ====="
 mkcase
-( cd "$PROJ" && IDIR="$IDIR" "$ROOT/bin/add-check.sh" --final "full suite" -- bash -c "exit 0" >/dev/null )
-# A tool failure alone is banked as debt; the final checks never ran in this round.
+: > "$FAKE/debt-count"
+( cd "$PROJ" && IDIR="$IDIR" "$ROOT/bin/add-check.sh" --final "full suite" -- bash -c "echo r >> '$FAKE/debt-count'; exit 6" >/dev/null )
+# A tool failure alone is banked as debt — but not past a final check: it runs first, and fails here.
 answer single "STATE: COMPLETE
 VERDICT: FAIL
 1. [harness_failure] the build tool crashed"
 VERIFIER=1 rungate
-check "a debt with a final check not run is not accepted" 'done_is needs-user && ! done_is debt'
+check "a debt waits for the final checks: run once, failed, sent back" '[ "$(grep -c . "$FAKE/debt-count")" = 1 ] && blocked && ! done_is debt && ! done_is passed'
+mkcase
+( cd "$PROJ" && IDIR="$IDIR" "$ROOT/bin/add-check.sh" --final "full suite" -- bash -c "exit 0" >/dev/null )
+answer single "STATE: COMPLETE
+VERDICT: FAIL
+1. [harness_failure] the build tool crashed"
+VERIFIER=1 rungate
+check "with the final check passing, the debt is written" 'done_is debt'
 
 echo "===== a repository the reviewer read that is gone: not accepted ====="
 mkcase
@@ -424,7 +432,7 @@ T3: SAME AS T1"
 VERIFIER=1 rungate
 check "a stop during the final checks: no pass is written" '! done_is passed && ! jq -e ".disposition == \"passed\"" "$IDIR/review.json" >/dev/null 2>&1'
 check "the stopped attempt stays stopped"            '[ "$(task_get "$TID" ".attempts[-1].result")" = stopped ]'
-check "and its review list is kept for the next attempt" '[ -s "$TLEDGER" ]'
+check "and its review list keeps T1 open for the next attempt" '[ -s "$TLEDGER" ] && python3 "$LEDGER" open "$TLEDGER" | grep -q "^T1: " && task_brief "$TID" "/continue" youtrack someone | grep -q "^T1: "'
 
 echo "===== the beat stops with the attempt ====="
 mkcase "PRJ-$RANDOM"
@@ -474,6 +482,53 @@ check "at its limit, a failing final check is not accepted with notes" 'done_is 
 
 echo "===== the export test's own skip is a skip ====="
 check "it says SKIP, so the cache never keeps it"    'grep -q "echo \"SKIP: already running from an exported tree" "$ROOT/tests/test-export-suite.sh" && printf "SKIP: already running from an exported tree\n" > "$FAKE/skip.log" && . "$ROOT/bin/lib/test-cache.sh" && test_cache_skipped "$FAKE/skip.log"'
+
+echo "===== two /continue at once ====="
+team_on; mkcase "PRJ-$RANDOM"
+answer team "STATE: COMPLETE
+VERDICT: FAIL
+1. [acceptance_failure] src/a.ts — the empty state is missing REACH: ordinary"
+rungate; unset SUPERVISOR_REVIEW_TEAM
+TLEDGER="$SUPERVISOR_STATE_DIR/review-ledger-$(task_key "$TID")"
+( task_attempt_begin "$TID" "$IDIR" "d-c1" continue ) & ( task_attempt_begin "$TID" "$IDIR" "d-c2" continue ) & wait
+check "two continuations at once leave one open attempt" '[ "$(task_get "$TID" "[.attempts[] | select(.ended_at == null)] | length")" = 1 ]'
+check "and the open ids are still there for it"      'python3 "$LEDGER" open "$TLEDGER" | grep -q "^T1: " && task_brief "$TID" "/continue" youtrack someone | grep -q "^T1: "'
+
+echo "===== each final check has its own log ====="
+mkcase
+( cd "$PROJ" && IDIR="$IDIR" "$ROOT/bin/add-check.sh" --final "Full suite (Linux)" -- bash -c "echo first" >/dev/null \
+  && IDIR="$IDIR" "$ROOT/bin/add-check.sh" --final "Full suite - Linux" -- bash -c "echo second" >/dev/null )
+answer single "STATE: COMPLETE
+VERDICT: PASS"
+VERIFIER=1 rungate
+EV="$(ls -td "$IDIR"/evidence/*-final 2>/dev/null | head -1)/evidence.json"
+check "two names that slug alike get two logs"       '[ "$(jq -r "[.criteria[] | .artifact] | unique | length" "$EV")" = 2 ] && done_is passed'
+mkcase
+( cd "$PROJ" && IDIR="$IDIR" "$ROOT/bin/add-check.sh" --final "Full suite (Linux)" -- bash -c "echo first" >/dev/null \
+  && IDIR="$IDIR" "$ROOT/bin/add-check.sh" --final "Full suite - Linux" -- bash -c 'rm -f "$0"/evidence/*-final/Full-suite-Linux.log; echo second' "$IDIR" >/dev/null )
+answer single "STATE: COMPLETE
+VERDICT: PASS"
+VERIFIER=1 rungate
+check "either log gone: not accepted"                '! done_is passed && done_is needs-user'
+
+echo "===== a working tree that cannot be fingerprinted is not accepted ====="
+mkcase
+( cd "$PROJ" && IDIR="$IDIR" "$ROOT/bin/add-check.sh" --final "full suite" -- bash -c "chmod -R a-w .git/objects; echo touched >> src/a.ts" >/dev/null )
+answer single "STATE: COMPLETE
+VERDICT: PASS"
+VERIFIER=1 rungate
+chmod -R u+w "$PROJ/.git/objects" 2>/dev/null
+check "no fingerprint after the checks: not accepted" '! done_is passed'
+
+echo "===== a report's final check runs once a round ====="
+report_case
+jq '.pipeline_gates.reportMaxRounds = 1 | .pipeline_gates.reportAtLimit = "accept"' "$IDIR/dispatch.json" > "$FAKE/d.tmp" && mv "$FAKE/d.tmp" "$IDIR/dispatch.json"
+: > "$FAKE/rep-count"
+( cd "$PROJ" && IDIR="$IDIR" "$ROOT/bin/add-check.sh" --final "report data check" -- bash -c "echo r >> '$FAKE/rep-count'; exit 3" >/dev/null )
+answer single "STATE: COMPLETE
+VERDICT: PASS"
+rungate
+check "PASS, final fails, at the limit with accept: one run, not accepted" '[ "$(grep -c . "$FAKE/rep-count")" = 1 ] && ! done_is passed'
 
 echo
 echo "review converges: $pass passed, $fail failed"

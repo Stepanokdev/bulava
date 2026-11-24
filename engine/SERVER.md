@@ -418,9 +418,12 @@ kept finding the next rare case, the earlier items mostly closed, and a run neve
   in the same step as the write; any other is recorded as a `stale-verdict` event and changes nothing.
   The gate takes the attempt's ids when it starts; if the folder has gone to another attempt by the
   time it would write (a continuation during a long final check), it writes nothing at all — no
-  verdict, no done mark, no cleared review list.
-- **Final checks.** A check registered with `add-check --final` runs once, when the review accepts
-  the work (a PASS, or a FAIL whose every item is advisory). The work is accepted only when every
+  verdict, no done mark, no cleared review list. What it had already written to the review list for that answer (ids closed,
+  new ones added) is put back as it was, unless something has written the list since.
+- **Final checks.** A check registered with `add-check --final` runs once per gate run, before
+  anything is accepted: a PASS, a FAIL whose every item is advisory, a report, a plain folder's
+  declared outcome, a round limit or a tool failure banked as debt — the first of these in a gate run
+  runs them, and any later one in the same run takes that result. Each check has its own log. The work is accepted only when every
   final check exited 0 and left its log. A check that failed or ran out of time sends the work back
   as a blocking defect; one that could not start or left nothing to read parks the run for a person.
   It is never debt: any way to `passed` or `debt` — a round limit, a tool failure — with a final check

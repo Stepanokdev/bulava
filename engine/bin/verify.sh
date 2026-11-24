@@ -62,6 +62,9 @@ run_step() {  # $1 criterion  $2 timeout ; then the command + args
   local crit="$1" to="$2"; shift 2
   local tool="$1" log ec status note=""
   log="$EVIDENCE_DIR/$(slugify "$crit").log"
+  # Two criteria whose names slug alike ("Full suite (Linux)", "Full suite - Linux") would share one
+  # file, and the second would overwrite the first one's proof: each gets its own, by its digest.
+  [ -e "$log" ] && log="${log%.log}-$(printf '%s' "$crit" | shasum -a 256 | cut -c1-10).log"
   if ! budget_left; then
     add_criterion "$crit" "$*" 0 "" inconclusive "skipped — total verify budget exceeded"; return
   fi
