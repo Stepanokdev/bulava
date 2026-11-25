@@ -42,7 +42,11 @@ case "$p" in
 esac
 echo "$role" >> "$CALLS"
 printf '%s' "$p" > "$CALLS.$role.prompt"
-cat "$FAKE/$role"
+# Something that happens to the work while the reviewer reads it.
+[ -s "$FAKE/during" ] && bash "$FAKE/during" >/dev/null 2>&1
+# "{who}" in an answer is the member's own focus, so the team's three answers can differ in wording.
+case "$p" in *"Prioritize security"*) who=security ;; *"Prioritize state"*) who=state ;; *) who=contract ;; esac
+sed "s/{who}/$who/g" "$FAKE/$role"
 exit 0
 EOF
 chmod +x "$FAKE/codex"
@@ -165,7 +169,7 @@ mkcase "PRJ-$RANDOM"
 answer single "STATE: COMPLETE
 VERDICT: FAIL
 1. [spec_conflict] QUOTE: \"every role can still open the form\" — a reader sees the record's name; I would hide it
-2. [acceptance_failure] src/a.ts — record rules are not applied REACH: ordinary"
+2. [related_improvement] src/a.ts — the empty state could say more"
 rungate
 check "the worker gets no FAIL"                     '! blocked && done_is needs-user'
 check "the task waits for an answer"                '[ "$(task_get "$TID" .state)" = needs_input ] && [ "$(task_get "$TID" .state_reason)" = spec_conflict ]'
@@ -580,6 +584,123 @@ SUPERVISOR_TEST_HOOK_IN_HOLD="$FAKE/stop-later.sh" rungate
 for _w in $(seq 1 100); do [ -s "$FAKE/stop-done" ] && break; sleep 0.1; done
 check "a stop arriving during the publication waits for it" '[ -s "$FAKE/stop-done" ] && done_is passed'
 check "and finds the attempt settled: the record says passed, not stopped" '[ "$(task_get "$TID" ".attempts[-1].disposition")" = passed ] && [ "$(task_get "$TID" ".attempts[-1].result")" != stopped ]'
+
+echo "===== [spec_conflict]: rare, already answered, one question per dispute ====="
+T="$(mktemp -d)"; REPOS+=("$T")
+printf '%s\n' "STATE: COMPLETE" "VERDICT: FAIL" \
+  "1. [spec_conflict] QUOTE: “neither a joined check nor a row lock.” — a legacy 150-character part plus 125 gives 276" \
+  "2. [spec_conflict] QUOTE: \"no migration\" — add one REACH: rare" \
+  "3. [spec_conflict] QUOTE: \"every role can open the form\" — hide it" \
+  "4. [spec_conflict] QUOTE: \"neither a joined check nor a row lock\" — everyone who edits one field meets it REACH: ordinary" > "$T/a"
+printf '%s\n' '[{"id":"spec-x","question":"QUOTE: \"each part ≤150, per-field rules only\" — 150+150 > 255","answer":"Make it 125. Neither a joined check nor a row lock."}]' > "$T/d"
+python3 "$LEDGER" spec "$T/a" "$T/d" > "$T/o"
+check "a dispute of an answered decision with no REACH is advisory"  'grep -q "^1. \[related_improvement\] QUOTE: “neither" "$T/o"'
+check "a rare dispute is advisory"                   'grep -q "^2. \[related_improvement\] QUOTE: \"no migration\"" "$T/o"'
+check "a new dispute with no REACH still asks"       'grep -q "^3. \[spec_conflict\]" "$T/o"'
+check "an answered decision reopens on an ordinary path" 'grep -q "^4. \[spec_conflict\]" "$T/o"'
+python3 "$LEDGER" spec "$T/a" "" > "$T/o2"
+check "with nothing answered only the rare one changes" '[ "$(grep -c "\[spec_conflict\]" "$T/o2")" = 3 ]'
+printf '%s\n' '[{"id":"spec-y","question":"QUOTE: \"neither a joined check nor a row lock\" — x","answer":""}]' > "$T/u"
+SPEC_ANSWERED_ONLY=1 python3 "$LEDGER" spec "$T/a" "$T/u" > "$T/o3"
+check "on a task, a question nobody answered is not a decision" 'grep -q "^1. \[spec_conflict\]" "$T/o3"'
+SPEC_ANSWERED_ONLY=0 python3 "$LEDGER" spec "$T/a" "$T/u" > "$T/o4"
+check "in a chat, the question asked is the one answered" 'grep -q "^1. \[related_improvement\]" "$T/o4"'
+printf '%s\n' '1. [spec_conflict] QUOTE: "REACH: rare is fine" — wrong for everyone REACH: ordinary' > "$T/r"
+check "the line's own REACH is its last one"         'python3 "$LEDGER" spec "$T/r" "" | grep -q "^1. \[spec_conflict\]"'
+printf '%s\n' 'QUOTE: "a b c d" — one view' 'QUOTE: “A b  c d.” — the same, said again' 'QUOTE: "other" — x' > "$T/g"
+check "the same quote is one question"               '[ "$(python3 "$LEDGER" spec-group "$T/g" | wc -l | tr -d " ")" = 2 ] && python3 "$LEDGER" spec-group "$T/g" | grep -q "raised by 2 reviewers"'
+
+team_on; mkcase "PRJ-$RANDOM"
+answer team "STATE: COMPLETE
+VERDICT: FAIL
+1. [spec_conflict] QUOTE: \"each part ≤150\" — 150 + 150 is over the LMS limit of 255, as {who} reads it REACH: ordinary"
+rungate
+check "a team's one dispute asks once"               'done_is needs-user && [ "$(task_get "$TID" .question.text | grep -c "each part")" = 1 ] && task_get "$TID" .question.text | grep -q "raised by 3 reviewers"'
+check "and is remembered for the task"               'jq -e "length == 1 and .[0].answer == \"\"" "$SUPERVISOR_STATE_DIR/spec-decisions-$(task_key "$TID")" >/dev/null'
+unset SUPERVISOR_REVIEW_TEAM
+
+mkcase "PRJ-$RANDOM"
+answer single "STATE: COMPLETE
+VERDICT: FAIL
+1. [acceptance_failure] src/a.ts — sign-out is undone by a late save REACH: ordinary
+2. [spec_conflict] QUOTE: \"every role can still open the form\" — a legacy record needs a 130-letter word REACH: rare"
+rungate
+check "a rare dispute does not stop the task"        'blocked && [ "$(task_get "$TID" .state)" = running ] && [ ! -e "$SUPERVISOR_STATE_DIR/spec-pending-$(task_key "$TID")" ]'
+check "the worker reads it as advisory"              'printf "%s" "$GATE_OUT" | jq -r .reason | grep -q "\[related_improvement\] QUOTE: \"every role"'
+
+echo "===== a question waits behind the round's ordinary defects ====="
+mkcase "PRJ-$RANDOM"
+answer single "STATE: COMPLETE
+VERDICT: FAIL
+1. [acceptance_failure] src/a.ts — sign-out is undone by a late save REACH: ordinary
+2. [spec_conflict] QUOTE: \"every role can still open the form\" — a reader sees the record's name"
+rungate
+SPEND="$SUPERVISOR_STATE_DIR/spec-pending-$(task_key "$TID")"
+check "the defect goes back first"                   'blocked && [ "$(task_get "$TID" .state)" = running ]'
+check "the question waits, marked for the worker"    '[ -s "$SPEND" ] && printf "%s" "$GATE_OUT" | jq -r .reason | grep -q "WAITS FOR THE TASK.S AUTHOR"'
+work
+answer single "STATE: COMPLETE
+VERDICT: PASS
+T1: FIXED"
+rungate
+check "the round with no defect asks it"             'done_is needs-user && [ "$(task_get "$TID" .state_reason)" = spec_conflict ] && task_get "$TID" .question.text | grep -q "every role can still open the form"'
+check "and nothing waits any more"                   '[ ! -e "$SPEND" ]'
+
+echo "===== the author's answer is kept and read as decided ====="
+SBIN="$(mktemp -d)"; REPOS+=("$SBIN")
+for f in "$ROOT"/bin/*; do ln -s "$f" "$SBIN/$(basename "$f")"; done
+rm -f "$SBIN/worker-send.sh" "$SBIN/dispatch.sh"; cp "$ROOT/bin/worker-send.sh" "$SBIN/worker-send.sh"
+printf '#!/bin/bash\necho TIER=dispatched\nexit 0\n' > "$SBIN/dispatch.sh"; chmod +x "$SBIN/dispatch.sh"
+QID="$(task_get "$TID" .question.id)"
+"$SBIN/worker-send.sh" --task-id "$TID" --relation continue --answers "$QID" "$PROJ" - - - \
+  "Keep it. Neither a joined check nor a row lock; a reader may see the name." >/dev/null 2>&1
+SDEC="$SUPERVISOR_STATE_DIR/spec-decisions-$(task_key "$TID")"
+check "the answer is written beside its question"    'jq -e --arg q "$QID" "any(.[]; .id == \$q and (.answer | test(\"row lock\")))" "$SDEC" >/dev/null'
+RID="conv-run-$RANDOM$RANDOM"; printf '%s\n' "$RID" > "$IDIR/run-id"; attempt continue; work; rm -f "$CALLS" "$CALLS".*
+answer single "STATE: COMPLETE
+VERDICT: FAIL
+1. [spec_conflict] QUOTE: \"neither a joined check nor a row lock\" — a legacy 150-character part can still be kept"
+rungate
+check "the reviewer is shown what was decided"       'grep -q "DECISIONS THE TASK.S AUTHOR ALREADY MADE" "$CALLS.single.prompt" && grep -q "a reader may see the name" "$CALLS.single.prompt"'
+check "a new angle on it does not stop the task"     'done_is passed && ! blocked && [ "$(task_get "$TID" .state)" != needs_input ]'
+RID="conv-run-$RANDOM$RANDOM"; printf '%s\n' "$RID" > "$IDIR/run-id"; attempt continue; work; rm -f "$CALLS" "$CALLS".*
+answer single "STATE: COMPLETE
+VERDICT: FAIL
+1. [spec_conflict] QUOTE: \"neither a joined check nor a row lock\" — every person who edits one field loses the save REACH: ordinary"
+rungate
+check "it is reopened only on an ordinary path"      'done_is needs-user && [ "$(task_get "$TID" .state_reason)" = spec_conflict ]'
+
+echo "===== a state nobody can read parks once; work that keeps moving parks on the third refusal ====="
+report_case "PRJ-$RANDOM"
+# The server ticket: the report in the task's folder, the code in a connected repository whose objects
+# are borrowed from a folder the engine user cannot open ("bad object HEAD").
+XR="$(mktemp -d)"; REPOS+=("$XR")
+( cd "$XR" && git init -q && git config user.email t@t && git config user.name t && echo x > x.txt && git add -A && git commit -qm x )
+printf '%s\037%s\037%s\037%s\n' "$XR" "$(git -C "$XR" rev-parse HEAD)" d 0 > "$IDIR/extra-repos"
+SRC="$(mktemp -d)"; REPOS+=("$SRC"); mkdir -p "$SRC/objects"
+git -C "$XR" repack -qad && mv "$XR/.git/objects/pack" "$SRC/objects/pack" && mkdir "$XR/.git/objects/pack"
+printf '%s\n' "$SRC/objects" > "$XR/.git/objects/info/alternates"
+chmod 000 "$SRC/objects/pack"
+answer single "STATE: COMPLETE
+VERDICT: PASS"
+SUPERVISOR_GUARD_RETRY_SECONDS=0 rungate
+chmod 755 "$SRC/objects/pack"
+check "an unreadable repository after a PASS parks for a person" 'done_is needs-user && ! blocked'
+check "saying what could not be read"                'grep -q "cannot be read after the review" "$SUPERVISOR_STATE_DIR/supervisor.log" && grep -q "не вдалося прочитати" "$IDIR/run-events.jsonl"'
+check "once: never sent back, never debt"            '[ "$(calls single)" = 1 ] && ! done_is debt'
+
+mkcase "PRJ-$RANDOM"
+# Something commits between the reviewer's PASS and its acceptance, every time.
+printf 'cd "%s" && echo moved >> src/a.ts && git commit -qam moved\n' "$PROJ" > "$FAKE/move.sh"
+answer single "STATE: COMPLETE
+VERDICT: PASS"
+SUPERVISOR_TEST_HOOK_BEFORE_HOLD="$FAKE/move.sh" rungate
+check "work that moved after the review goes back"   'blocked && printf "%s" "$GATE_OUT" | jq -r .reason | grep -q "змінився код"'
+SUPERVISOR_TEST_HOOK_BEFORE_HOLD="$FAKE/move.sh" rungate
+check "the second refusal goes back too"             'blocked && ! done_is needs-user'
+SUPERVISOR_TEST_HOOK_BEFORE_HOLD="$FAKE/move.sh" rungate
+check "the third parks for a person"                 'done_is needs-user && ! blocked && grep -q "refusal 3 in a row at acceptance" "$SUPERVISOR_STATE_DIR/supervisor.log"'
+rm -f "$FAKE/during"
 
 echo
 echo "review converges: $pass passed, $fail failed"

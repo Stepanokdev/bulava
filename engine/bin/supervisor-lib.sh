@@ -2632,7 +2632,9 @@ reset_review_budget() {  # $1=instance dir [$2=why, for the log]
   [ -n "$key" ] || return 0
   rm -f "$SUP_STATE/remediations-$key" "$SUP_STATE/remed-meta-$key" "$SUP_STATE/rounds-$key" \
         "$SUP_STATE/rounds-meta-$key" "$SUP_STATE/rounds-findings-$key" "$SUP_STATE/harness-$key" \
-        "$SUP_STATE/handoffs-$key" "$SUP_STATE/misdeclared-$key" "$SUP_STATE/review-ledger-$key" "$SUP_STATE/report-ledger-$key" "$SUP_STATE/moved-$key" 2>/dev/null || true
+        "$SUP_STATE/handoffs-$key" "$SUP_STATE/misdeclared-$key" "$SUP_STATE/review-ledger-$key" "$SUP_STATE/report-ledger-$key" "$SUP_STATE/moved-$key" \
+        "$SUP_STATE/spec-pending-$key" "$SUP_STATE/guard-blocks-$key" 2>/dev/null || true
+  # spec-decisions-$key stays: what the author already answered is still answered under a new request.
   : > "$idir/started-at" 2>/dev/null || true
   printf '%s [review-budget] %s — бюджет виправлень і годинник прогону обнулено (%s)\n' \
     "$(date '+%F %T')" "$why" "$key" >> "$SUP_STATE/supervisor.log" 2>/dev/null || true

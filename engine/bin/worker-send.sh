@@ -96,6 +96,17 @@ if [ "${SUPERVISOR_PROFILE:-}" = server ] || [ -n "$TASK_ID" ]; then
     [ "$(task_get "$TASK_ID" '.question.id')" = "$ANSWERS" ] \
       || { echo "TIER=conflict"; echo "❌ питання $ANSWERS для $TASK_ID не відкрите" >&2; exit 4; }
   fi
+  # The answer to a question the review asked the author (review-gate.sh spec_conflict_park) is kept
+  # beside the question, for every later review of this task to read as decided. Written before the
+  # continuation starts, so its first review already reads it; a send refused below is sent again.
+  if [ -n "$ANSWERS" ]; then
+    _sd="$SUP_STATE/spec-decisions-$(task_key "$TASK_ID")"
+    if [ -s "$_sd" ] && jq -e --arg id "$ANSWERS" 'type == "array" and any(.[]; .id == $id)' "$_sd" >/dev/null 2>&1; then
+      jq --arg id "$ANSWERS" --arg a "$MSG" --arg at "$(date -u +%FT%TZ)" \
+        'map(if .id == $id then .answer = $a | .answered_at = $at else . end)' "$_sd" > "$_sd.tmp" 2>/dev/null \
+        && mv -f "$_sd.tmp" "$_sd"
+    fi
+  fi
   _branch="$(task_get "$TASK_ID" .branch)"
   _base="$(task_get "$TASK_ID" .base_sha)"
   _brief="$(task_brief "$TASK_ID" "$MSG" "${SOURCE:-other}" "${AUTHOR:-unknown}" "$ANSWERS")"

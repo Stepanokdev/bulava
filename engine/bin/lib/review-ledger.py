@@ -12,6 +12,9 @@
                                                                     count starts again, the open items stay
   review-ledger.py reach <review-file>                              the answer with every blocking item whose
                                                                     REACH is rare re-tagged [related_improvement]
+  review-ledger.py spec  <review-file> [<decisions-json-file>]      the answer with every [spec_conflict] that
+                                                                    does not stop the work re-tagged (see SPEC)
+  review-ledger.py spec-group <items-file>                          the gate's question items, one per dispute
 Exit 3 when the ledger cannot be read or written: the caller must not pass on it.
 
 Why a ledger and not the last round's list. Progress used to be "fewer [repeat]s than the last
@@ -40,6 +43,19 @@ reviewer kept tagging rare combinations [regression_from_patch]: "a caller that 
 continues", "a recordset of another model". Each blocked, the worker wrote one more guard, and the
 next round found a rare hole in that. A line the gate can read is something the gate can enforce; an
 item with no REACH still blocks, as before.
+
+SPEC. A [spec_conflict] disputes what the task decided, and it parks the whole run with a question
+for the task's author. On a server (Nov 2026) one task was parked twice on one topic: the author
+answered the first question (125 characters a part, no joined check), and the next round one reviewer
+of three quoted that very answer and disputed it again for a legacy surname of more than 129
+characters, while another reviewer called the same point covered by the author's decision. So a
+[spec_conflict] is advisory ([related_improvement]) when
+  • its REACH is rare: a rare case is reported, it does not stop a person, or
+  • it quotes a decision the author already answered (its QUOTE is in a question the gate asked
+    this task before, or in the author's answer) and its REACH is not ordinary or data-loss: an
+    answered decision is reopened only on a path a person meets.
+One with no REACH that quotes nothing answered still parks, as before. spec-group joins the items
+the gate is about to ask by their quote, so the author reads each dispute once, not once per reviewer.
 
 Progress is the open count going down. It used to be "an id closed", and the same server task closed
 one id and gained one [regression_from_patch] round after round (6 → 4 → 2 → 2 open, stall 0 every
@@ -118,6 +134,86 @@ def demote(text):
     return "\n".join(out) + ("\n" if text.endswith("\n") else "")
 
 
+SPEC_TAG = re.compile(r"\[spec_conflict\]")
+QUOTE = re.compile(r"QUOTE\**\s*:\s*\**\s*[\"\u201c\u201e\u00ab'](.+?)[\"\u201d\u00bb']", re.I)
+
+
+def reach_of(line):
+    # The last one: the line ends with it, and a quote earlier on the line may hold the same words.
+    ms = list(REACH.finditer(line))
+    if not ms:
+        return ""
+    v = ms[-1].group(1).lower()
+    return "data-loss" if v.startswith("data") else v
+
+
+def norm(s):
+    s = s.lower()
+    for a, b in (("\u201c", '"'), ("\u201d", '"'), ("\u201e", '"'), ("\u00ab", '"'), ("\u00bb", '"'),
+                 ("\u2019", "'"), ("\u2018", "'"), ("\u2014", "-"), ("\u2013", "-")):
+        s = s.replace(a, b)
+    return re.sub(r"\s+", " ", s).strip().strip('.,;:"\'')
+
+
+def quote_of(line):
+    m = QUOTE.search(line)
+    return norm(m.group(1)) if m else ""
+
+
+def decided_text(path):
+    """Everything the task's author was already asked and answered, normalized, one string each.
+    SPEC_ANSWERED_ONLY=1 (a task with a record of its answers): a question nobody answered is not a
+    decision yet."""
+    if not path:
+        return []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            v = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    out = []
+    only = os.environ.get("SPEC_ANSWERED_ONLY") == "1"
+    for d in v if isinstance(v, list) else []:
+        if isinstance(d, dict) and not (only and not str(d.get("answer") or "").strip()):
+            out.append(norm(" ".join(str(d.get(k) or "") for k in ("question", "answer"))))
+    return [t for t in out if t]
+
+
+def spec_filter(text, decided):
+    out = []
+    for ln in text.splitlines():
+        if NUMBERED.match(ln) and SPEC_TAG.search(ln):
+            r, q = reach_of(ln), quote_of(ln)
+            why = ""
+            if r == "rare":
+                why = "rare: advisory, does not stop the work"
+            elif r not in ("ordinary", "data-loss") and len(q) >= 6 and any(q in t for t in decided):
+                why = "the task's author already decided this: advisory"
+            if why:
+                ln = SPEC_TAG.sub("[related_improvement]", ln, count=1) + " (" + why + ")"
+        out.append(ln)
+    return "\n".join(out) + ("\n" if text.endswith("\n") else "")
+
+
+def spec_group(text):
+    """One line per dispute: items with the same quote are one, the first wording kept, the count said."""
+    order, by = [], {}
+    for ln in text.splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        k = quote_of(ln) or norm(ln)
+        if k not in by:
+            by[k] = [ln, 0]
+            order.append(k)
+        by[k][1] += 1
+    lines = []
+    for k in order:
+        ln, n = by[k]
+        lines.append(ln + (" (raised by %d reviewers)" % n if n > 1 else ""))
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
 def blocking(text):
     out = []
     for ln in text.splitlines():
@@ -177,6 +273,12 @@ def main():
 def run(cmd, path):
     if cmd == "reach":
         sys.stdout.write(demote(read(path)))
+        return 0
+    if cmd == "spec":
+        sys.stdout.write(spec_filter(read(path), decided_text(sys.argv[3] if len(sys.argv) > 3 else "")))
+        return 0
+    if cmd == "spec-group":
+        sys.stdout.write(spec_group(read(path)))
         return 0
     if cmd == "init":
         text = read(sys.argv[3])
