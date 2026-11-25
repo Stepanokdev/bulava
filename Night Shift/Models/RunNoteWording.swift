@@ -173,6 +173,12 @@ nonisolated enum RunNoteWording {
         Template("Прийнято рецензентом, але не все закомічено: (.+)") { g, b in
             String(localized: "Accepted by the reviewer, but not everything is committed: \(g[0] ?? "")", bundle: b)
         },
+        Template("Codex прийняв роботу, але після рев'ю вона змінювалась знову, (\\S+) рази поспіль\\. Перевір, що змінює файли після кожного рев'ю, і продовж задачу\\.") { g, b in
+            String(localized: "Codex accepted the work, but it changed again after the review, \(g[0] ?? "") times in a row. Check what changes the files after each review, and continue the task.", bundle: b)
+        },
+        Template("Codex прийняв роботу, але стан (.+) не вдалося прочитати, тож не можна підтвердити, що це те, що він читав\\. Найчастіше це права доступу до файлів git \\(alternates або об'єкти в чужій теці\\)\\. Виконавець цього не виправить: перевір доступ і продовж задачу\\.") { g, b in
+            String(localized: "Codex accepted the work, but the state of \(g[0] ?? "") could not be read, so it cannot be shown to be what it read. Most often these are permissions on git files (alternates, or objects in a folder of another user). The agent cannot fix this: check the access and continue the task.", bundle: b)
+        },
         Template("Рев'ю зупинилось з відкритими пунктами: (.+)") { g, b in
             String(localized: "The review stopped with items still open: \(g[0] ?? "")", bundle: b)
         },

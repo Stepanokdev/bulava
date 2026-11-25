@@ -12684,6 +12684,40 @@
         }
       }
     },
+    "Codex accepted the work, but it changed again after the review, %@ times in a row. Check what changes the files after each review, and continue the task." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex принял работу, но после ревью она снова менялась, %@ раза подряд. Проверь, что меняет файлы после каждого ревью, и продолжи задачу."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex прийняв роботу, але після рев'ю вона змінювалась знову, %@ рази поспіль. Перевір, що змінює файли після кожного рев'ю, і продовж задачу."
+          }
+        }
+      }
+    },
+    "Codex accepted the work, but the state of %@ could not be read, so it cannot be shown to be what it read. Most often these are permissions on git files (alternates, or objects in a folder of another user). The agent cannot fix this: check the access and continue the task." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex принял работу, но состояние %@ не удалось прочитать, поэтому нельзя подтвердить, что это то, что он читал. Чаще всего это права доступа к файлам git (alternates или объекты в чужой папке). Исполнитель этого не исправит: проверь доступ и продолжи задачу."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex прийняв роботу, але стан %@ не вдалося прочитати, тож не можна підтвердити, що це те, що він читав. Найчастіше це права доступу до файлів git (alternates або об'єкти в чужій теці). Виконавець цього не виправить: перевір доступ і продовж задачу."
+          }
+        }
+      }
+    },
     "Codex answered nothing — wait for it, or go on with Claude?" : {
       "extractionState" : "manual",
       "localizations" : {
